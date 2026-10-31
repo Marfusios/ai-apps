@@ -18,7 +18,9 @@ import {
   type LiveImageFacts,
   type Values,
 } from '../../scripts/compose.js';
-import { proveMaintenanceLock } from '../../scripts/maintenance-lock-proof.js';
+import { proveMaintenanceLock, proofFailureMessage } from '../../scripts/maintenance-lock-proof.js';
+
+const hasFlock = spawnSync('flock', ['--version'], { stdio: 'ignore' }).status === 0;
 
 // Private (RFC 1918) example subnets are built from octets: the repository check
 // rejects private address literals in committed files.
@@ -381,11 +383,46 @@ describe('maintenance lock for backup and restore', () => {
     expect(maintenanceLock({ AVIATION_MAINTENANCE_LOCK: path, AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS: '86400' })?.waitSeconds).toBe(86400);
   }));
 
-  it('uses the importer flock in both directions with a scratch file and harmless commands', async () => {
+  it('refuses writable or symlink parents but allows owner-controlled read/traverse access', () => scratch((path, dir) => {
+    try {
+      for (const mode of [0o720, 0o702, 0o777]) {
+        chmodSync(dir, mode);
+        const message = error(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: path }));
+        expect(message).toMatch(/parent.*owned by this user.*no group or other write permission/);
+        expect(message).not.toContain(dir);
+      }
+      for (const mode of [0o700, 0o750, 0o755]) {
+        chmodSync(dir, mode);
+        expect(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: path })).not.toThrow();
+      }
+      const link = join(dir, 'parent-link');
+      symlinkSync(dir, link);
+      expect(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: join(link, 'maintenance.lock') })).toThrow(/parent.*not a symlink/);
+    } finally { chmodSync(dir, 0o700); }
+  }));
+
+  it.skipIf(!hasFlock)('uses the importer flock in both directions with a scratch file and harmless commands', async () => {
     await proveMaintenanceLock();
   });
 
-  it('the real wrapper times out with one fixed message, never calls the dump, and succeeds after release', () => scratch((path, dir) => {
+  it.skipIf(!hasFlock)('the proof works with a restrictive umask', () => {
+    const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e',
+      'process.umask(0o277); const { proveMaintenanceLock } = await import("./scripts/maintenance-lock-proof.ts"); await proveMaintenanceLock();',
+    ], { cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8', timeout: 15000 });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  it('the proof CLI reports a static failing step without subprocess or filesystem text', () => scratch((_path, dir) => {
+    writeFileSync(join(dir, 'flock'), `#!${process.execPath}\nprocess.stderr.write('SENTINEL'); process.exit(1);\n`, { mode: 0o700 });
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/maintenance-lock-proof.ts'], {
+      cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8', timeout: 10000, env: { PATH: dir },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr.trim()).toBe('Maintenance lock proof failed: scratch importer lock failed.');
+    expect(proofFailureMessage(new Error('SENTINEL /private/path'))).toBe('Maintenance lock proof failed: scratch file setup or cleanup failed.');
+  }));
+
+  it.skipIf(!hasFlock)('the real wrapper times out with one fixed message, never calls the dump, and succeeds after release', () => scratch((path, dir) => {
     const log = join(dir, 'docker-calls.jsonl');
     const docker = join(dir, 'docker');
     writeFileSync(docker, `#!${process.execPath}\nconst fs = require('node:fs'); const a = process.argv.slice(2);\n` +
@@ -408,8 +445,12 @@ describe('maintenance lock for backup and restore', () => {
         expect(() => readFileSync(log)).toThrow();
       }
       expect(spawnSync('flock', ['--unlock', '3'], { stdio: ['ignore', 'ignore', 'ignore', fd] }).status).toBe(0);
-      expect(run('backup').status).toBe(0);
-      expect(run('restore', ['a.dump']).status).toBe(0);
+      const backup = run('backup');
+      const restore = run('restore', ['a.dump']);
+      expect(backup.status).toBe(0);
+      expect(backup.stderr.trim()).toBe('ai-aviation-dev: backup');
+      expect(restore.status).toBe(0);
+      expect(restore.stderr.trim()).toBe('ai-aviation-dev: restore');
       const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[]);
       expect(calls).toHaveLength(2);
       expect(calls[0]).toContain('aviation-backup');
@@ -441,7 +482,8 @@ describe('explicit private dev release image', () => {
     expect(override.match(/build: !reset null/g)).toHaveLength(3);
     expect(override.match(/image: \$\{AVIATION_DEV_RELEASE_IMAGE_ID:/g)).toHaveLength(3);
     const base = readFileSync(resolve(import.meta.dirname, '../../compose.yaml'), 'utf8');
-    expect(base).toContain('pull_policy: never');
+    const imageAnchor = /^x-app-image:[^\n]*\n(?:[ \t]+[^\n]*\n|\n)*/m.exec(base)?.[0];
+    expect(imageAnchor, 'shared app image anchor must forbid pulls').toContain('pull_policy: never');
     expect(base).toContain('127.0.0.1:${PORT:-3000}:3000');
     expect(override).not.toMatch(/ports:|networks:|environment:/);
   });
@@ -470,6 +512,17 @@ describe('explicit private dev release image', () => {
     expect(planCompose('app-up', [], {}, [env('dev')]).files).toEqual(['compose.yaml']);
   });
 
+  it('refuses ordinary dev builds under existing git tags, including --rebuild and a shell override of release mode', () => {
+    for (const command of ['app-up', 'migrate', 'ingest'] as const) {
+      for (const args of [[], ['--rebuild']]) {
+        expect(() => planCompose(command, args, { AVIATION_DEV_RELEASE_IMAGE: 'false' }, [dev], undefined, true)).toThrow(/cannot overwrite an existing git tag/);
+      }
+      expect(planCompose(command, [], {}, [dev], facts, true).tail).not.toContain('--build');
+      expect(planCompose(command, [], {}, [env('dev', { APP_VERSION: 'local-work' })], undefined, false).tail).toContain('--build');
+    }
+    expect(planCompose('app-ps', [], { AVIATION_DEV_RELEASE_IMAGE: 'false' }, [dev], undefined, true).tail).toEqual(['ps', '-a']);
+  });
+
   it('the real wrapper supplies the inspected ID to Compose, not an exported override or the release tag', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aircase-compose-release-'));
     const log = join(dir, 'calls.jsonl');
@@ -480,13 +533,15 @@ describe('explicit private dev release image', () => {
         `else fs.appendFileSync(process.env.OPS_TEST_LOG, JSON.stringify({args:a, image:process.env.AVIATION_DEV_RELEASE_IMAGE_ID, version:process.env.APP_VERSION})+'\\n');\n`,
         { mode: 0o700 });
       writeFileSync(join(dir, 'git'), `#!${process.execPath}\nconst a = process.argv.slice(2);\n` +
-        `if(a.includes('rev-parse')) console.log(a.some(x=>x.startsWith('refs/tags/')) ? '${revision}' : '${'c'.repeat(40)}');\n`, { mode: 0o700 });
+        `if(a.includes('rev-parse')) { const tag = a.find(x=>x.startsWith('refs/tags/'));\n` +
+        `if(tag && !tag.startsWith('refs/tags/v1.2.0')) process.exit(1); console.log(tag ? '${revision}' : '${'c'.repeat(40)}'); }\n`, { mode: 0o700 });
       const run = (extra: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, ['--import', 'tsx', 'scripts/compose.ts', 'app-up'], {
         cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8', timeout: 10000,
         env: { PATH: `${dir}:${process.env.PATH}`, ...dev, AVIATION_DEV_RELEASE_IMAGE_ID: 'untrusted-override', OPS_TEST_LOG: log, ...extra },
       });
       const success = run();
       expect(success.status, success.stderr).toBe(0);
+      expect(success.stderr.trim()).toBe(`ai-aviation-dev: app-up (release-image ${id.slice(0, 19)})`);
       const call = JSON.parse(readFileSync(log, 'utf8')) as { args: string[]; image: string; version: string };
       expect(call.image).toBe(id);
       expect(call.version).toBe('v1.2.0');
@@ -498,6 +553,10 @@ describe('explicit private dev release image', () => {
       const missing = run({ OPS_TEST_MISSING: 'true' });
       expect(missing.status).toBe(2);
       expect(missing.stderr).toContain('no image will be built or pulled');
+      expect(() => readFileSync(log)).toThrow();
+      const overwrite = run({ AVIATION_DEV_RELEASE_IMAGE: 'false' });
+      expect(overwrite.status).toBe(2);
+      expect(overwrite.stderr).toContain('cannot overwrite an existing git tag');
       expect(() => readFileSync(log)).toThrow();
       const normal = run({ AVIATION_DEV_RELEASE_IMAGE: 'false', APP_VERSION: 'dev' });
       expect(normal.status, normal.stderr).toBe(0);

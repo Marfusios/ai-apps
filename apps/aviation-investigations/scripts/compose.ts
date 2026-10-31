@@ -31,7 +31,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, statSync } from 'node:fs';
-import { basename, isAbsolute, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readDotenvAllowlisted } from '../shared/env-files.js';
 import { APP_DIR } from './local-env.js';
@@ -181,6 +181,12 @@ export function maintenanceLock(values: Values, uid = process.getuid?.()): Maint
   } catch {
     throw new UsageError(invalidPath);
   }
+  try {
+    const parent = lstatSync(dirname(path));
+    if (!parent.isDirectory() || parent.uid !== uid || (parent.mode & 0o022) !== 0) throw new Error();
+  } catch {
+    throw new UsageError('AVIATION_MAINTENANCE_LOCK parent must be a directory owned by this user with no group or other write permission, not a symlink');
+  }
   const raw = values.AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS || String(MAINTENANCE_WAIT_SECONDS);
   if (!/^\d{1,5}$/.test(raw) || Number(raw) > 86400) {
     throw new UsageError('AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS must be an integer from 0 to 86400');
@@ -257,9 +263,10 @@ export interface Plan {
 /**
  * Validate the configuration for `command` and choose the Compose files and arguments.
  * `processEnv` and `fileEnvs` (one record per env file, highest priority first) hold the
- * allowlisted names only. Throws UsageError naming the problem, never a value.
+ * allowlisted names only. `devTagExists` comes from a Git lookup of the effective dev
+ * image tag, including the default `dev`. Throws UsageError naming the problem, never a value.
  */
-export function planCompose(command: Command, rawArgs: string[], processEnv: Values, fileEnvs: Values[], live?: LiveImageFacts): Plan {
+export function planCompose(command: Command, rawArgs: string[], processEnv: Values, fileEnvs: Values[], live?: LiveImageFacts, devTagExists = false): Plan {
   const rebuild = rawArgs[0] === REBUILD;
   if (rebuild && !IMAGE_COMMANDS.includes(command)) throw new UsageError(`${REBUILD} applies to app:up, app:migrate and ingest only`);
   const args = rebuild ? rawArgs.slice(1) : rawArgs;
@@ -291,6 +298,9 @@ export function planCompose(command: Command, rawArgs: string[], processEnv: Val
   if (devRelease && appEnv !== 'dev') throw new UsageError('AVIATION_DEV_RELEASE_IMAGE applies only to APP_ENV=dev');
   if (devRelease && rebuild) throw new UsageError('dev release mode refuses --rebuild');
   if (devRelease && command === 'app-up' && args.length > 0) throw new UsageError('app:up in dev release mode takes no extra arguments');
+  if (appEnv === 'dev' && usesImage && !devRelease && devTagExists) {
+    throw new UsageError('ordinary dev builds cannot overwrite an existing git tag; unset APP_VERSION or use AVIATION_DEV_RELEASE_IMAGE=true');
+  }
   if ((appEnv === 'live' || devRelease) && usesImage) {
     const version = values.APP_VERSION;
     if (!version || version === 'dev') throw new UsageError('release mode needs an explicit APP_VERSION other than dev (a release tag)');
@@ -384,6 +394,12 @@ function main(): number {
   const appEnvOf = processEnv.APP_ENV ?? fileEnvs.find((f) => f.APP_ENV)?.APP_ENV;
   const appVersion = processEnv.APP_VERSION ?? fileEnvs.find((f) => f.APP_VERSION)?.APP_VERSION;
   const devRelease = (processEnv.AVIATION_DEV_RELEASE_IMAGE ?? fileEnvs.find((f) => f.AVIATION_DEV_RELEASE_IMAGE)?.AVIATION_DEV_RELEASE_IMAGE) === 'true';
+  let devTagExists = false;
+  if (appEnvOf === 'dev' && !devRelease && IMAGE_COMMANDS.includes(command)) {
+    if (!head) throw new UsageError('ordinary dev builds require a Git checkout to check release tags');
+    // No commit peeling: even a tag of another object is an existing tag we must not overwrite.
+    devTagExists = git('rev-parse', '-q', '--verify', `refs/tags/${appVersion || 'dev'}`) !== null;
+  }
   let live: LiveImageFacts | undefined;
   if ((appEnvOf === 'live' || (appEnvOf === 'dev' && devRelease)) && IMAGE_COMMANDS.includes(command) && appVersion && /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(appVersion)) {
     const inspected = spawnSync('docker', ['image', 'inspect', `ai-aviation/app:${appVersion}`, '--format', '{{.Id}} {{ index .Config.Labels "org.opencontainers.image.revision" }}'], { encoding: 'utf8' });
@@ -395,7 +411,7 @@ function main(): number {
       dirty: checkoutDirty(APP_DIR),
     };
   }
-  const plan = planCompose(command, args, processEnv, fileEnvs, live);
+  const plan = planCompose(command, args, processEnv, fileEnvs, live, devTagExists);
 
   const childEnv: NodeJS.ProcessEnv = { ...process.env, APP_ENV: plan.appEnv };
   // The override has no build section and refers to this inspected ID, not a mutable tag.
@@ -442,12 +458,19 @@ function main(): number {
     ...(envFiles.length ? [...envFiles].reverse() : ['/dev/null']).flatMap((f) => ['--env-file', f]),
     ...plan.files.flatMap((f) => ['-f', f]),
   ];
-  const mode = [plan.tunnel ? 'tunnel' : null, plan.files.includes('compose.tracing.yaml') ? 'tracing' : null].filter(Boolean);
+  const mode = [
+    plan.tunnel ? 'tunnel' : null,
+    plan.files.includes('compose.tracing.yaml') ? 'tracing' : null,
+    plan.pinnedImageId ? `release-image ${plan.pinnedImageId.slice(0, 19)}` : null,
+  ].filter(Boolean);
+  const banner = `ai-aviation-${plan.appEnv}: ${command}${mode.length ? ` (${mode.join(', ')})` : ''}`;
   // A busy lock emits exactly the fixed refusal; no action banner before acquiring it.
-  if (!plan.maintenanceLock) console.error(`ai-aviation-${plan.appEnv}: ${command}${mode.length ? ` (${mode.join(', ')})` : ''}`);
+  if (!plan.maintenanceLock) console.error(banner);
   const invocation = maintenanceInvocation('docker', [...base, ...plan.tail], plan.maintenanceLock);
   const r = spawnSync(invocation.command, invocation.args, { cwd: APP_DIR, stdio: 'inherit', env: childEnv });
   if (plan.maintenanceLock && r.status === MAINTENANCE_BUSY_EXIT) console.error(MAINTENANCE_BUSY_MESSAGE);
+  // After a successful locked operation, retain the target environment in the operator's journal.
+  if (plan.maintenanceLock && r.status === 0) console.error(banner);
   if (r.error) throw new UsageError('could not start the Compose invocation; check Docker and flock availability');
   return r.status ?? 1;
 }
