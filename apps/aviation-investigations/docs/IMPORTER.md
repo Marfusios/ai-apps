@@ -91,7 +91,9 @@ The final two minutes are reserved for termination/cleanup. Inherited lock descr
 and a child deadline survive host-process loss. Docker container names are durably
 registered before creation and reconciled before scratch reuse. All MDBTools helpers
 and exporters use `--log-driver=none`, no network, a read-only root, no capabilities,
-an unprivileged UID and fixed memory/CPU/process limits. Attached stdout enters only
+the invoking host user's non-root UID/GID and fixed memory/CPU/process limits. The
+matching UID reads the owner-only MDB bind mount without making it world-readable;
+root users or groups are refused. Attached stdout enters only
 the bounded private projection pipeline. Killing a Docker CLI alone is not cleanup.
 
 Write-time limits are 200 MiB compressed, 1 GiB expanded MDB, 2 GiB aggregate raw

@@ -21,7 +21,7 @@ import {
   removeAllContainers,
   runContainer,
   runMdbExport,
-  SANDBOX_FLAGS,
+  sandboxFlags,
   setDockerCommand,
   setExtractEnvironment,
   summarizeStderr,
@@ -124,6 +124,13 @@ describe('runContainer cleanup', () => {
 });
 
 describe('runContainer lifecycle', () => {
+  it('refuses root or invalid sandbox identities without relaxing private-file permissions', () => {
+    for (const [uid, gid] of [[0, 1000], [1000, 0], [-1, 1000], [1000, -1], [1.5, 1000], [NaN, 1000]]) {
+      expect(() => sandboxFlags(uid, gid)).toThrow(/unprivileged/);
+    }
+    expect(sandboxFlags(1000, 1001)).toContain('1000:1001');
+  });
+
   it('removes the container explicitly after a successful run', async () => {
     await runContainer({ ...base, sink: sink() });
     expect(logText()).toMatch(/create --name ai-aviation-dev-extract-[0-9a-f]{12} /);
@@ -135,7 +142,7 @@ describe('runContainer lifecycle', () => {
   it('groups the container with the environment\'s Compose project and keeps the sandbox flags', async () => {
     const createLine = () => logText().split('\n').find((l) => l.startsWith('create ')) ?? '';
     // sha256 of the sandbox flags, mounts, image and command (`docker compose ps` needs a config hash).
-    const HASH = createHash('sha256').update(JSON.stringify([SANDBOX_FLAGS, [], IMAGE, ['mdb-export']])).digest('hex');
+    const HASH = createHash('sha256').update(JSON.stringify([sandboxFlags(), [], IMAGE, ['mdb-export']])).digest('hex');
     const labels = (env: string) =>
       [
         `--label com.docker.compose.project=ai-aviation-${env}`,
@@ -150,7 +157,7 @@ describe('runContainer lifecycle', () => {
     expect(createLine()).toMatch(/^create --name ai-aviation-dev-extract-[0-9a-f]{12} /);
     expect(createLine()).toContain(labels('dev'));
     expect(createLine()).toContain(
-      '--network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64',
+      `--network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64 --user ${process.getuid!()}:${process.getgid!()}`,
     );
     rmSync(log, { force: true });
     setExtractEnvironment('live');

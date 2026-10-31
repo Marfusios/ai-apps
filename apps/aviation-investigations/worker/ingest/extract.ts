@@ -35,13 +35,21 @@ export const SANDBOX_FLAGS = [
   '--read-only',
   '--cap-drop', 'ALL',
   '--security-opt', 'no-new-privileges',
-  '--user', '65534:65534',
   '--memory', '1g',
   // Without it the container could use as much swap again.
   '--memory-swap', '1g',
   '--cpus', '2',
   '--pids-limit', '64',
 ] as const;
+
+/** Match the private bind-mounted file's owner without granting root or group-root access. */
+export function sandboxFlags(uid = process.getuid?.(), gid = process.getgid?.()): readonly string[] {
+  if (typeof uid !== 'number' || typeof gid !== 'number' || !Number.isSafeInteger(uid)
+    || !Number.isSafeInteger(gid) || uid <= 0 || gid <= 0) {
+    throw new Error('extraction requires an unprivileged host user and group');
+  }
+  return [...SANDBOX_FLAGS, '--user', `${uid}:${gid}`];
+}
 
 /**
  * Stderr lines from mdb-export that were investigated and are known to be harmless.
@@ -78,7 +86,7 @@ export function composeProject(): string {
  */
 export function containerLabels(run: Pick<ContainerRun, 'image' | 'mounts' | 'command'>): string[] {
   const configHash = createHash('sha256')
-    .update(JSON.stringify([SANDBOX_FLAGS, run.mounts, run.image, run.command]))
+    .update(JSON.stringify([sandboxFlags(), run.mounts, run.image, run.command]))
     .digest('hex');
   return [
     `com.docker.compose.project=${composeProject()}`,
@@ -310,6 +318,8 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
     sink?.destroy();
     throw new Error('cancelled by signal');
   }
+  let flags: readonly string[];
+  try { flags = sandboxFlags(); } catch (error) { sink?.destroy(); throw error; }
   const name = `${composeProject()}-extract-${randomBytes(6).toString('hex')}`;
   const entry: Live = { name, id: null, child: null, creating: null, cleanup: null, cancelled: false };
   live.set(name, entry);
@@ -325,7 +335,7 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
   // instead of becoming an unhandled 'error' event. It stays attached for late errors.
   sink?.on('error', (e: Error) => abort(e));
   entry.creating = dockerCall(
-    ['create', '--name', name, ...containerLabels(run), ...SANDBOX_FLAGS, ...run.mounts, run.image, ...run.command],
+    ['create', '--name', name, ...containerLabels(run), ...flags, ...run.mounts, run.image, ...run.command],
     DOCKER_CALL_TIMEOUT_MS,
   );
   const timer = setTimeout(() => abort(new Error(`container timed out after ${run.timeoutMs} ms`)), run.timeoutMs);

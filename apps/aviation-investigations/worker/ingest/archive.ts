@@ -81,7 +81,7 @@ export async function extractMember(
   const zf = await openZip(zipPath);
   const target = join(outDir, member);
   // Exclusive create: if the file already exists this call neither writes nor deletes it.
-  const handle = await open(target, 'wx', 0o644).catch((err: unknown) => {
+  const handle = await open(target, 'wx', 0o600).catch((err: unknown) => {
     zf.close();
     throw err;
   });
