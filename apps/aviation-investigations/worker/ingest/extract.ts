@@ -543,11 +543,15 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
   }
   let published = false;
   let stagingCreated = false;
-  const cleanup = (): void => cleanupExtraction({ dest, staging }, { stagingCreated, published });
+  // The destination is only an empty reservation until the atomic rename. It is
+  // safe to release even when a container still needs its mounted staging files.
+  const cleanup = (containersGone = true): void => cleanupExtraction(
+    { dest, staging }, { stagingCreated: stagingCreated && containersGone, published },
+  );
   const onSignal = (sig: NodeJS.Signals): void => {
     beginShutdown();
     void removeAllContainers().then((failures) => {
-      if (failures.length === 0) cleanup();
+      cleanup(failures.length === 0);
       for (const f of failures) console.error(opts.guard ? 'import cleanup unresolved' : f);
       process.exit(sig === 'SIGINT' ? 130 : 143);
     });
@@ -596,7 +600,7 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
     return manifest;
   } catch (err) {
     const failures = await removeAllContainers();
-    if (failures.length === 0) cleanup();
+    cleanup(failures.length === 0);
     if (failures.length) {
       throw new Error(`${err instanceof Error ? err.message : String(err)}; ${failures.join('; ')}`);
     }
