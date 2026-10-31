@@ -206,7 +206,9 @@ describe('the admin page', { timeout: 20_000 }, () => {
 
   it('costs: today, the month and the last, per search, uncertain charges, each budget with how much is used, by category and by stage', async () => {
     signedIn();
-    const overview = serve((o) => o);
+    // Today also had an indexing run: the daily interactive cap reads the interactive part only.
+    const overview = serve((o) => ({ ...o, costs: { ...o.costs, today: o.costs.interactiveToday + 0.92 } }));
+    expect(overview.costs.interactiveToday).toBeLessThan(overview.costs.today);
     await openAdmin();
     const costs = region(ADMIN_COPY.costs);
     expect(costs.querySelector('[data-stat="Today"] dd')?.textContent).toBe(formatUsd(overview.costs.today));
@@ -218,6 +220,9 @@ describe('the admin page', { timeout: 20_000 }, () => {
     expect(meters.map((m) => m.getAttribute('aria-label'))).toEqual(['All AI spend, this month', 'Interactive, this month', 'Interactive, today', 'Indexing and evaluation, this month']);
     expect(meters[0]?.getAttribute('aria-valuetext')).toBe(`${formatUsd(overview.costs.monthToDate)} of $100.00 · ${formatShare(overview.costs.monthToDate, 100)}`);
     expect(meters[2]?.getAttribute('aria-valuemax')).toBe('3');
+    // The daily cap is set against today's interactive spend, not all of today's.
+    expect(meters[2]?.getAttribute('aria-valuetext')).toBe(`${formatUsd(overview.costs.interactiveToday)} of $3.00 · ${formatShare(overview.costs.interactiveToday, 3)}`);
+    expect(costs.textContent).not.toContain('all of today’s spend');
     const categories = within(costs).getByRole('list', { name: 'By category, this month' });
     expect(within(categories).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
       `Interactive (AI searches)${formatUsd(overview.costs.byCategory.interactive)}`,

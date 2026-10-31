@@ -293,7 +293,7 @@ function Usage({ usage }: { usage: AdminOverview['usage'] }) {
 }
 
 /** A budget and how much of it is used: a meter in chart blue on a track of its lighter wash. */
-function Budget({ label, used, budget, note }: { label: string; used: number; budget: number; note?: string }) {
+function Budget({ label, used, budget }: { label: string; used: number; budget: number }) {
   const share = budget > 0 ? Math.min(1, used / budget) : 0;
   const words = `${formatUsd(used)} of ${formatUsd(budget)} · ${formatShare(used, budget)}`;
   return (
@@ -313,7 +313,6 @@ function Budget({ label, used, budget, note }: { label: string; used: number; bu
       >
         <div className="h-full rounded-full bg-blue" style={{ width: `${Math.max(used > 0 ? 1.5 : 0, share * 100)}%` }} />
       </div>
-      {note && <p className="mt-0.5 text-label text-muted">{note}</p>}
     </li>
   );
 }
@@ -344,7 +343,7 @@ function Costs({ costs }: { costs: AdminOverview['costs'] }) {
         <ul className="space-y-3">
           <Budget label="All AI spend, this month" used={costs.monthToDate} budget={costs.budgets.monthly} />
           <Budget label="Interactive, this month" used={costs.byCategory.interactive} budget={costs.budgets.interactiveMonthly} />
-          <Budget label="Interactive, today" used={costs.today} budget={costs.budgets.interactiveDaily} note="Today’s figure is all of today’s spend." />
+          <Budget label="Interactive, today" used={costs.interactiveToday} budget={costs.budgets.interactiveDaily} />
           <Budget label="Indexing and evaluation, this month" used={costs.byCategory.indexing + costs.byCategory.evaluation} budget={costs.budgets.ingestionMonthly} />
         </ul>
       </div>

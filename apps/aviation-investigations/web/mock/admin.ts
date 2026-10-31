@@ -148,6 +148,8 @@ export function mockAdminOverview({ now, evidence, ratings, admin }: MockAdminOp
     },
     costs: {
       today: today.usd,
+      // The day's spend without its indexing run: what the daily interactive budget caps.
+      interactiveToday: round(Math.max(0, today.usd - indexingOn(today.day))),
       monthToDate: total,
       previousMonth: 9.62,
       byCategory: { interactive, indexing, evaluation },

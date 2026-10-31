@@ -210,6 +210,10 @@ describe('the mock admin overview', () => {
     const { interactive, indexing, evaluation } = o.costs.byCategory;
     expect(interactive + indexing + evaluation).toBeCloseTo(o.costs.monthToDate, 5);
     expect(o.costs.today).toBe(o.usage.days.at(-1)?.usd);
+    // Today's interactive spend: all of today's but an indexing run's.
+    expect(o.costs.interactiveToday).toBeLessThanOrEqual(o.costs.today);
+    const indexingDay = AdminOverviewSchema.parse(mockAdminOverview({ now: new Date('2026-10-17T09:00:00.000Z'), evidence: MOCK_EVIDENCE_RELEASE, ratings: { useful: 0, notUseful: 0 }, admin: { name: 'Alex Example', email: 'alex@example.com' } }));
+    expect(indexingDay.costs.today - indexingDay.costs.interactiveToday).toBeCloseTo(0.92, 6);
     expect(o.costs.byStage.map((s) => s.usd)).toEqual([...o.costs.byStage.map((s) => s.usd)].sort((a, b) => b - a));
     expect(o.usage.feedback).toEqual({ useful: 43, notUseful: 14, usefulLast30Days: 19, notUsefulLast30Days: 7 });
     expect(o.system).toMatchObject({ ranking: 'er-q-h50-v1', automaticFilters: 'none', nextAutomaticImport: null, appEnv: 'dev' });
