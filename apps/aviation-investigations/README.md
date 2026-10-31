@@ -1253,7 +1253,9 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   table, the ratings), costs (budgets as meters, the daily one against `costs.interactiveToday`) and
   the system, all from `GET /api/admin/overview`
   (`AdminOverviewSchema`; the private `admin` query), times in the viewer's own zone. Everyone else,
-  and an admin the API answers 404, sees the ordinary not-found page; the page is not indexed.
+  and an admin the API answers 404, sees the ordinary not-found page; when who is signed in cannot
+  be read (the account read and its retry failed), the page says it didn't load, with Try again. The
+  page is not indexed.
 - **Briefs that exist**: the interface starts none. While the server has briefs off
   (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
   failed step offers New search, not Try again.

@@ -1293,9 +1293,10 @@ plain words and formatted numbers; times are in the viewer's own time zone, name
   each, so no row needs a colour of its own (trials and accounts share a scale; free undos and failed
   searches each have their own), today hatched as data still coming in, a band and a tooltip for the
   day under the pointer or picked with the arrow keys, and "Show the figures" for the same as a table;
-  then "Search ratings": useful, not useful and the share rated useful, all time and over 30 days.
-- **Costs:** today (UTC), this month to date, last month, per AI search this month and uncertain
-  charges (kept at the reserved cost); the budgets as meters on a track of their own wash (all AI spend
+  then "Search ratings": useful, not useful and the share rated useful, all time and over 30 days (a
+  share of no ratings is "—", said "None").
+- **Costs:** today (UTC), this month to date, last month, per AI search this month ("—", said "None",
+  with no searches) and uncertain charges (kept at the reserved cost); the budgets as meters on a track of their own wash (all AI spend
   this month, interactive this month, interactive today against today's interactive spend, indexing and
   evaluation this month), each with "$12.37 of $100.00 · 12%"; this month by category (bars) and by
   stage, with provider and model, most expensive first. Small sums show to the hundredth of a cent
@@ -1305,7 +1306,10 @@ plain words and formatted numbers; times are in the viewer's own time zone, name
   with its identifier under it, and the automatic filters likewise); tracing (on or off, the last
   export, failed exports); the dataset (NTSB snapshot, loaded, published, cases, generation); the next
   automatic import, "Not set up yet" while there is none.
-- A failed read says "The admin figures didn't load." with Try again.
+- A failed read says "The admin figures didn't load." with Try again. When who is signed in cannot be
+  read (the account read and its retry failed, Task 25b), the page says "This page didn't load." and
+  "Check your connection and try again." with Try again, rather than not-found; an account the server
+  says is not an admin still gets not-found.
 
 ## 5. States and copy (Owner-approved)
 
