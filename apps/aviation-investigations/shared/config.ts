@@ -38,6 +38,8 @@ const int = (def: number) => z.coerce.number().int().default(def);
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_ENV: z.enum(['dev', 'live']).default('dev'),
+  APP_VERSION: z.string().max(80).optional(),
+  AIRCASE_ADMIN_EMAILS: z.string().max(10000).default('').transform(v => [...new Set(listOf(v).map(s => s.toLowerCase()))]).refine(v => v.every(email => z.email().safeParse(email).success), 'expected comma-separated email addresses'),
   APP_URL: str('http://localhost:3000').refine(isHttpUrl, 'expected an http(s) URL'),
   TRUSTED_PROXY_CIDRS: z
     .string()
@@ -130,6 +132,8 @@ export interface AppConfig {
   /** Deployment environment (dev or live): Compose project, database, index prefix. */
   appEnv: Env['APP_ENV'];
   appUrl: string;
+  appVersion?: string;
+  adminEmails: string[];
   /**
    * Networks whose peers are trusted proxies (the tunnel connector's edge subnet).
    * Proxy headers such as CF-Connecting-IP are honoured only from these peers; when
@@ -278,6 +282,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   return {
     nodeEnv: e.NODE_ENV,
     appEnv: e.APP_ENV,
+    appVersion: e.APP_VERSION,
+    adminEmails: e.AIRCASE_ADMIN_EMAILS,
     appUrl: e.APP_URL,
     trustedProxyCidrs: e.TRUSTED_PROXY_CIDRS,
     host: e.HOST,

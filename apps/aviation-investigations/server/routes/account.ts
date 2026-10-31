@@ -42,6 +42,7 @@
  * confirmation (403 `reauth_required` without one) and expires this browser's session
  * cookie. Both are refused cross-site and need a JSON body.
  */
+import { isAdmin } from '../auth/admin.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AccountResponseSchema,
@@ -191,7 +192,7 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
     const until = signedIn ? await deletionConfirmedUntil(ctx.db, signedIn.sessionId) : null;
     const body = AccountResponseSchema.parse(
       signedIn
-        ? { signedIn: true, user: { name: signedIn.name, email: signedIn.email }, ...(until ? { deletionConfirmedUntil: until.toISOString() } : {}) }
+        ? { signedIn: true, user: { name: signedIn.name, email: signedIn.email }, ...(await isAdmin(ctx.db, signedIn, ctx.adminEmails ?? []) ? { isAdmin: true } : {}), ...(until ? { deletionConfirmedUntil: until.toISOString() } : {}) }
         : { signedIn: false },
     );
     return reply.code(200).type(JSON_TYPE).send(JSON.stringify(body));

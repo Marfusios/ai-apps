@@ -1391,3 +1391,48 @@ and an image scanner (for example `docker scout cves ai-aviation/app:<tag>`) for
 release image and the pinned base images (node, `postgres:16.2`, `cloudflared`, and the
 extraction image's Debian). Fix or record each finding before deploying; update a pin's
 tag and digest together.
+
+## Task 25: prompt mirrors, ratings and the admin overview
+
+1. Apply migration **0026_search_observability** with the migrator and deploy the matching
+   server. It adds private trace/rating columns, identity-free daily feedback totals and
+   reservation-lifetime outcome metadata. Existing evidence.v3 responses are unchanged.
+   Regenerated privilege checks include all new tables/functions; backups include daily
+   totals and 90-day outcome metadata and still exclude private evidence rows.
+2. Set `AIRCASE_ADMIN_EMAILS` in the environment's private configuration (comma-separated
+   verified Google emails). An empty value means no admins. Restart the app after a
+   change. Never commit real addresses. Test that an ordinary signed-in account and a
+   signed-out visitor both get 404 at `/api/admin/overview`.
+3. Load the matching environment's Langfuse project credentials through the existing
+   `AVIATION_ENV_FILES` mechanism. Host Node clients must start with the appropriate
+   `NODE_EXTRA_CA_CERTS`; Docker uses its configured trusted endpoint. Run
+   `pnpm -s worker langfuse-prompts --sync` before releasing linked generation spans.
+   It only calls Langfuse, never a model provider. Run it again to verify idempotence.
+   The two returned content hashes must match; a modified mirror or a version other
+   than 1 is a release failure. Do not edit the mirror in the Langfuse UI; resolve drift
+   against the frozen code and review any deliberate prompt version change.
+4. In the admin overview, check tracing enabled, last successful export and failed
+   export count. A null success timestamp before the first export is normal. An outage
+   logs `tracing_export_failed` with a cumulative count no more than once per five
+   minutes; never enable verbose upstream response/error logging to investigate it.
+   The counts reset on process restart. Scores are best effort and may lag or be lost;
+   use PostgreSQL feedback totals as the authoritative rating count.
+
+Progress reads have their own polling allowance (shared with brief polling), no model
+calls and no identity creation. The browser should poll at about 2 Hz, retain its random
+idempotency key, and display generic loading on 404 or after a process restart. For a
+cookieless first search, changing the normalized network identity invalidates progress;
+this does not cancel the search or change its charge. Later searches use the signed
+trial or account presented when their POST arrived. All progress, feedback and admin
+responses, including errors, are private/no-store.
+
+Admin usage dates are UTC accounting days. Charged searches exclude quota-refunded
+failures and exempt undos; mean cost divides all settled interactive spend in the month
+by its charged searches. Undos are admissions, including failed undo attempts; failures
+are also reported separately. The first rating chooses its aggregate day, even if the
+visitor changes it after midnight. All-time feedback totals survive search expiry and
+account deletion, without identities. The migration cannot reconstruct already-expired
+pre-0026 free undos. Per-account search counts stop at 90 days. The overview is bounded
+to 1,000 returned users, 50 cost groups, and 10,000 accounts processed; it refuses beyond
+that processing bound. Expand this implementation before the installation reaches it.
+The dataset's next automatic import stays null: none is scheduled.

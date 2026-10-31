@@ -1796,3 +1796,67 @@ origin, Turnstile, an app-specific Anthropic workspace/key, an app-specific Open
 project/key for embeddings, restricted database/search
 credentials, and a privacy/contact notice. Environment configuration keeps the app
 reproducible without any particular private network or shared secrets file.
+
+## Search operations and administration (Task 25)
+
+Progress is operational metadata, independent of admission and results. A bounded
+in-memory checklist records the actual scope → retrieve → rerank pipeline. Its key is
+an identity binding plus the request's unpredictable idempotency key. Bind to the
+presented account, else valid signed trial, else `networkHash` of the normalized IP
+or IPv6 /64. Capture this before admission creates a trial. Polls compute the same
+binding from their own requests; they never mint identities. This supports first-time
+anonymous searches without flushing headers early or changing POST responses. A
+network change or newly presented different identity returns 404; the UI uses generic
+loading. Saved owner/expiry checks invalidate progress after handover or deletion.
+Statuses/counts contain no question, suggestions or excerpt text. The shared polling
+bucket allows 150 requests/minute per network, separately from ordinary API traffic;
+entries expire five minutes after completion and a 1,000-entry LRU bounds memory.
+
+A visitor may rate an owned, unexpired results search. PostgreSQL commits the latest
+rating and its aggregate change together. The first rating fixes the UTC aggregate
+day; later changes move one count between ratings on that day. Expiry/deletion removes
+the private rating and trace association, but not identity-free `(day, ranking, rating,
+count)` totals. Aggregate writes are restricted to the database trigger. Private search
+rows remain excluded from backups; daily totals are backed up. Outcome-only
+`evidence_usage` metadata follows its reservation's 90-day retention and is backed up
+with it, so failed searches remain distinguishable from quota-free undo admissions
+once private results expire. Migration 0026 backfills outcomes/exemptions only where
+a private search still exists; historical free undos whose 24-hour records already
+expired cannot be reconstructed and are not presented as known undo counts.
+
+When tracing runs, a bounded serial queue reads the current rating and best-effort
+upserts `visitor_feedback` (1/0) to the private trace identifier. One score id and fixed
+creation timestamp per trace make rating changes replace a score. Queue size is 256;
+each network call times out after three seconds. Shutdown/outages may lose a score;
+PostgreSQL totals are authoritative. No question, email, principal, network identity,
+search identifier or model output is sent in the score. The trace id is captured when
+the search's execution span starts and stored once, before its provider stages.
+
+Admin access requires a fresh live Google session, a verified email and membership in
+`AIRCASE_ADMIN_EMAILS`. The database is rechecked rather than trusting a cookie cache.
+The overview is read-only, untraced, rate-limited and private/no-store; every access has
+one content-free audit line. It exposes account names and emails solely to configured
+admins, with no subjects, hashes, tokens, private searches, query text or keys. Counts
+use charged (settled, quota-counted) reservations, not provider calls; failed admissions
+and free undo admissions are separate. Distinct active visitors likewise mean visitors
+with a charged search. UTC accounting days match the ledger and budgets. `last90Days`
+is retained history, not a lifetime counter. Session activity can be null after session
+retention; last charged-search activity is also limited to retained history.
+
+Admin queries use a repeatable-read snapshot and a five-second statement bound, indexed
+reservation/ledger date ranges, a 50-row stage-cost bound and a 1,000-user response bound.
+User/hash mapping scans at most 10,000 accounts; beyond that, the overview refuses rather
+than returning a silently incomplete activity ranking. Stage `calls` count ledger lines
+(including non-provider settlement stages). The display truncates overlong provider/model
+labels to contract bounds, but preserves the cost of every grouped line. New accounts
+are not assigned historical searches by matching email: usage joins the HMAC of Google's
+issuer and subject. Dataset information comes from the served, validated manifest.
+
+Langfuse remains optional. Code-owned frozen prompts have one mirror name per version,
+with version 1 enforced and the content/schema hash checked by an operator command.
+Searches never read prompts remotely. OTLP exports only allowlisted metadata; explicit
+Langfuse generation/model/prompt attributes complement the existing GenAI counters.
+Failed exports increment the process-local counter and emit a fixed warning at most
+once per five minutes; successful exports record a timestamp. An outage cannot fail a
+search. These operational changes do not change frozen prompts, ranking hashes, quotas,
+reservations, generated-summary gates or evidence.v3 result contracts.

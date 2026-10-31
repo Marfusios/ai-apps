@@ -2424,3 +2424,36 @@ is applied automatically. See
 [the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migration
 0025, the matching client, rollback and accounting. Existing v2 records upgrade on
 read; the original scope.e3 wire schema and all evaluated ranking hashes are unchanged.
+
+### Search progress, ratings and administration
+
+`GET /api/evidence/progress/:key` returns the real scope, retrieval (including embedding),
+and rerank stages from `EvidenceProgressSchema`. The key is the POST's idempotency key.
+Progress is bound to the account or valid trial presented at POST arrival, or to the
+HMAC'd network identity when neither is presented. The latter lets the first anonymous
+search show progress before its trial cookie arrives. Poll with the same identity;
+404 means unknown, expired or mismatched. A changed network during that first search
+falls back to the generic loading card. No poll creates an identity or starts work.
+Entries last five minutes after completion, with a process-local 1,000-entry LRU.
+
+`POST /api/evidence/:id/feedback` accepts `{rating: "useful" | "not_useful"}` and returns
+204. Only the current owner may rate an unexpired result. Changing a rating replaces
+it; repeated submissions do not add votes. This costs no search or provider request.
+The private rating expires with its search; identity-free daily counts remain. With
+tracing enabled, a best-effort background score updates that search's trace.
+
+Set `AIRCASE_ADMIN_EMAILS` to comma-separated verified Google email addresses to allow
+`GET /api/admin/overview`. The default grants nobody access. Administrators receive
+`isAdmin: true` from `/api/account`; other responses omit the flag. The overview shows
+names/emails, session activity, charged-search counts over 1/7/30/90 UTC days, daily
+usage, feedback, settled costs, budgets and system state. It returns at most 1,000 users,
+uses private no-store responses and never traces the overview. Non-admins receive 404.
+The endpoint has no administrative write operations.
+
+Before enabling tracing for a release, mirror the frozen prompt templates with
+`pnpm -s worker langfuse-prompts --sync` using that environment's project credentials.
+The command creates version 1 of `aircase-scope.e3` and `aircase-rerank.r1`, or verifies
+the existing content hash. A mismatch stops it; prompts are never fetched by searches.
+Generation spans link these versions and export model names. Export failures remain
+non-blocking, produce at most one sanitized warning every five minutes, and appear
+with the last successful export time in the admin overview.

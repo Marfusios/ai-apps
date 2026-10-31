@@ -31,7 +31,7 @@ interface Parent {
 
 function row(p: Parent): EvidenceRow {
   return {
-    id: ID, readOwner: 'a'.repeat(64), readOwnerKind: 'trial', ownerMovedAt: null,
+    traceId: null, feedbackRating: null, feedbackDay: null, id: ID, readOwner: 'a'.repeat(64), readOwnerKind: 'trial', ownerMovedAt: null,
     billingPrincipal: 'a'.repeat(64), billingKind: 'trial', reservationId: 1, freeUndoReservationId: p.claimed ? 7 : null,
     generationId: 1, casesIndex: 'test-cases', passagesIndex: 'test-passages', status: 'results', createdAt: now,
     expiresAt: new Date(now.getTime() + (p.expired ? -1 : 86_400_000)),

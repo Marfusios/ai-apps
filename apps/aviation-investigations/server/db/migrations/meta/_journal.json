@@ -183,6 +183,13 @@
       "when": 1792927941911,
       "tag": "0025_evidence_v3",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793467509111,
+      "tag": "0026_search_observability",
+      "breakpoints": true
     }
   ]
 }

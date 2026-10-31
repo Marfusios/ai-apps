@@ -1,6 +1,6 @@
 /** One admitted evidence search. No path here can call compose or check. */
 import { and, eq, inArray } from 'drizzle-orm';
-import { rankEvidence, RankingFailure, vectorText, type LexicalSource, type RankingPhase } from './pipeline.js';
+import { rankEvidence, RankingFailure, vectorText, type LexicalSource, type RankingPhase, type RankingObserver } from './pipeline.js';
 import { disclosedQuery, questionQuery, remainingSuggestion } from './disclosure.js';
 import { autoFilterPolicy } from './auto-filters.js';
 import { evidenceRankingConfig } from './ranking-config.js';
@@ -20,7 +20,7 @@ export class EvidenceFailure extends Error {
 }
 
 export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: PinnedDataset, admission: Admission,
-  signal: AbortSignal): Promise<void> {
+  signal: AbortSignal, progress: RankingObserver = {}): Promise<void> {
   const ai = ctx.ai!, services = ctx.evidence!;
   const llm = ai.llm!, policy = ai.policy!;
   const config = ai.evidenceRanking ?? evidenceRankingConfig();
@@ -40,6 +40,7 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
   };
   await startRequestSpan('evidence.request', { datasetGeneration: String(row.generationId) }, async (span) => {
     try {
+      if (span.traceId) await ctx.db.update(evidenceSearches).set({ traceId: span.traceId }).where(and(eq(evidenceSearches.id, row.id), eq(evidenceSearches.status, 'running')));
       signal.throwIfAborted();
       const route = row.data.edited ? { kind: 'search' as const } : evidenceRoute(row.data.question);
       if (route.kind === 'corpus_statistics') finalData.hint = { kind: 'corpus_statistics' };
@@ -65,8 +66,9 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
         if (!still.length) throw new EvidenceFailure('stopped');
         signal.throwIfAborted();
       }, {
+        ...progress,
         onExecution: facts => { execution = { ...facts }; },
-        onStage: stage => { active = stage; },
+        onStage: stage => { active = stage; progress.onStage?.(stage); },
         onFallback: ({ stage, outcome }) => {
           if (stage === 'scope') ctx.log.warn({ stage, outcome: 'no_suggestion', failure: outcome }, 'evidence suggestion unavailable');
           else ctx.log.warn({ stage, outcome }, 'evidence rerank unavailable');

@@ -33,6 +33,9 @@ export interface RankingExecution {
   autoFilterReason: AutoFilterReason;
 }
 export interface RankingObserver {
+  onQuestion?: (result: 'suggestions' | 'note' | 'nothing_to_suggest' | 'unavailable', failed: boolean) => void;
+  onRetrieved?: (cases: number) => void;
+  onOrdered?: (applied: boolean, skipped: boolean) => void;
   onExecution?: (execution: RankingExecution) => void;
   onStage?: (stage: RankingPhase) => void;
   onFallback?: (failure: { stage: 'scope' | 'rerank'; outcome: RankingFailureOutcome }) => void;
@@ -173,6 +176,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
       input.signal.throwIfAborted();
     }
   }
+  try { observer.onQuestion?.(suggestion ? 'suggestions' : note ? 'note' : scopeOutcome === 'non_search' || scopeOutcome === 'skipped' ? 'nothing_to_suggest' : 'unavailable', !['used', 'non_search', 'skipped'].includes(scopeOutcome)); } catch { /* progress is optional */ }
   const { executed, lexicalSource, addedTerms = null } = input.edited ?? rankingTexts(input.question, suggestion?.terms ?? null, config);
   const automatic = automaticState(policy, input.question, suggestion?.filters ?? null, Boolean(input.edited), scopeOutcome === 'non_search');
   const appliedFilters = automatic.filters ? { ...input.filters, ...automatic.filters } : input.filters;
@@ -214,6 +218,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
   if (!result || retrieveError) throw new RankingFailure('retrieve', [...usage]);
   if (result.cases.length !== result.ranking.length || new Set(result.cases.map(c => c.case.ntsbNo)).size !== result.cases.length ||
       result.cases.some((c, i) => c.case.ntsbNo !== result!.ranking[i]!.ntsbNo)) throw new RankingFailure('retrieve', [...usage]);
+  try { observer.onRetrieved?.(result.cases.length); } catch { /* progress is optional */ }
   let rerankOutcome: RerankOutcome = config.rerank ? input.uncertainAllowanceReached ? 'skipped_uncertain_allowance' : 'empty' : 'disabled';
   const r = config.rerank;
   if (r && !input.uncertainAllowanceReached && result.cases.length) {
@@ -244,5 +249,6 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
       }
     }
   }
+  try { observer.onOrdered?.((rerankOutcome as RerankOutcome) === 'applied', ['disabled', 'empty', 'skipped_uncertain_allowance'].includes(rerankOutcome)); } catch { /* progress is optional */ }
   return { ...result, ...execution, configuration, suggestion, note, scopeOutcome, rerankOutcome, usage };
 }

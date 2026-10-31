@@ -373,3 +373,45 @@ The new claim column is private, non-resettable and included in restore privileg
 The scope guard is a conservative permission rule, not a proof of semantic safety for
 all language. Relevance and incident interpretation remain research tasks; all public
 filters, lexical changes, AI ordering and mark sources are disclosed and undoable.
+
+## Task 25 review surface
+
+The new admin endpoint is a PII boundary. `AIRCASE_ADMIN_EMAILS` is empty by default;
+only a freshly read, unexpired Google session with a verified allowlisted email passes.
+The account/Google subject/session join is rechecked in PostgreSQL. Non-admins and
+signed-out callers get 404, and the account response omits `isAdmin` unless true.
+Matched-route network limits and private/no-store headers apply, including encoded
+routes and failures. No admin data is traced; its access audit contains only the matched
+route, method, status and timing. The overview has no writes and bounded database reads.
+Admin responses include names/emails and usage counts, never private searches, OAuth
+subjects, hashes, session material, credentials or trace ids. Contract `last90Days`
+explicitly follows existing retention rather than creating a lifetime user counter.
+
+Progress carries only fixed stage statuses/results, dates and counts. The client-generated
+idempotency key is a capability and must stay unpredictable (the client uses a random
+UUID). At POST arrival it is bound to the presented principal or, when cookieless, the
+HMAC'd normalized network identity. Polls use the same rule, cannot create trials, and
+never fall back to the network when a valid different principal is presented. NAT peers
+would still need the secret capability; a changed network yields 404 and generic loading.
+An owner/expiry read additionally invalidates a checklist after handover or deletion.
+Memory is bounded and expires after five minutes; restarts lose only progress metadata.
+
+Feedback POSTs enforce same-origin, ordinary network limits, exact input validation and
+current ownership/unexpired results in the writing statement. Account writes take the
+existing live-account lifecycle lock. No Turnstile, quota or model stage is invoked.
+A database trigger makes the latest rating and daily aggregate atomic; repeat submissions
+cannot multiply counts. Private ratings and trace ids disappear with search rows and
+are not backed up. Identity-free daily totals remain and are backed up. Reservation-linked
+outcome metadata has the existing 90-day lifetime; it contains no question or account data.
+Runtime ingestion cannot read these tables or modify aggregates. The regenerated restore
+privilege baseline covers their grants and SECURITY DEFINER triggers.
+
+The asynchronous score queue is bounded and uses fixed score names, numeric values and
+opaque trace ids only. The database rating is authoritative; export failures, timeouts,
+queue pressure or shutdown never change the feedback response or spending. No guarantee
+of score delivery across a restart is made. OTLP failure logs use fixed categories and
+counts, never SDK errors, URLs or bodies. Static prompt mirrors contain only the reviewed
+code templates/schema and placeholders; user input never reaches prompt management.
+Prompt sync refuses version/content drift; runtime searches never load remote prompts.
+These changes require independent review before release. Generated summaries and partial
+display remain gated, and the evaluated ranking configurations are unchanged.

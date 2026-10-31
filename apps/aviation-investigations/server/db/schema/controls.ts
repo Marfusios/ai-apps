@@ -388,6 +388,8 @@ export const costLedger = pgTable(
 
 /** Control tables, children first (for test resets and pruning order); AI briefs (schema/briefs.ts) included. */
 export const CONTROL_TABLES = [
+  'evidence_usage',
+  'evidence_feedback_daily',
   'brief_steps',
   'evidence_searches',
   'briefs',
