@@ -70,7 +70,10 @@ export const AdminOverviewSchema = z.strictObject({
     }),
   }),
   costs: z.strictObject({
+    /** Today (UTC), all categories. */
     today: Usd,
+    /** Today (UTC), settled interactive spend only: what `budgets.interactiveDaily` caps. */
+    interactiveToday: Usd,
     monthToDate: Usd,
     previousMonth: Usd,
     /** This month, by spend category. */
