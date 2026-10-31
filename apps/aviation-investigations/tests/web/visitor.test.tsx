@@ -6,7 +6,7 @@
  * for signed-in AI, and a request refused because the session ended. Ask AI starts an AI
  * evidence search (Task 23); briefs that exist are opened by their link.
  */
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, focusManager } from '@tanstack/react-query';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -15,6 +15,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
+import type { AccountResponse } from '../../shared/contracts/account';
 import { StartBriefResponseSchema } from '../../shared/contracts/briefs';
 import { EVIDENCE_HEADING } from '../../shared/contracts/evidence';
 import { EXPIRED_TITLE as SEARCH_GONE } from '../../web/src/features/evidence/display';
@@ -33,9 +34,11 @@ import {
 } from '../../web/src/features/auth/visitor';
 import { DeletionUnconfirmedError, SignOutUnconfirmedError, deleteAccount, signOut } from '../../web/src/features/auth/api';
 import { rememberQuestion, rememberedQuestion } from '../../web/src/features/brief/memory';
+import { ratingOf, rememberRating } from '../../web/src/features/evidence/ratings';
 import { postJson } from '../../web/src/api';
-import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
+import { MOCK_USER, createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
 import { ACCOUNT_COPY } from '../../web/src/pages/Account';
+import { ADMIN_COPY } from '../../web/src/pages/Admin';
 import { evidenceAnswer } from './evidence-answer';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
 
@@ -466,9 +469,11 @@ describe('a new visitor sees nothing of the previous one (Task 20 review)', () =
     }
     const known = new Set<string>([...PRIVATE_QUERY_ROOTS, ...PUBLIC_QUERY_ROOTS]);
     for (const key of seen.keys()) expect(known.has(key), `query key root '${key}' is neither private nor public`).toBe(true);
-    // Each private namespace's query function guards its answer.
+    // Each private namespace's query function guards its answer; the account's then goes through
+    // `acceptAccount`, which forgets the previous visitor when the account is another one, or none.
     for (const key of PRIVATE_QUERY_ROOTS) {
-      const definitions = files.filter((f) => new RegExp(`queryKey:\\s*\\['${key}'[^\\n]*\\n\\s*queryFn: \\(\\{ signal \\}\\) =>\\s*privateRead`).test(readFileSync(f, 'utf8')));
+      const guarded = key === 'account' ? 'async \\(\\{ signal, client \\}\\) =>\\s*acceptAccount\\(client, await privateRead' : '\\(\\{ signal \\}\\) =>\\s*privateRead';
+      const definitions = files.filter((f) => new RegExp(`queryKey:\\s*\\['${key}'[^\\n]*\\n\\s*queryFn: ${guarded}`).test(readFileSync(f, 'utf8')));
       expect(definitions, key).toHaveLength(1);
     }
   });
@@ -931,5 +936,233 @@ describe('every open tab forgets the previous visitor (Task 20 review N4)', () =
     await otherTabChangesVisitor(change);
     await otherTabRecordsChange({ event: true }, change);
     expect(visitorGeneration()).toBe(before + 1);
+  });
+});
+
+/** Another account than the mock's, which owns none of its searches, briefs or contexts and is no admin. */
+const OTHER_USER = { id: '5d2b8e4f-1c3a-4f6e-a7b9-2e4c6a8b0d1f', name: 'Sam Other', email: 'sam.other@example.com' };
+/** A new account under the mock account's e-mail, after that account was deleted elsewhere: another id. */
+const RECREATED_USER = { ...MOCK_USER, id: '9c7a5e3b-2d4f-4a6c-8b1e-3f5a7c9e1b2d' };
+const NOT_FOUND_TITLE = 'There is no page here.';
+const notFound = () => HttpResponse.json({ error: 'not_found', message: 'Not found.' }, { status: 404 });
+
+/**
+ * On the server, this browser's session is now `account`'s (another account, or none), with no
+ * sign-out made here and no marker from another tab: what the previous account owned is not
+ * found for it, and it is no admin.
+ */
+function sessionOnServerBecomes(account: AccountResponse): void {
+  server.use(
+    http.get('*/api/account', () => HttpResponse.json(account)),
+    http.get('*/api/evidence/:id', notFound),
+    http.get('*/api/evidence/:id/cases/:ntsbNo', notFound),
+    http.get('*/api/briefs/:id', notFound),
+    http.get('*/api/briefs/:id/steps/:n/cases/:ntsbNo', notFound),
+    http.get('*/api/admin/overview', notFound),
+  );
+}
+
+/** Counts the requests to `path` from now on. */
+function countReads(path: string): () => number {
+  let reads = 0;
+  server.events.on('request:start', ({ request }) => {
+    if (request.method === 'GET' && new URL(request.url).pathname === path) reads += 1;
+  });
+  return () => reads;
+}
+
+describe('an account switch the page finds itself forgets the previous visitor (Task 25 security review, condition 1)', () => {
+  afterEach(() => {
+    focusManager.setFocused(undefined);
+  });
+
+  it.each([
+    ['another account signed in from another tab', { signedIn: true, user: OTHER_USER } as AccountResponse],
+    ['the session ended', { signedIn: false } as AccountResponse],
+  ])(
+    '%s, with no sign-out here and no marker: back on the page, the account is read again and the previous visitor goes before the new one shows',
+    async (_name, next) => {
+      signedInApi();
+      const app = await searchWithDrawer();
+      const id = /\/ai\/([0-9a-f-]{36})/.exec(app.drawerUrl)?.[1] as string;
+      rememberRating(id, 'useful');
+      rememberQuestion(id, 'an earlier question');
+      const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+      const before = visitorGeneration();
+      const accountReads = countReads('/api/account');
+      sessionOnServerBecomes(next);
+      // The person comes back to this tab: the page reads the account again, however recent its last read.
+      act(() => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+      await waitFor(() => expect(visitorGeneration()).toBe(before + 1), SLOW);
+      expect(ratingOf(id)).toBeNull();
+      expect(rememberedQuestion(id)).toBeNull();
+      // What this tab still shows is read again as the new visitor: the search is not theirs.
+      expect((await screen.findAllByText(SEARCH_GONE, {}, SLOW)).length).toBeGreaterThan(0);
+      expect(privateShown()).toBe(false);
+      expect(['brief', 'brief-case', 'evidence', 'evidence-case', 'admin'].every((root) => app.client.getQueriesData({ queryKey: [root] }).every(([, data]) => data === undefined))).toBe(true);
+      expect(app.client.getQueryData(['account'])).toEqual(next);
+      const banner = screen.getByRole('banner');
+      if (next.signedIn) await within(banner).findByRole('link', { name: 'Account' });
+      else await within(banner).findByRole('button', { name: 'Sign in' });
+      // The page took the new account without reading it again, and told no other tab: each finds the change itself.
+      await act(() => sleep(200));
+      expect(accountReads()).toBe(1);
+      expect(visitorGeneration()).toBe(before + 1);
+      expect(window.localStorage.getItem(VISITOR_STORAGE_KEY)).toBe(marker);
+    },
+    20_000,
+  );
+
+  it('a page back from the back/forward cache that reads another account, with no marker, forgets the previous visitor', async () => {
+    signedInApi();
+    const app = await searchWithDrawer();
+    const before = visitorGeneration();
+    sessionOnServerBecomes({ signedIn: true, user: OTHER_USER });
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    await waitFor(() => expect(visitorGeneration()).toBe(before + 1), SLOW);
+    expect((await screen.findAllByText(SEARCH_GONE, {}, SLOW)).length).toBeGreaterThan(0);
+    expect(privateShown()).toBe(false);
+    expect(app.client.getQueryData(['account'])).toEqual({ signedIn: true, user: OTHER_USER });
+  }, 20_000);
+
+  it('the admin overview already read is gone when a page back from the back/forward cache reads an account that is no admin', async () => {
+    signedInApi({ admin: true });
+    const app = renderApp('/admin');
+    await screen.findByRole('region', { name: ADMIN_COPY.users }, SLOW);
+    // Elsewhere on the site, the overview stays in the cache.
+    await act(() => app.router.navigate('/'));
+    expect(app.client.getQueryData(['admin', 'overview'])).toBeDefined();
+    const before = visitorGeneration();
+    const overviewReads = countReads('/api/admin/overview');
+    sessionOnServerBecomes({ signedIn: true, user: OTHER_USER });
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    await waitFor(() => expect(visitorGeneration()).toBe(before + 1), SLOW);
+    expect(app.client.getQueryCache().findAll({ queryKey: ['admin'] })).toEqual([]);
+    await waitFor(() => expect(within(screen.getByRole('banner')).queryByRole('link', { name: 'Admin' })).toBeNull());
+    await act(() => app.router.navigate('/admin'));
+    expect(await screen.findByRole('heading', { level: 1, name: NOT_FOUND_TITLE }, SLOW)).toBeTruthy();
+    expect(overviewReads()).toBe(0);
+  }, 20_000);
+
+  it('an authorized admin overview released after another account appears is dropped: never cached, never shown', async () => {
+    signedInApi({ admin: true });
+    // The previous account's overview, authorized, waits on its way.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let held = 0;
+    server.use(
+      http.get('*/api/admin/overview', async () => {
+        held += 1;
+        await released;
+        return undefined;
+      }),
+    );
+    const app = renderApp('/admin');
+    await waitFor(() => expect(held).toBe(1), SLOW);
+    const before = visitorGeneration();
+    sessionOnServerBecomes({ signedIn: true, user: OTHER_USER });
+    // The page's next account read.
+    await act(() => app.client.invalidateQueries({ queryKey: ['account'] }));
+    await waitFor(() => expect(visitorGeneration()).toBe(before + 1), SLOW);
+    expect(await screen.findByRole('heading', { level: 1, name: NOT_FOUND_TITLE }, SLOW)).toBeTruthy();
+    // The overview arrives now, for the previous account: it is not taken.
+    release();
+    await act(() => sleep(200));
+    expect(app.client.getQueryData(['admin', 'overview'])).toBeUndefined();
+    expect(screen.queryByRole('heading', { level: 1, name: ADMIN_COPY.title })).toBeNull();
+    expect(screen.queryByRole('region', { name: ADMIN_COPY.users })).toBeNull();
+    expect(document.body.textContent).not.toContain(MOCK_USER.email);
+  }, 20_000);
+
+  it('an account that stops being an admin loses the overview, and nothing else: it is the same visitor', async () => {
+    signedInApi({ admin: true });
+    const app = renderApp('/admin');
+    await screen.findByRole('region', { name: ADMIN_COPY.users }, SLOW);
+    const heldId = '00000000-0000-4000-8000-0000000000cc';
+    rememberQuestion(heldId, 'an earlier question');
+    const before = visitorGeneration();
+    server.use(
+      http.get('*/api/account', () => HttpResponse.json({ signedIn: true, user: { ...MOCK_USER } })),
+      http.get('*/api/admin/overview', notFound),
+    );
+    await act(() => app.client.invalidateQueries({ queryKey: ['account'] }));
+    expect(await screen.findByRole('heading', { level: 1, name: NOT_FOUND_TITLE }, SLOW)).toBeTruthy();
+    await waitFor(() => expect(app.client.getQueryData(['admin', 'overview'])).toBeUndefined());
+    expect(visitorGeneration()).toBe(before);
+    expect(rememberedQuestion(heldId)).toBe('an earlier question');
+  }, 20_000);
+
+  it('a new account under the same e-mail is another visitor (security review, round 2): with no signed-out read or marker between, the search, its rating and a late admin overview all go', async () => {
+    signedInApi({ admin: true });
+    // The admin overview this account reads waits on its way, authorized.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let held = 0;
+    server.use(
+      http.get('*/api/admin/overview', async () => {
+        held += 1;
+        await released;
+        return undefined;
+      }),
+    );
+    const app = await searchWithDrawer();
+    const id = /\/ai\/([0-9a-f-]{36})/.exec(app.drawerUrl)?.[1] as string;
+    rememberRating(id, 'useful');
+    // The admin page asks for the overview, then the account goes back to its search, whose pages are cached.
+    await act(() => app.router.navigate('/admin'));
+    await waitFor(() => expect(held).toBe(1), SLOW);
+    await act(() => app.router.navigate(app.drawerUrl));
+    await waitFor(() => expect(privateShown()).toBe(true), SLOW);
+    const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+    const before = visitorGeneration();
+    // Elsewhere the account was deleted, and a new account signed up in this browser with the same
+    // e-mail: the next account read goes straight from one to the other.
+    sessionOnServerBecomes({ signedIn: true, user: RECREATED_USER });
+    await act(() => app.client.invalidateQueries({ queryKey: ['account'] }));
+    await waitFor(() => expect(visitorGeneration()).toBe(before + 1), SLOW);
+    expect(ratingOf(id)).toBeNull();
+    expect((await screen.findAllByText(SEARCH_GONE, {}, SLOW)).length).toBeGreaterThan(0);
+    expect(privateShown()).toBe(false);
+    // The previous account's overview arrives now: it is not taken.
+    release();
+    await act(() => sleep(200));
+    expect(app.client.getQueryData(['admin', 'overview'])).toBeUndefined();
+    expect(['evidence', 'evidence-case', 'admin'].every((root) => app.client.getQueriesData({ queryKey: [root] }).every(([, data]) => data === undefined))).toBe(true);
+    expect(app.client.getQueryData(['account'])).toEqual({ signedIn: true, user: RECREATED_USER });
+    expect(window.localStorage.getItem(VISITOR_STORAGE_KEY)).toBe(marker);
+  }, 20_000);
+
+  it('the same account read again keeps the visitor’s work, even under a new name and e-mail: the id is the account', async () => {
+    signedInApi();
+    const app = await searchWithDrawer();
+    const id = /\/ai\/([0-9a-f-]{36})/.exec(app.drawerUrl)?.[1] as string;
+    rememberRating(id, 'useful');
+    const before = visitorGeneration();
+    const renamed = { ...MOCK_USER, name: 'Alex Renamed', email: 'alex.renamed@example.com' };
+    server.use(http.get('*/api/account', () => HttpResponse.json({ signedIn: true, user: renamed })));
+    await act(() => app.client.invalidateQueries({ queryKey: ['account'] }));
+    await waitFor(() => expect(app.client.getQueryData(['account'])).toEqual({ signedIn: true, user: renamed }), SLOW);
+    await act(() => sleep(200));
+    expect(visitorGeneration()).toBe(before);
+    expect(ratingOf(id)).toBe('useful');
+    expect(privateShown()).toBe(true);
+  }, 20_000);
+
+  it('an account appearing where the page was signed out forgets nothing: a trial’s work moves to the account', async () => {
+    server.use(...createHandlers({ googleEnabled: true }));
+    const app = renderApp('/');
+    const banner = screen.getByRole('banner');
+    await within(banner).findByRole('button', { name: 'Sign in' }, SLOW);
+    const heldId = '00000000-0000-4000-8000-0000000000dd';
+    rememberQuestion(heldId, 'an earlier question');
+    const before = visitorGeneration();
+    server.use(http.get('*/api/account', () => HttpResponse.json({ signedIn: true, user: { ...MOCK_USER } })));
+    await act(() => app.client.invalidateQueries({ queryKey: ['account'] }));
+    await within(banner).findByRole('link', { name: 'Account' }, SLOW);
+    expect(visitorGeneration()).toBe(before);
+    expect(rememberedQuestion(heldId)).toBe('an earlier question');
   });
 });

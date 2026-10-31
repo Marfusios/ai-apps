@@ -8,13 +8,15 @@ import { Chip } from '../components/Chip';
 import { CompassMark } from '../components/CompassMark';
 import { SearchBox } from '../components/SearchBox';
 import { AiNoticeBox } from '../features/ai/AiNoticeBox';
+import { SearchWait } from '../features/evidence/SearchWait';
 import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { formatChartDate, formatCount } from '../lib/format';
 
 /**
  * Home, "Clear sky" (UI_DESIGN §4.1): compass, headline, the question box and
  * examples. Example chips only fill the box; they never run a search. Ask AI starts an AI
- * evidence search (UI_DESIGN §4.9) and opens its results.
+ * evidence search (UI_DESIGN §4.9), shows its checklist under the box while it runs (§4.10) and
+ * opens its results.
  */
 export function Home() {
   const navigate = useNavigate();
@@ -51,6 +53,7 @@ export function Home() {
           inputRef={input}
           className="mt-4 w-full max-w-[660px]"
         />
+        <SearchWait pending={ai.pending} className="mt-3" />
         <AiNoticeBox
           notice={ai.notice}
           keywordHref={value.trim() ? `/explore?${new URLSearchParams({ q: value.trim() }).toString()}` : '/explore'}

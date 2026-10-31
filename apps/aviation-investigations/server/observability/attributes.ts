@@ -164,13 +164,15 @@ const ENUM_LISTS: Readonly<Partial<Record<keyof AllowedAttrs, ReadonlySet<string
 
 export const ALLOWED_ATTR_KEYS: readonly string[] = Object.keys(KINDS);
 
+/** Explicit generation and frozen prompt links derived from sanitized attributes. */
+export const LANGFUSE_ATTR_KEYS = ['langfuse.observation.type', 'langfuse.observation.model.name', 'langfuse.observation.prompt.name', 'langfuse.observation.prompt.version'] as const;
+
 /**
  * OpenTelemetry GenAI semantic attributes, which Langfuse maps to a generation's model,
  * usage and cost (`gen_ai.usage.cost` is Langfuse's key, stored as the `total` cost).
  * Never set directly: a span with a `model` derives them from its own sanitized
  * attributes (`genAiAttributes`). Metadata only: no prompt or completion key.
  */
-export const LANGFUSE_ATTR_KEYS = ['langfuse.observation.type', 'langfuse.observation.model.name', 'langfuse.observation.prompt.name', 'langfuse.observation.prompt.version'] as const;
 export const GEN_AI_ATTR_KEYS = ['gen_ai.request.model', 'gen_ai.usage.input_tokens', 'gen_ai.usage.output_tokens', 'gen_ai.usage.cost'] as const;
 
 /** Every key an exported span can carry: the allowlist and the derived GenAI keys. */
@@ -207,12 +209,13 @@ const VALUE_RE = /^[A-Za-z0-9._:@+-]+$/;
 const NAME_RE = /^[A-Za-z0-9_.:-]+$/;
 
 /** Operational counters; no content. */
-export const tracingStats = { droppedAttrs: 0, droppedNames: 0, exportFailures: 0 };
+export const tracingStats = { droppedAttrs: 0, droppedNames: 0, exportFailures: 0, internalErrors: 0 };
 
 export function resetTracingStats(): void {
   tracingStats.droppedAttrs = 0;
   tracingStats.droppedNames = 0;
   tracingStats.exportFailures = 0;
+  tracingStats.internalErrors = 0;
 }
 
 /**

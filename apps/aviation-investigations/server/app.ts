@@ -178,7 +178,7 @@ export const CONNECTION_CHECK_MS = 5_000;
  */
 export const ASSET_ROUTES: ReadonlySet<string> = new Set([...PUBLIC_PAGE_ROUTES, ROBOTS_ROUTE, '/*']);
 const HEALTH_ROUTE = '/api/health';
-/** Read by the brief page about once a second while a step runs. */
+/** Separate polling budget: brief status about once a second, evidence progress about twice. */
 export const POLL_ROUTES: ReadonlySet<string> = new Set(['/api/briefs/:id', '/api/evidence/progress/:key']);
 /**
  * The sitemaps: built once per dataset and served from memory, with a generous limit of their

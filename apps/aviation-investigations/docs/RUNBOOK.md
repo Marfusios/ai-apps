@@ -1401,8 +1401,10 @@ tag and digest together.
 
 ## Task 25: prompt mirrors, ratings and the admin overview
 
-1. Apply migration **0026_search_observability** with the migrator and deploy the matching
-   server. It adds private trace/rating columns, identity-free daily feedback totals and
+1. Deploy the release as in [Deploying an environment](#deploying-an-environment): run
+   `pnpm app:migrate`, which applies migration **0026_search_observability** with the
+   migrator, then the free [AI preflight](#ai-preflight), then `pnpm app:up`. The migration adds
+   private trace/rating columns, identity-free daily feedback totals and
    reservation-lifetime outcome metadata. Existing evidence.v3 responses are unchanged.
    Regenerated privilege checks include all new tables/functions; backups include daily
    totals and 90-day outcome metadata and still exclude private evidence rows.
@@ -1425,6 +1427,23 @@ tag and digest together.
    The counts reset on process restart. Scores are best effort and may lag or be lost;
    use PostgreSQL feedback totals as the authoritative rating count.
 
+**Open tabs.** A tab left open across the deploy keeps the previous client, whose strict account
+schema refuses the new `user.id`: it shows the account read as failed until it is reloaded.
+
+**Record with the release** (Task 25 security review, condition 4): the live migrator applied
+0026 and the privilege baseline was verified; the live allowlist holds only the intended verified
+accounts; the prompt sync used the live project and its second run returned the same content
+hashes at version 1; and the free preflight passed with the final live settings.
+
+**Rolling back.** Keep migration 0026: set the previous release's `APP_VERSION` and run
+`pnpm app:up`, which starts its tagged image unchanged (rollback in
+[Deploying an environment](#deploying-an-environment)). There is no down migration and no
+database restore. The migration only adds nullable columns, two tables and their triggers:
+the previous release never writes the new columns, the triggers go on recording search
+usage, and its retention still prunes those records with their reservations after 90 days.
+Ratings, progress reads and the admin overview return with the next deployment of this
+release; the daily rating totals already kept stay.
+
 Progress reads have their own polling allowance (shared with brief polling), no model
 calls and no identity creation. The browser should poll at about 2 Hz, retain its random
 idempotency key, and display generic loading on 404 or after a process restart. For a
@@ -1433,13 +1452,20 @@ this does not cancel the search or change its charge. Later searches use the sig
 trial or account presented when their POST arrived. All progress, feedback and admin
 responses, including errors, are private/no-store.
 
-Admin usage dates are UTC accounting days. Charged searches exclude quota-refunded
-failures and exempt undos; mean cost divides all settled interactive spend in the month
-by its charged searches. Undos are admissions, including failed undo attempts; failures
-are also reported separately. The first rating chooses its aggregate day, even if the
+Admin usage dates are UTC accounting days. Search counts, active visitors, failures
+and free undos cover evidence searches only; AI briefs are excluded. Charged searches
+exclude quota-refunded failures and exempt undos; mean cost divides all settled
+interactive spend in the month (including any brief spend) by charged evidence searches.
+`costs.today` includes every category for the UTC day; `costs.interactiveToday` includes
+only interactive spend, for comparison with the daily interactive budget. Undos are
+admissions, including failed undo attempts; failures are also reported separately. The first rating chooses its aggregate day, even if the
 visitor changes it after midnight. All-time feedback totals survive search expiry and
 account deletion, without identities. The migration cannot reconstruct already-expired
-pre-0026 free undos. Per-account search counts stop at 90 days. The overview is bounded
+pre-0026 free undos; without outcome metadata a reservation counts as neither a failure
+nor a free undo. Per-account search counts stop at 90 days. The overview is bounded
 to 1,000 returned users, 50 cost groups, and 10,000 accounts processed; it refuses beyond
-that processing bound. Expand this implementation before the installation reaches it.
+that processing bound with 503 and log category `admin_overview_user_limit`.
+The whole overview has a 15-second deadline in addition to five-second SQL statement
+limits; timeout returns 503 with `admin_overview_timeout`. Any held overview transaction
+is destroyed on timeout. Expand this implementation before reaching the account bound.
 The dataset's next automatic import stays null: none is scheduled.

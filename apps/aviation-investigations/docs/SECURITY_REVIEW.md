@@ -241,7 +241,11 @@ re-reviewed. The implementation review must cover in particular:
   anyway when it cannot read local storage; every private
   query, late answers dropped, the questions and retry keys; an AI request
   under way is discarded, its open Turnstile check cancelled, and it never restores a
-  question, a retry key or a navigation);
+  question, a retry key or a navigation); and, in the tab itself, whenever an account read
+  shows another account or none (Task 25): accounts are compared by their random
+  application id (`user.id`), never by email, because a deleted account's email can belong
+  to a new account, which must not see the previous one's searches, ratings or admin
+  overview;
 - storage and backups: no provider tokens, scopes, picture, IP address or user agent
   (database hooks clear them, CHECK constraints refuse them), the app role's grants on
   the auth tables (no UPDATE; no DELETE of an account link on its own), backups without
@@ -405,6 +409,7 @@ are not backed up. Identity-free daily totals remain and are backed up. Reservat
 outcome metadata has the existing 90-day lifetime; it contains no question or account data.
 Runtime ingestion cannot read these tables or modify aggregates. The regenerated restore
 privilege baseline covers their grants and SECURITY DEFINER triggers.
+The accepted `evidence_usage` triggers add outcome metadata only, with fixed SECURITY DEFINER search paths and fresh keys; admission is integration-tested.
 
 The asynchronous score queue is bounded and uses fixed score names, numeric values and
 opaque trace ids only. The database rating is authoritative; export failures, timeouts,

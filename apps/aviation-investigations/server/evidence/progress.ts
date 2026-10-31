@@ -11,7 +11,7 @@ export class EvidenceProgressStore {
     for (const [key, entry] of this.entries) if (entry.expires <= this.now()) this.entries.delete(key);
     while (this.entries.size >= this.max) this.entries.delete(this.entries.keys().next().value!);
   }
-  start(principal: string, key: string, searchId: string, skipScope: boolean, rerank: boolean, owner = { hash: principal, kind: 'trial' }) {
+  start(principal: string, key: string, searchId: string, skipScope: boolean, rerank: boolean, owner: Entry['owner']) {
     this.trim();
     const id = `${principal}:${key}`;
     const entry: Entry = { searchId, owner, expires: this.now() + TTL, progress: {

@@ -34,7 +34,11 @@ export type AiNotice =
    */
   | { kind: 'unfinished'; undo?: true };
 
-export type AiPhase = 'idle' | 'checking' | 'sending';
+/**
+ * Where an AI request stands: `checking` (the Turnstile check), `sending` (on its way) and, for an
+ * AI evidence search, `searching` once its checklist shows (web/src/features/evidence/useEvidenceSearch.ts).
+ */
+export type AiPhase = 'idle' | 'checking' | 'sending' | 'searching';
 
 /**
  * The outcome of one `run`: the response, or nothing with whether the server may have

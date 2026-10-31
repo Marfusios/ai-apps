@@ -9,10 +9,15 @@
  * - **A stand-in for Google** listens on http://localhost:E2E_GOOGLE_PORT (default 5183),
  *   which is another site. Its authorization endpoint checks the request the way Google
  *   does (tests/support/mock-google.ts) and shows a page whose "Continue" link goes back to
- *   the app's callback with the code. As at Google, where the user continues on Google's
+ *   the callback of the app that asked, with the code. As at Google, where the user continues on Google's
  *   page, the callback is then a top-level navigation started by another site. The server's
  *   code exchange and key fetch go to the same mock, as the global fetch. Nothing leaves the
- *   machine.
+ *   machine. `e2e_user=<name>` on the authorization URL picks the Google account that consents:
+ *   `e2e-<name>@example.com`, named "E2E <name>".
+ * - **The live-configuration app** of tests/e2e-real/server.ts (http://127.0.0.1:E2E_REAL_LIVE_PORT)
+ *   signs in through the same stand-in, as a second redirect URI of the same Google client: the
+ *   stand-in sends its browser back to that app, and that app's code exchange and key fetch reach
+ *   the mock through `POST /proxy/token` and `GET /proxy/certs`.
  * - **Controls for the tests**, on the stand-in's port and never on the app's:
  *   - `POST /control/deletions {failing}`: the session deletions of the sign-in service fail
  *     ("connection terminated"), as when the database is down.
@@ -35,14 +40,17 @@ import { closeDb } from '../../server/db/client.js';
 import { TrialIdentities } from '../../server/identity/trial.js';
 import { quotaPolicy } from '../../server/quota/policy.js';
 import { resetControls, testDb } from '../integration/helpers.js';
-import { GOOGLE_AUTHORIZE_URL, MockGoogle } from '../support/mock-google.js';
+import { GOOGLE_AUTHORIZE_URL, GOOGLE_CERTS_URL, GOOGLE_TOKEN_URL, MockGoogle } from '../support/mock-google.js';
+import { E2E_GOOGLE_CLIENT } from './evidence-fakes.js';
 
 const appPort = Number(process.env.E2E_AUTH_PORT) || 5182;
 const googlePort = Number(process.env.E2E_GOOGLE_PORT) || 5183;
 const APP = `http://127.0.0.1:${appPort}`;
 const GOOGLE = `http://localhost:${googlePort}`;
-const CLIENT_ID = 'casebook-e2e.apps.googleusercontent.com';
-const CLIENT_SECRET = 'synthetic-google-client-secret';
+// The live-configuration app (tests/e2e-real/server.ts) signs in through this stand-in too.
+const LIVE = `http://127.0.0.1:${Number(process.env.E2E_REAL_LIVE_PORT) || (Number(process.env.E2E_REAL_PORT) || 5181) + 4}`;
+const CLIENT_ID = E2E_GOOGLE_CLIENT.id;
+const CLIENT_SECRET = E2E_GOOGLE_CLIENT.secret;
 
 const base = loadConfig({ env: {}, files: [] });
 const config: AppConfig = {
@@ -72,7 +80,12 @@ pool.query = (statement: unknown, ...rest: unknown[]) => {
   return query(statement, ...rest);
 };
 
-const google = new MockGoogle({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, redirectUri: `${APP}/api/auth/callback/google` });
+const google = new MockGoogle({
+  clientId: CLIENT_ID,
+  clientSecret: CLIENT_SECRET,
+  redirectUri: `${APP}/api/auth/callback/google`,
+  otherRedirectUris: [`${LIVE}/api/auth/callback/google`],
+});
 globalThis.fetch = google.fetch;
 
 const policy = quotaPolicy(config);
@@ -122,12 +135,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     url.searchParams.delete('e2e_user');
     const sub = `10${[...name].reduce((n, c) => (n * 31 + c.charCodeAt(0)) % 1e12, 7).toString().padStart(18, '0')}`;
     const back = google.authorize(`${GOOGLE_AUTHORIZE_URL}${url.search}`, { sub, email: `e2e-${name}@example.com`, name: `E2E ${name}` });
-    const href = `${APP}${back}`.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+    // Back to the app that asked (its redirect URI, which the mock has checked).
+    const origin = new URL(url.searchParams.get('redirect_uri') ?? APP).origin;
+    const href = `${origin}${back}`.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(`<!doctype html><title>Google stand-in</title><a id="continue" href="${href}">Continue</a>`);
     return;
   }
   if (route === 'GET /control/ready') return json(res, { ready: true });
+  // Google's token and certificate endpoints for the live-configuration app, in its own process.
+  if (route === 'POST /proxy/token' || route === 'GET /proxy/certs') {
+    let raw = '';
+    for await (const chunk of req) raw += String(chunk);
+    const answer = await google.fetch(route === 'POST /proxy/token' ? GOOGLE_TOKEN_URL : GOOGLE_CERTS_URL, { method: req.method ?? 'GET', ...(raw ? { body: raw } : {}) });
+    res.writeHead(answer.status, { 'content-type': 'application/json' });
+    res.end(await answer.text());
+    return;
+  }
   if (route === 'POST /control/deletions') {
     failing = (await bodyOf(req)).failing === true;
     return json(res, { failing });

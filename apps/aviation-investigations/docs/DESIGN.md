@@ -786,7 +786,10 @@ days, are never extended and have no cookie cache. The ID token from Google's to
 endpoint (its only source) is accepted on its RS256 form, its claims (issuer, this client
 as the only audience and `azp`, finite `exp` and `iat`, `sub`, `email_verified`) and a
 nonce the app adds to the redirect flow, which Better Auth's Google provider does not
-send; only the subject, name and email are stored. The OAuth state lives in an encrypted
+send; only the subject, name and email are stored. `GET /api/account` shows the signed-in
+browser its account's random application id (`auth_users.id`, never the subject), name and email:
+the client compares that id, not the email, to tell a new account from the one it had (Task 25
+security review), because deleting an account frees its email for a new account. The OAuth state lives in an encrypted
 cookie, so starting a sign-in writes nothing to the database and no flood of starts can
 block anyone's sign-in; a callback is used once: the first to get through the code
 exchange and the ID-token checks claims its state atomically, before any user, session or
@@ -1807,7 +1810,9 @@ or IPv6 /64. Capture this before admission creates a trial. Polls compute the sa
 binding from their own requests; they never mint identities. This supports first-time
 anonymous searches without flushing headers early or changing POST responses. A
 network change or newly presented different identity returns 404; the UI uses generic
-loading. Saved owner/expiry checks invalidate progress after handover or deletion.
+loading. The question result describes only suggestions still shown after keyword/filter
+disclosure, or a capability note, or no remaining suggestion; scope failure is unavailable.
+Edited or skipped scope stays skipped. Saved owner/expiry checks invalidate progress after handover or deletion.
 Statuses/counts contain no question, suggestions or excerpt text. The shared polling
 bucket allows 150 requests/minute per network, separately from ordinary API traffic;
 entries expire five minutes after completion and a 1,000-entry LRU bounds memory.
@@ -1822,7 +1827,8 @@ rows remain excluded from backups; daily totals are backed up. Outcome-only
 with it, so failed searches remain distinguishable from quota-free undo admissions
 once private results expire. Migration 0026 backfills outcomes/exemptions only where
 a private search still exists; historical free undos whose 24-hour records already
-expired cannot be reconstructed and are not presented as known undo counts.
+expired cannot be reconstructed. A reservation without outcome metadata counts as
+neither a known failure nor a known free undo.
 
 When tracing runs, a bounded serial queue reads the current rating and best-effort
 upserts `visitor_feedback` (1/0) to the private trace identifier. One score id and fixed
@@ -1837,16 +1843,22 @@ Admin access requires a fresh live Google session, a verified email and membersh
 The overview is read-only, untraced, rate-limited and private/no-store; every access has
 one content-free audit line. It exposes account names and emails solely to configured
 admins, with no subjects, hashes, tokens, private searches, query text or keys. Counts
-use charged (settled, quota-counted) reservations, not provider calls; failed admissions
-and free undo admissions are separate. Distinct active visitors likewise mean visitors
-with a charged search. UTC accounting days match the ledger and budgets. `last90Days`
+use charged (settled, quota-counted) evidence-search reservations, not provider calls
+or AI briefs; failed evidence admissions and free undo admissions are separate. Distinct
+active visitors likewise mean visitors with a charged search. UTC accounting days match the ledger and budgets. `last90Days`
 is retained history, not a lifetime counter. Session activity can be null after session
 retention; last charged-search activity is also limited to retained history.
 
-Admin queries use a repeatable-read snapshot and a five-second statement bound, indexed
-reservation/ledger date ranges, a 50-row stage-cost bound and a 1,000-user response bound.
+Admin queries use a repeatable-read snapshot, a five-second statement bound and one
+15-second deadline for the entire overview, including dataset lookup and pool acquisition.
+At the deadline any held overview connection is destroyed, so its transaction cannot
+continue in the pool. The read uses indexed reservation/ledger date ranges, a 50-row stage-cost bound and a 1,000-user response bound.
 User/hash mapping scans at most 10,000 accounts; beyond that, the overview refuses rather
-than returning a silently incomplete activity ranking. Stage `calls` count ledger lines
+than returning a silently incomplete activity ranking. These refusals return 503 and log
+fixed `admin_overview_user_limit` or `admin_overview_timeout` categories.
+Costs still include all ledger categories and brief spend: `today` is all settled spend
+for the UTC day, and `interactiveToday` is just its interactive category. The mean divides
+all monthly interactive spend by charged evidence searches. Stage `calls` count ledger lines
 (including non-provider settlement stages). The display truncates overlong provider/model
 labels to contract bounds, but preserves the cost of every grouped line. New accounts
 are not assigned historical searches by matching email: usage joins the HMAC of Google's
@@ -1856,7 +1868,8 @@ Langfuse remains optional. Code-owned frozen prompts have one mirror name per ve
 with version 1 enforced and the content/schema hash checked by an operator command.
 Searches never read prompts remotely. OTLP exports only allowlisted metadata; explicit
 Langfuse generation/model/prompt attributes complement the existing GenAI counters.
-Failed exports increment the process-local counter and emit a fixed warning at most
-once per five minutes; successful exports record a timestamp. An outage cannot fail a
-search. These operational changes do not change frozen prompts, ranking hashes, quotas,
+Only failed or stalled export calls increment the process-local failed-export counter
+and emit a fixed JSON warning at most once per five minutes. Other tracing errors use an
+internal counter not shown in the overview; successful exports record a timestamp. An
+outage cannot fail a search. These operational changes do not change frozen prompts, ranking hashes, quotas,
 reservations, generated-summary gates or evidence.v3 result contracts.

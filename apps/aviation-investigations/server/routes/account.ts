@@ -192,7 +192,7 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
     const until = signedIn ? await deletionConfirmedUntil(ctx.db, signedIn.sessionId) : null;
     const body = AccountResponseSchema.parse(
       signedIn
-        ? { signedIn: true, user: { name: signedIn.name, email: signedIn.email }, ...(await isAdmin(ctx.db, signedIn, ctx.adminEmails ?? []) ? { isAdmin: true } : {}), ...(until ? { deletionConfirmedUntil: until.toISOString() } : {}) }
+        ? { signedIn: true, user: { id: signedIn.userId, name: signedIn.name, email: signedIn.email }, ...(await isAdmin(ctx.db, signedIn, ctx.adminEmails ?? []) ? { isAdmin: true } : {}), ...(until ? { deletionConfirmedUntil: until.toISOString() } : {}) }
         : { signedIn: false },
     );
     return reply.code(200).type(JSON_TYPE).send(JSON.stringify(body));

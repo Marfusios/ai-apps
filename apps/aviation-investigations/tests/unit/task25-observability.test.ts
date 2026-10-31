@@ -1,13 +1,52 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import type { SpanExporter } from '@opentelemetry/sdk-trace';
+import { InMemorySpanExporter, type SpanExporter } from '@opentelemetry/sdk-trace';
 import { loadConfig } from '../../shared/config.js';
 import { EvidenceProgressStore } from '../../server/evidence/progress.js';
-import { observableExporter, tracingHealth } from '../../server/observability/tracing.js';
-import { genAiAttributes, resetTracingStats } from '../../server/observability/attributes.js';
+import { observableExporter, stageSpan, startTracing, tracingExportWarning, tracingHealth } from '../../server/observability/tracing.js';
+import { genAiAttributes, resetTracingStats, tracingStats } from '../../server/observability/attributes.js';
 import { langfuseApi, LangfuseApiError } from '../../server/observability/langfuse.js';
 import { MIRRORED_PROMPTS, syncLangfusePrompts } from '../../worker/langfuse-prompts.js';
 
-afterEach(() => { vi.useRealTimers(); resetTracingStats(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); resetTracingStats(); });
+it('production export warnings are one content-free operational JSON line', () => {
+  const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  const exporter = observableExporter({
+    export() { throw new Error('PRIVATE_UPSTREAM'); }, async shutdown() {},
+  }, { warn: tracingExportWarning });
+  exporter.export([], () => {});
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(write.mock.calls[0]?.[0]).toBe(JSON.stringify({
+    level: 40, msg: 'tracing export failed', category: 'tracing_export_failed', failedExports: 1,
+  }) + '\n');
+});
+it('flush and shutdown errors stay internal and do not count as failed exports', async () => {
+  const warn = vi.fn();
+  const exporter = observableExporter({
+    export(_spans, callback) { callback({ code: 0 }); },
+    async shutdown() { throw new Error('PRIVATE_SHUTDOWN'); },
+    async forceFlush() { throw new Error('PRIVATE_FLUSH'); },
+  }, { warn });
+  exporter.export([], () => {});
+  await exporter.forceFlush?.();
+  await exporter.shutdown();
+  expect(tracingHealth().failedExports).toBe(0);
+  expect(tracingStats.internalErrors).toBe(2);
+  expect(warn).not.toHaveBeenCalled();
+});
+it('attribute preparation errors do not count as transport failures or change a request result', async () => {
+  const cfg = loadConfig({ files: [], env: {
+    AVIATION_TRACING_ENABLED: 'true', LANGFUSE_BASE_URL: 'https://traces.example',
+    LANGFUSE_PUBLIC_KEY: 'test-public', LANGFUSE_SECRET_KEY: 'test-secret',
+  } });
+  const handle = startTracing(cfg, { exporter: new InMemorySpanExporter() });
+  try {
+    const attrs = { get model(): string { throw new Error('PRIVATE_ATTRIBUTE'); } };
+    expect(await stageSpan('evidence.scope', attrs, () => 42)).toBe(42);
+    expect(tracingStats.internalErrors).toBe(1);
+    expect(tracingHealth().failedExports).toBe(0);
+  } finally { await handle.shutdown(); }
+  expect(tracingHealth().failedExports).toBe(0);
+});
 it('export failures are counted, warnings are throttled and contain no upstream errors; recovery sets the last success', async () => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-31T12:00:00Z'));
   const warn = vi.fn(), done = vi.fn();
@@ -36,7 +75,7 @@ it('only approved model and frozen prompt attributes are linked', () => {
 });
 it('progress is per principal, bounded, immutable to readers and expires five minutes after finishing', () => {
   let now=0; const store=new EvidenceProgressStore(()=>now,2);
-  const first=store.start('account:A','key','search',false,true);
+  const first=store.start('account:A','key','search',false,true,{hash:'A',kind:'account'});
   first.observer.onStage?.('scope');
   expect(store.read('account:B','key')).toBeNull();
   const view=store.read('account:A','key')!; view.progress.question.status='done';
@@ -46,7 +85,9 @@ it('progress is per principal, bounded, immutable to readers and expires five mi
   first.finish(true);
   expect(store.read('account:A','key')!.progress).toMatchObject({state:'done',search:{cases:10,status:'done'},order:{result:'match',status:'failed'}});
   now=300_001; expect(store.read('account:A','key')).toBeNull();
-  store.start('A','1','x',true,false); store.start('A','2','y',true,false); store.start('A','3','z',true,false);
+  store.start('A','1','x',true,false,{hash:'A',kind:'account'});
+  store.start('A','2','y',true,false,{hash:'A',kind:'account'});
+  store.start('A','3','z',true,false,{hash:'A',kind:'account'});
   expect(store.read('A','1')).toBeNull();
   expect(store.read('A','3')!.progress.question.status).toBe('skipped');
 });

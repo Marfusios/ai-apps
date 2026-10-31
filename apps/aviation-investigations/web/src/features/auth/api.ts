@@ -28,17 +28,23 @@ import {
   type SignInRequest,
 } from '../../../../shared/contracts/account';
 import { ApiError, getJson, postJson, retry } from '../../api';
-import { forgetVisitor, privateRead, visitorLeaving } from './visitor';
+import { acceptAccount, forgetVisitor, privateRead, visitorLeaving } from './visitor';
 
 /** Google's authorization endpoint: the only other origin sign-in may open. */
 export const GOOGLE_ORIGIN = 'https://accounts.google.com';
 
-/** Who is signed in on this browser. Per visitor and never cached by the server. */
+/**
+ * Who is signed in on this browser. Per visitor and never cached by the server. Each read goes
+ * through `acceptAccount` before the page takes it: a different account than the page had, or
+ * none, forgets the previous visitor first. The page reads it again whenever it is shown again
+ * (another tab may have signed in as someone else meanwhile), however recent the last read.
+ */
 export const accountQuery = () =>
   queryOptions({
     queryKey: ['account'],
-    queryFn: ({ signal }) => privateRead(() => getJson('/api/account', AccountResponseSchema, signal)),
+    queryFn: async ({ signal, client }) => acceptAccount(client, await privateRead(() => getJson('/api/account', AccountResponseSchema, signal))),
     staleTime: 60_000,
+    refetchOnWindowFocus: 'always',
     retry,
   });
 
