@@ -71,6 +71,12 @@ export const PROGRESS_NOT_FOUND_BEFORE_SLOWING = 10;
 export const PROGRESS_SLOW_POLL_MS = 1_000;
 /** Reads that fail otherwise are tried again, later each time, up to this pause. */
 export const PROGRESS_MAX_BACKOFF_MS = 4_000;
+/**
+ * The longest `Retry-After` the checklist waits out: a longer one (the server's limit for this
+ * network) ends the reading, and the card stays as it is until the search's POST settles. It never
+ * reads sooner than the server asks.
+ */
+export const PROGRESS_LONGEST_RETRY_AFTER_MS = 30_000;
 /** A read that gets no answer in this long counts as failed: the next one is more use. */
 export const PROGRESS_READ_TIMEOUT_MS = 4_000;
 
@@ -105,11 +111,26 @@ function consecutiveFailures(query: ProgressPollState): number {
 }
 
 /**
+ * How long a 429 asks the progress to wait, in milliseconds: its whole `Retry-After` (without one,
+ * the longest backoff), or `Infinity` when that is longer than `PROGRESS_LONGEST_RETRY_AFTER_MS`:
+ * the checklist then reads no more.
+ */
+export function progressRetryAfterMs(refusal: ApiError): number {
+  if (refusal.retryAfter === null) return PROGRESS_MAX_BACKOFF_MS;
+  const wait = refusal.retryAfter * 1000;
+  return wait > PROGRESS_LONGEST_RETRY_AFTER_MS ? Infinity : wait;
+}
+
+/**
  * When to read the progress again: every `PROGRESS_POLL_MS` while the search runs; never once it
  * has ended; after a 404, again (more slowly after `PROGRESS_NOT_FOUND_BEFORE_SLOWING` in a row);
- * after a 429 when the server says; after another refusal, never; after a network or server
- * failure, a little later each time. The checklist goes, and with it the reading, as soon as the
- * search's POST settles.
+ * after a 429, once its whole `Retry-After` has passed, or never when that is longer than
+ * `PROGRESS_LONGEST_RETRY_AFTER_MS` (without one, after the longest backoff); after another
+ * refusal, never; after a network or server failure, a little later each time. The checklist goes,
+ * and with it the reading, as soon as the search's POST settles; its query re-reads nothing else
+ * by itself (no focus, reconnect or retry re-read), and a read started any other way within a
+ * 429's wait (a reset when the visitor changes) gets the same refusal without a request
+ * (web/src/features/evidence/progress.ts).
  */
 export function progressPollDelay(query: ProgressPollState): number | false {
   const { data, status, error } = query.state;
@@ -119,7 +140,11 @@ export function progressPollDelay(query: ProgressPollState): number | false {
   if (status !== 'error') return PROGRESS_POLL_MS;
   if (error instanceof ApiError) {
     if (error.status === 404) return failures < PROGRESS_NOT_FOUND_BEFORE_SLOWING ? PROGRESS_POLL_MS : PROGRESS_SLOW_POLL_MS;
-    if (error.status === 429) return error.retryAfter !== null ? Math.min(30_000, error.retryAfter * 1000) : PROGRESS_MAX_BACKOFF_MS;
+    if (error.status === 429) {
+      // The whole wait, never shortened; one too long to be of use ends the reading.
+      const wait = progressRetryAfterMs(error);
+      return wait === Infinity ? false : wait;
+    }
     if (error.status < 500) return false;
   }
   return Math.min(PROGRESS_MAX_BACKOFF_MS, PROGRESS_POLL_MS * 2 ** Math.min(4, Math.max(1, failures)));

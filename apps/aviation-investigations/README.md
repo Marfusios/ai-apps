@@ -1231,6 +1231,8 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   /api/evidence/progress/:key` (`EvidenceProgressSchema`) under the POST's own idempotency key about
   every 500 ms (`web/src/features/evidence/checklist.ts`). A 404 is normal until the server has
   registered the search and is read through for the whole wait (once a second after ten in a row);
+  a 429 is waited out for its whole `Retry-After`, and one over 30 s ends the reading, the card as it
+  is (nothing reads sooner: not focus, a reconnect or a reset, `web/src/features/evidence/progress.ts`);
   until the first answer the card is unticked. Reading stops when the POST settles, and the card goes;
   meanwhile the control that asked says "Searching…".
   Completions are announced politely; statuses and counts only, never model text. The card and its

@@ -9,6 +9,7 @@
  * against scripted progress and against the mock's own stage timing.
  */
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { focusManager, onlineManager } from '@tanstack/react-query';
 import { delay, http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AiStatusResponse } from '../../shared/contracts/ai';
@@ -21,6 +22,7 @@ import type { TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
 import { resetUnsettledForTests } from '../../web/src/features/ai/unsettled';
 import {
   CHALLENGES,
+  PROGRESS_LONGEST_RETRY_AFTER_MS,
   PROGRESS_MAX_BACKOFF_MS,
   PROGRESS_NOT_FOUND_BEFORE_SLOWING,
   PROGRESS_POLL_MS,
@@ -207,9 +209,17 @@ describe('when the progress is read again', () => {
 
   it('a 429 waits as the server says; another refusal stops; a network or server failure backs off', () => {
     expect(progressPollDelay(poll({ status: 'error', error: new ApiError(429, null, 3), errorUpdateCount: 1 }))).toBe(3000);
+    expect(progressPollDelay(poll({ status: 'error', error: new ApiError(429, null), errorUpdateCount: 1 }))).toBe(PROGRESS_MAX_BACKOFF_MS);
     expect(progressPollDelay(poll({ status: 'error', error: new ApiError(403, null), errorUpdateCount: 1 }))).toBe(false);
     expect(progressPollDelay(poll({ status: 'error', error: new TypeError('Failed to fetch'), errorUpdateCount: 1 }))).toBe(1000);
     expect(progressPollDelay(poll({ status: 'error', error: new ApiError(503, null), errorUpdateCount: 9 }))).toBe(PROGRESS_MAX_BACKOFF_MS);
+  });
+
+  it('a Retry-After is never shortened: the whole of it up to 30 s, and past that no more reading (security review C3)', () => {
+    const after = (seconds: number) => progressPollDelay(poll({ status: 'error', error: new ApiError(429, null, seconds), errorUpdateCount: 1 }));
+    expect(after(30)).toBe(30_000);
+    expect(PROGRESS_LONGEST_RETRY_AFTER_MS).toBe(30_000);
+    for (const seconds of [31, 60, 3_600]) expect(after(seconds), `${seconds} s`).toBe(false);
   });
 });
 
@@ -355,6 +365,79 @@ describe('the card where the visitor waits', { timeout: 30_000 }, () => {
     expect(yours.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(new Set(s.reads)).toEqual(new Set(s.keys));
     s.release();
+    await waitFor(() => expect(card()).toBeNull(), SLOW);
+  });
+
+  it('a Retry-After over 30 s ends the reading until the POST settles, the card as it was; a shorter one is not cut short by focus, reconnect or a reset (security review C3)', async () => {
+    freshApi();
+    const running = progress({ state: 'running', question: { status: 'running', result: null } });
+    let reads = 0;
+    let retryAfter = 60;
+    let release = (): void => {};
+    const released = new Promise<void>((resolve) => (release = resolve));
+    server.use(
+      http.post('*/api/evidence', async () => {
+        await released;
+        return HttpResponse.json(evidenceAnswer('00000000-0000-4000-8000-0000000000aa'), { status: 201 });
+      }),
+      http.get('*/api/evidence/progress/:key', () => {
+        reads += 1;
+        // The first read finds the search under way; every later one is told to wait.
+        if (reads === 1) return HttpResponse.json(running);
+        return HttpResponse.json({ error: 'rate_limited', message: 'Slow down.', retryAfter }, { status: 429, headers: { 'retry-after': String(retryAfter) } });
+      }),
+    );
+    const first = await askFromHome(MOCK_EVIDENCE_QUESTIONS.seed);
+    const el = await waitFor(() => card() ?? Promise.reject(new Error('no card yet')), SLOW);
+    await waitFor(() => expect(rowState(el, 'question')).toBe('current'), SLOW);
+    await waitFor(() => expect(reads).toBe(2), SLOW);
+    // Asked to wait a minute: nothing more is read, and the card stays as it was.
+    await act(() => delay(1_600));
+    expect(reads).toBe(2);
+    expect(rowState(el, 'question')).toBe('current');
+    // Focus and a reconnect re-read nothing either.
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+    });
+    await act(() => delay(600));
+    expect(reads).toBe(2);
+    // Nor does a reset of its query, as when the visitor changes: the refusal stands, nothing is sent.
+    await act(() => first.client.resetQueries({ queryKey: ['evidence-progress'] }));
+    await act(() => delay(600));
+    expect(reads).toBe(2);
+    act(() => release());
+    await waitFor(() => expect(card()).toBeNull(), SLOW);
+
+    // A wait of 20 s is kept to the full: focus and a reconnect within it read nothing.
+    focusManager.setFocused(undefined);
+    retryAfter = 20;
+    reads = 0;
+    let release2 = (): void => {};
+    const released2 = new Promise<void>((resolve) => (release2 = resolve));
+    server.use(
+      http.post('*/api/evidence', async () => {
+        await released2;
+        return HttpResponse.json(evidenceAnswer('00000000-0000-4000-8000-0000000000ab'), { status: 201 });
+      }),
+    );
+    const second = renderApp('/');
+    fireEvent.change(screen.getAllByRole('textbox', { name: 'Search NTSB investigations' }).at(-1) as HTMLElement, { target: { value: MOCK_EVIDENCE_QUESTIONS.carb } });
+    fireEvent.click((await screen.findAllByRole('button', { name: /^Ask AI\s*·/ })).at(-1) as HTMLElement);
+    await waitFor(() => expect(reads).toBe(2), SLOW);
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+    });
+    await act(() => second.client.resetQueries({ queryKey: ['evidence-progress'] }));
+    await act(() => delay(1_200));
+    expect(reads).toBe(2);
+    focusManager.setFocused(undefined);
+    act(() => release2());
     await waitFor(() => expect(card()).toBeNull(), SLOW);
   });
 

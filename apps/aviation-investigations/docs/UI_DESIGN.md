@@ -1241,8 +1241,11 @@ the notice box under the control says what happened.
   every 500 ms while the POST runs, and never after it settles. A 404 is normal until the server has
   registered the search (after the Turnstile check and admission, a second or two) and is read through
   for the whole wait, once a second after ten in a row (a network identity that changed mid-search
-  leaves 404s throughout). Until the first answer the card is unticked: no row under way. Statuses and
-  counts only, never model text.
+  leaves 404s throughout). A 429 is waited out in full, its whole `Retry-After`, never less; one over
+  30 s ends the reading, and the card stays as it is until the POST settles. Nothing reads sooner: no
+  read on focus or reconnect, and a read asked for within the wait (a reset when the visitor changes)
+  sends nothing. Until the first answer the card is unticked: no row under way. Statuses and counts
+  only, never model text.
 - **Announcements:** each completion once, through a polite live region ("Question read: suggestions
   ready.", "Search done: 21 cases.", "Leading results ordered by AI."). Skipped rows are not announced.
 - It works at phone width (a result that does not fit wraps under its row's leader) and in both themes,
