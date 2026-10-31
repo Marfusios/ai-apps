@@ -502,6 +502,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
          'deferred')))
    OR EXISTS (SELECT 1 FROM import_runs r WHERE r.work_kind = 'recertification' AND r.result IN ('deferred',
      'failed', 'cancelled')
+     AND r.observed_sha256 = (SELECT accepted ->> 'archive' FROM import_control WHERE id = 1)
      AND NOT EXISTS (SELECT 1 FROM import_attestations t WHERE t.kind = 'recertification'
        AND t.canary ->> 'archive' = r.observed_sha256 AND t.created_at > r.checked_at))
    OR EXISTS (SELECT 1 FROM import_runs WHERE result = 'running' AND heartbeat_at < now () - interval

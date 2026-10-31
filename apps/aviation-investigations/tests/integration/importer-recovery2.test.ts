@@ -283,6 +283,33 @@ it.each(['probe', 'verify', 'canary'] as const)(
     }),
 );
 
+it('publishing a newer snapshot clears a failed recertification warning for the previous snapshot', async () =>
+  importerFixture(async (f) => {
+    await f.run();
+    await expect(
+      f.run(
+        {
+          probeCandidate: async () => {
+            throw new ImportFailure('probe');
+          },
+        },
+        { recertify: true },
+      ),
+    ).rejects.toMatchObject({ result: 'deferred' });
+    expect((await readImportStatus(f.app, null)).attentionRequired).toBe(true);
+    const newer = await f.snapshot('newer-public-fixture', (dir) =>
+      editTable(dir, 'events', (rows) => {
+        rows[0]!.lchg_date = '2026-10-31T01:00:00';
+        return rows;
+      }),
+    );
+    f.setRemote(newer, { advertisedAtLocal: '2026-11-01T07:36:33', bytes: 12 });
+    expect(await f.run()).toMatchObject({ result: 'published', generationId: 3 });
+    const status = await readImportStatus(f.app, null);
+    expect(status.attentionRequired).toBe(false);
+    expect(status.lastSuccessfulImport?.generationId).toBe(3);
+  }));
+
 it('a repeated forced-dev refuses before pending registration and does not latch the serving artifact', async () =>
   importerFixture(async (f) => {
     await f.run({}, { forcedDev: true });
