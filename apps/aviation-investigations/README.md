@@ -2309,8 +2309,11 @@ lock order in migration 0019.
   signed in from another tab; also a page back from the back/forward cache) forgets the
   previous one the same way before it shows the new account, without telling the other tabs,
   which each find the change at their own next read; every return to a page reads the account
-  again. Signing in where the page was signed out forgets nothing (the trial's work moves to
-  the account). No other Better Auth endpoint is served.
+  again. Another account means another application id (`user.id`), whatever the e-mail: a
+  deleted account's e-mail can belong to a new account next, so the page never compares
+  e-mails, and the same id under a new e-mail is the same visitor. Signing in where the page
+  was signed out forgets nothing (the trial's work moves to the account). No other Better Auth
+  endpoint is served.
 - **What is accepted and kept.** An ID token from Google's token endpoint (the only
   source: ID-token sign-in is off) whose header says RS256 and carries a signature, for
   this client and no other audience, with finite `exp` (not passed) and `iat` (not in
@@ -2366,7 +2369,10 @@ lock order in migration 0019.
   like every anonymous AI request, takes a fresh Turnstile check) answers 403 `moved`
   (sign in to view it): never a replay or a new run.
 - **Account** (`GET /api/account`, `POST /api/account/delete/start`,
-  `POST /api/account/delete`, `server/auth/deletion.ts`). Deleting needs a recent Google
+  `POST /api/account/delete`, `server/auth/deletion.ts`). The account read shows the signed-in
+  browser its account's random application id (`auth_users.id`, never the Google subject), name
+  and e-mail, `isAdmin` for an admin and any live deletion confirmation; the page tells one
+  account from another by that id (`acceptAccount`, `web/src/features/auth/visitor.ts`). Deleting needs a recent Google
   sign-in: within 5 minutes of signing in, `start` gives the session a 5-minute,
   single-use confirmation; otherwise the page signs in with Google again
   (`/account?delete=confirm`, Google asked for the same account), which confirms the new

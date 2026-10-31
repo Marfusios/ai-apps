@@ -105,8 +105,8 @@ export interface HandlerOptions {
   admin?: boolean;
 }
 
-/** The mock's Google account: synthetic. */
-export const MOCK_USER = { name: 'Alex Example', email: 'alex@example.com' } as const;
+/** The mock's Google account: synthetic, with a fixed application id (`user.id`, the identity the page compares). */
+export const MOCK_USER = { id: '0f6e3c1a-7b2d-4e5f-9a8b-1c2d3e4f5a6b', name: 'Alex Example', email: 'alex@example.com' } as const;
 
 /** This tab's mock sign-in: kept across the reload that coming back from "Google" causes. */
 const MOCK_ACCOUNT_KEY = 'casebook-mock-account';

@@ -786,7 +786,10 @@ days, are never extended and have no cookie cache. The ID token from Google's to
 endpoint (its only source) is accepted on its RS256 form, its claims (issuer, this client
 as the only audience and `azp`, finite `exp` and `iat`, `sub`, `email_verified`) and a
 nonce the app adds to the redirect flow, which Better Auth's Google provider does not
-send; only the subject, name and email are stored. The OAuth state lives in an encrypted
+send; only the subject, name and email are stored. `GET /api/account` shows the signed-in
+browser its account's random application id (`auth_users.id`, never the subject), name and email:
+the client compares that id, not the email, to tell a new account from the one it had (Task 25
+security review), because deleting an account frees its email for a new account. The OAuth state lives in an encrypted
 cookie, so starting a sign-in writes nothing to the database and no flood of starts can
 block anyone's sign-in; a callback is used once: the first to get through the code
 exchange and the ID-token checks claims its state atomically, before any user, session or

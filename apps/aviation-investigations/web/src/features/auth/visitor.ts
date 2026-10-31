@@ -43,6 +43,9 @@
  *   or another account signed in from another tab; also when a page back from the
  *   back/forward cache reads the account again) is a new visitor: the page forgets the
  *   previous one first, as above, and what screens still show is read again as the new one.
+ *   Accounts are told apart by their application id (`user.id`), never by e-mail: a deleted
+ *   account's e-mail can belong to a new account next, and the same account can change its
+ *   e-mail at Google.
  *   Nothing is announced: the other tabs share the session, and each finds the change at
  *   its own next read (every return to a page reads the account, `accountQuery`), while a
  *   tab that already shows the new account keeps its work. An account that stops being an
@@ -73,12 +76,12 @@ const CHANGED = 'visitor-changed';
 let generation = 0;
 const listeners = new Set<() => void>();
 
-/** Who a query cache's account is, as the page last took it: the e-mail (`null`: signed out), and whether an admin. */
+/** Who a query cache's account is, as the page last took it: its application id (`null`: signed out), and whether an admin. */
 interface KnownAccount {
-  email: string | null;
+  id: string | null;
   admin: boolean;
 }
-const SIGNED_OUT: KnownAccount = { email: null, admin: false };
+const SIGNED_OUT: KnownAccount = { id: null, admin: false };
 /** Per query cache; absent until the page has read the account. */
 const knownAccounts = new WeakMap<QueryClient, KnownAccount>();
 
@@ -228,18 +231,19 @@ function dropQueries(queryClient: QueryClient, roots: readonly string[]): void {
 
 /**
  * The account as just read from the server, before the page takes it (the account query's
- * read, web/src/features/auth/api.ts): returns it. A different account than the page had,
- * or none, is a new visitor, though nothing here signed out: everything private of the
- * previous one goes first (a new generation, so an answer still on its way for them is
- * dropped; their queries; this tab's memory), without telling the other tabs. An account
- * that stops being an admin loses the admin overview. The account's own query is left
- * alone, so taking the new account reads nothing again by itself.
+ * read, web/src/features/auth/api.ts): returns it. A different account than the page had
+ * (another application id, whatever its e-mail), or none, is a new visitor, though nothing
+ * here signed out: everything private of the previous one goes first (a new generation, so
+ * an answer still on its way for them is dropped; their queries; this tab's memory), without
+ * telling the other tabs. The same id is the same visitor, even under a new name or e-mail.
+ * An account that stops being an admin loses the admin overview. The account's own query is
+ * left alone, so taking the new account reads nothing again by itself.
  */
 export function acceptAccount(queryClient: QueryClient, account: AccountResponse): AccountResponse {
-  const now: KnownAccount = account.signedIn ? { email: account.user.email, admin: account.isAdmin === true } : SIGNED_OUT;
+  const now: KnownAccount = account.signedIn ? { id: account.user.id, admin: account.isAdmin === true } : SIGNED_OUT;
   const before = knownAccounts.get(queryClient);
   knownAccounts.set(queryClient, now);
-  if (before !== undefined && before.email !== null && before.email !== now.email) {
+  if (before !== undefined && before.id !== null && before.id !== now.id) {
     forgetHere();
     dropQueries(queryClient, PRIVATE_QUERY_ROOTS.filter((root) => root !== 'account'));
   } else if (before?.admin === true && !now.admin) {

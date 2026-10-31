@@ -1420,6 +1420,9 @@ tag and digest together.
    The counts reset on process restart. Scores are best effort and may lag or be lost;
    use PostgreSQL feedback totals as the authoritative rating count.
 
+**Open tabs.** A tab left open across the deploy keeps the previous client, whose strict account
+schema refuses the new `user.id`: it shows the account read as failed until it is reloaded.
+
 **Record with the release** (Task 25 security review, condition 4): the live migrator applied
 0026 and the privilege baseline was verified; the live allowlist holds only the intended verified
 accounts; the prompt sync used the live project and its second run returned the same content
