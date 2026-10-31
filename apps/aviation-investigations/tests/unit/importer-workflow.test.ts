@@ -103,6 +103,10 @@ describe('policy/certificate identity and redacted output',()=>{
     expect(projectImports([],{enabled:true,localTime:'05:30',timeZone:'Europe/Prague'},now,true))
       .toMatchObject({attentionRequired:true,overdue:true,lastCheck:null,lastSuccessfulImport:null});
   });
+  it('defers an unknown alias for bounded reconciliation without treating it as confirmed bad data',()=>{
+    const error=new Error('PRIVATE_SENTINEL');error.name='AliasSwitchError';
+    expect(classify(error)).toMatchObject({reason:'alias_unknown',review:false});
+  });
   it('rejects incomplete pages and capped aggregation buckets despite HTTP success',async()=>{
     const response={_shards:{total:1,successful:1,failed:0},timed_out:false,hits:{total:{value:2,relation:'eq'},hits:[]},aggregations:{}};
     const es=certificationClient({search:async()=>response} as unknown as Client);

@@ -52,6 +52,8 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
       await settleSpend(db,{reservationId:first.reservationId},{lines:[{usd:0.1,...request}]},first.fencingToken);
       await settleSpend(db,{reservationId:second.reservationId},'uncertain',second.fencingToken);
       expect(await budgetRemaining(db,s,a.id)).toBeCloseTo(0.2);
+      for(let i=0;i<4;i++)await resumeArtifact(db,s,a.id);
+      await expect(resumeArtifact(db,s,a.id)).rejects.toThrow();
       const counts=await db.execute(sql`select count(*)::int as n from reservations where import_artifact_id=${a.id}::uuid`);
       expect(counts.rows[0]?.n).toBe(2);
       await expect(db.execute(sql`update reservations set import_artifact_id=null where id=${first.reservationId}`)).rejects.toThrow();
@@ -98,6 +100,10 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
       const a=await registered(db,s);
       await db.execute(sql`insert into index_builds(build_id,index_name,alias,generation_id) values('testone','test-index','test-alias',1)`);
       await registerCandidate(db,s,a.id,'test-index','testone',1);
+      await db.execute(sql`insert into index_switch_attempts(alias,index_name,build_id) values('test-alias','test-index','testone')`);
+      expect((await readImportStatus(db,null)).attentionRequired).toBe(true);
+      await db.execute(sql`update index_switch_attempts set outcome='committed',resolved_at=clock_timestamp() where index_name='test-index'`);
+      expect((await readImportStatus(db,null)).attentionRequired).toBe(false);
       await expect(owner.execute(sql`update index_builds set deletion_requested_at=clock_timestamp() where build_id='testone'`)).rejects.toThrow();
       await db.execute(sql`insert into index_builds(build_id,index_name,alias,generation_id) values('testtwo','test-index2','test-alias',1)`);
       await owner.execute(sql`update index_builds set deletion_requested_at=clock_timestamp() where build_id='testtwo'`);

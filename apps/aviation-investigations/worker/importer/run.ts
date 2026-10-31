@@ -63,7 +63,7 @@ async function reusable(db:Db,es:Client,s:ImportSession,a:Artifact,kind:'cases'|
   s.assertLocked();
   const alias=`${prefix}-${kind}`;
   const result=await reconcileAlias(es,db,alias,{lockTimeoutMs:5000});
-  if(result.unresolved.length)throw new ImportFailure('alias_unknown');
+  if(result.unresolved.length)throw new ImportFailure('alias_unknown',false);
   const rows=await db.execute(sql`select r.index_name,r.build_id from import_index_refs r join index_builds b
     on b.build_id=r.build_id where r.artifact_id=${a.id}::uuid and r.generation_id=${Number(a.generation_id)}
     and b.alias=${alias} and r.released_at is null and b.deletion_requested_at is null and b.deleted_at is null
@@ -300,6 +300,7 @@ export function classify(error:unknown):ImportFailure {
     if(x.code==='ENOSPC')return new ImportFailure('storage');
     if(['23502','23503','23505','23514'].includes(x.code??''))return new ImportFailure('integrity');
     if(x.name==='SpendRefusedError')return new ImportFailure('monthly_budget',false);
+    if(['AliasSwitchError','UnresolvedAliasError'].includes(x.name??''))return new ImportFailure('alias_unknown',false);
     if(['EmbeddingDeferredError','DatabaseTimeoutError','ConnectionError','TimeoutError'].includes(x.name??''))return new ImportFailure('interrupted',false);
     e=x.cause;
   }

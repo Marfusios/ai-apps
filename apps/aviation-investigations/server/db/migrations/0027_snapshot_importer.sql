@@ -309,6 +309,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
    OR EXISTS (SELECT 1 FROM import_artifacts WHERE needs_review)
    OR EXISTS (SELECT 1 FROM import_runs WHERE result='needs_review' AND artifact_id IS NULL)
    OR EXISTS (SELECT 1 FROM import_runs WHERE result='running' AND heartbeat_at<now()-interval '3 hours')
+   OR EXISTS (SELECT 1 FROM import_index_refs r JOIN index_switch_attempts a ON a.index_name=r.index_name
+     WHERE r.released_at IS NULL AND a.outcome IN ('pending','unknown'))
 $$;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION import_status_attention() FROM PUBLIC;
