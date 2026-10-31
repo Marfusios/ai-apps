@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { DEFAULT_RETRIEVAL_VERSION, RETRIEVAL_VERSIONS, isExperimentalRetrieval, type RetrievalVersion } from './contracts/retrieval.js';
 import { readDotenvAllowlisted } from './env-files.js';
+import { IMPORT_LOCAL_TIME,IMPORT_TIME_ZONE } from './import-schedule.js';
 
 function str(): z.ZodOptional<z.ZodString>;
 function str(def: string): z.ZodDefault<z.ZodString>;
@@ -39,6 +40,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_ENV: z.enum(['dev', 'live']).default('dev'),
   APP_VERSION: z.string().max(80).optional(),
+  AVIATION_IMPORTS_ENABLED: z.enum(['true','false','1','0']).default('false').transform(v=>v==='true'||v==='1'),
   AIRCASE_ADMIN_EMAILS: z.string().max(10000).default('').transform(v => [...new Set(listOf(v).map(s => s.toLowerCase()))]).refine(v => v.every(email => z.email().safeParse(email).success), 'expected comma-separated email addresses'),
   APP_URL: str('http://localhost:3000').refine(isHttpUrl, 'expected an http(s) URL'),
   TRUSTED_PROXY_CIDRS: z
@@ -128,6 +130,7 @@ type Env = z.infer<typeof envSchema>;
 export const CONFIG_ENV_NAMES = Object.keys(envSchema.shape) as readonly string[];
 
 export interface AppConfig {
+  imports: {enabled:boolean;localTime:typeof IMPORT_LOCAL_TIME;timeZone:typeof IMPORT_TIME_ZONE};
   nodeEnv: Env['NODE_ENV'];
   /** Deployment environment (dev or live): Compose project, database, index prefix. */
   appEnv: Env['APP_ENV'];
@@ -280,6 +283,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   }
 
   return {
+    imports:{enabled:e.AVIATION_IMPORTS_ENABLED,localTime:IMPORT_LOCAL_TIME,timeZone:IMPORT_TIME_ZONE},
     nodeEnv: e.NODE_ENV,
     appEnv: e.APP_ENV,
     appVersion: e.APP_VERSION,

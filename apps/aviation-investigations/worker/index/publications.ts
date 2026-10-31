@@ -290,6 +290,8 @@ async function storedRefusal(q: pg.PoolClient, buildId: string, seconds: number)
   if (!b) return { reason: 'no build record', requested: false };
   const keep = (reason: string | null) => ({ reason, requested: b.requested });
   if (b.deleted) return keep('already deleted');
+  const imported = await q.query('select 1 from import_index_refs where index_name=$1 and released_at is null limit 1', [b.index_name]);
+  if (imported.rows.length) return keep('protected by an import candidate reference');
   if (!b.old && !b.requested) return keep('younger than the threshold');
   // A pending or unknown request may still land and make the index a target; a committed one
   // made it a target once, which the alias read-back settles, and a rejected one never did.

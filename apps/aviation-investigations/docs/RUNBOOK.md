@@ -721,6 +721,13 @@ again there before relying on them.
 
 ## Ingestion
 
+The automatic snapshot worker is documented in [IMPORTER.md](IMPORTER.md), including
+migration 0027, the no-change/forced-dev exercises, the fixed $0.50 artifact cap,
+concrete-index protection, named approval/rollback and the installation gate. It is
+disabled by default. Do not enable its timer before backup mutual exclusion and actual
+PG/ES/filesystem headroom have been measured. The manual commands below remain useful
+for reviewed operator work; only the PostgreSQL manifest selects the serving pair.
+
 Extraction needs the Docker CLI to start its sandbox containers, so it runs on the
 host, never in the `aviation-ingest` container (which has no Docker socket):
 

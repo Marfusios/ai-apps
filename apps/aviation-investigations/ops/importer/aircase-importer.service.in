@@ -1,0 +1,25 @@
+# Render and review placeholders locally. Never commit deployment paths or credentials.
+[Unit]
+Description=Import and certify NTSB snapshots, dev before live
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@APP_DIR@
+Environment="PATH=@RUNTIME_PATH@"
+Environment=AVIATION_TRACING_ENABLED=false
+Environment=OTEL_SDK_DISABLED=true
+ExecStart=@PNPM@ importer cycle --config @IMPORT_CONFIG@
+UMask=0077
+TimeoutStartSec=3h
+TimeoutStopSec=90s
+KillMode=control-group
+MemoryMax=6G
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=@IMPORT_ROOT@ @LOCK_DIR@
+StandardOutput=journal
+StandardError=journal

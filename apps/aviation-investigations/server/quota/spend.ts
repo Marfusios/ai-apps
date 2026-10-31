@@ -36,6 +36,8 @@ export interface SpendRequest {
 }
 
 export interface ReserveSpendInput {
+  /** Exact importer identity, atomically tagged and capped under import → spend lock order. */
+  import?: { artifactId: string; fence: string };
   category: IngestionCategory;
   /** Maximum cost of the call, e.g. `embeddingCostUsd(model, exactTokens)`. */
   usd: number;
@@ -89,7 +91,9 @@ function validate(a: ReserveSpendInput): void {
 /** Reserve the maximum cost of one indexing or evaluation call, or refuse it. */
 export async function reserveSpend(db: Db, a: ReserveSpendInput): Promise<SpendReservation | SpendRefusal> {
   validate(a);
-  const now = a.now ?? new Date();
+  const now = a.import
+    ? new Date(String((await db.execute(sql`select clock_timestamp()::text as now`)).rows[0]?.now))
+    : a.now ?? new Date();
   const amount = toMicros(a.usd);
   const leaseExpiresAt = new Date(now.getTime() + (a.ttlMs ?? LEASE_TTL_MS));
   try {
@@ -108,6 +112,10 @@ async function reserveInTransaction(
   leaseExpiresAt: Date,
 ): Promise<SpendReservation | SpendRefusal> {
   await setLockTimeout(tx);
+  if (a.import) {
+    await tx.execute(sql`select set_config('aviation.import_fence', ${a.import.fence}, true)`);
+    await tx.execute(sql`select import_check_budget(${a.import.artifactId}::uuid, ${a.import.fence}::uuid, ${amount}::bigint)`);
+  }
   await tx.execute(sql`SELECT pg_advisory_xact_lock(${SPEND_LOCK_KEY})`);
   // Under the spend lock, which the reconciliation also holds while it charges and releases.
   if (await paidOperationsHeld(tx)) return { ok: false, reason: 'restore_hold' };
@@ -124,10 +132,10 @@ async function reserveInTransaction(
   }
   const res = await tx.execute(sql`
     INSERT INTO reservations (category, principal_kind, principal_hash, usd, status, lease_expires_at, accounting_day,
-      provider, model, stage, request_id, created_at)
+      provider, model, stage, request_id, created_at, import_artifact_id)
     VALUES (${a.category}, 'system', NULL, ${microsToNumeric(amount)}::numeric, 'open', ${leaseExpiresAt},
       ${utcDay(now)}::date, ${a.request.provider}, ${a.request.model}, ${a.request.stage}, ${a.request.requestId ?? null},
-      ${now})
+      ${now}, ${a.import?.artifactId ?? null}::uuid)
     RETURNING id, fencing_token::text AS fencing_token`);
   const row = res.rows[0] as { id: string; fencing_token: string };
   return {

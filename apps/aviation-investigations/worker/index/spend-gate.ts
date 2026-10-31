@@ -137,6 +137,7 @@ export function createDryRunSpendGate(readFrom?: SpendGate): SpendGate {
 }
 
 export interface LedgerSpendGateOptions {
+  import?: { artifactId: string; fence: string };
   budgets: QuotaBudgets;
   /** Labels copied to the reservation and its ledger lines (no content). */
   provider: string;
@@ -173,6 +174,7 @@ export function createLedgerSpendGate(db: Db, opts: LedgerSpendGateOptions): Spe
       const amount = Math.max(ceilUsd(usd), 0.000001);
       const r = await whileBusy(() =>
         reserveSpend(db, {
+          import: opts.import,
           category,
           usd: amount,
           request: {

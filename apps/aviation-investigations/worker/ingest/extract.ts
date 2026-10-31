@@ -30,6 +30,7 @@ export const MDB_EXPORT_FLAGS = [
 
 /** Sandbox for every container (removal is explicit, never `--rm`). The root is read-only and nothing is writable. */
 export const SANDBOX_FLAGS = [
+  '--log-driver=none',
   '--network', 'none',
   '--read-only',
   '--cap-drop', 'ALL',
@@ -255,6 +256,8 @@ export async function removeAllContainers(): Promise<string[]> {
 }
 
 export interface ContainerRun {
+  beforeWrite?: (bytes: number) => Promise<void>;
+  container?: (name: string, present: boolean) => Promise<void>;
   image: string;
   mounts: readonly string[];
   command: readonly string[];
@@ -282,7 +285,8 @@ function startAttached(
       transform(chunk: Buffer, _e, cb) {
         total += chunk.length;
         if (total > maxBytes) return cb(new Error(`container output exceeds ${maxBytes} bytes`));
-        cb(null, chunk);
+        if (run.beforeWrite) void run.beforeWrite(chunk.length).then(() => cb(null, chunk), cb);
+        else cb(null, chunk);
       },
     });
     const done = run.sink ? pipeline(child.stdout, cap, run.sink) : (child.stdout.resume(), Promise.resolve());
@@ -309,6 +313,7 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
   const name = `${composeProject()}-extract-${randomBytes(6).toString('hex')}`;
   const entry: Live = { name, id: null, child: null, creating: null, cleanup: null, cancelled: false };
   live.set(name, entry);
+  try { await run.container?.(name, true); } catch (err) { live.delete(name); sink?.destroy(); throw err; }
   let failure: Error | null = null;
   const abort = (e: Error): void => {
     if (failure) return;
@@ -344,6 +349,7 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
   let cleanupError = '';
   try {
     await ensureCleanup(entry);
+    await run.container?.(name, false);
     live.delete(name);
   } catch (e) {
     cleanupError = `; cleanup failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -372,7 +378,7 @@ export async function resolveImageId(image = EXTRACT_IMAGE): Promise<string> {
   return id;
 }
 
-export async function mdbtoolsVersion(mdbPath: string, imageId?: string): Promise<string> {
+export async function mdbtoolsVersion(mdbPath: string, imageId?: string, guard?: ExtractGuard): Promise<string> {
   const image = imageId ?? (await resolveImageId());
   const chunks: Buffer[] = [];
   const sink = new Writable({
@@ -387,6 +393,8 @@ export async function mdbtoolsVersion(mdbPath: string, imageId?: string): Promis
     command: ['mdb-export', '--version'],
     sink,
     timeoutMs: 60_000,
+    maxBytes: 65536,
+    container: guard?.container,
   });
   const m = /(\d+\.\d+\.\d+\S*)/.exec(Buffer.concat(chunks).toString('utf8'));
   if (!m?.[1]) throw new Error('cannot determine mdbtools version');
@@ -420,6 +428,7 @@ export async function runMdbExport(
   mdbPath: string,
   outDir: string,
   imageId?: string,
+  guard?: ExtractGuard,
 ): Promise<Record<TableName, string>> {
   const image = imageId ?? (await resolveImageId());
   const result = {} as Record<TableName, string>;
@@ -435,6 +444,8 @@ export async function runMdbExport(
       sink: handle.createWriteStream(),
       timeoutMs: EXPORT_TIMEOUT_MS,
       maxBytes: MAX_TABLE_BYTES,
+      beforeWrite: guard ? n => guard.beforeWrite('raw', n) : undefined,
+      container: guard?.container,
     });
     const problems = summarizeStderr(stderr);
     if (problems) throw new Error(`mdb-export reported diagnostics for table ${table} (${problems})`);
@@ -455,9 +466,14 @@ export interface ExtractManifest {
 }
 
 export interface ExtractOptions {
+  guard?: ExtractGuard;
   archive: string;
   sha256: string;
   out: string;
+}
+export interface ExtractGuard {
+  beforeWrite(kind: 'expanded' | 'raw' | 'projected', bytes: number): Promise<void>;
+  container(name: string, present: boolean): Promise<void>;
 }
 
 /**
@@ -501,8 +517,8 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
   const onSignal = (sig: NodeJS.Signals): void => {
     beginShutdown();
     void removeAllContainers().then((failures) => {
-      cleanup();
-      for (const f of failures) console.error(f);
+      if (failures.length === 0) cleanup();
+      for (const f of failures) console.error(opts.guard ? 'import cleanup unresolved' : f);
       process.exit(sig === 'SIGINT' ? 130 : 143);
     });
   };
@@ -515,13 +531,15 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
     await mkdir(raw, { mode: 0o700 });
     const archive = await verifyArchive(opts.archive, opts.sha256);
     const imageId = await resolveImageId();
-    const mdb = await extractMember(opts.archive, 'avall.mdb', raw, DEFAULT_LIMITS);
-    const version = await mdbtoolsVersion(mdb, imageId);
-    const rawCsv = await runMdbExport(mdb, raw, imageId);
+    const mdb = await extractMember(opts.archive, 'avall.mdb', raw, { ...DEFAULT_LIMITS,
+      beforeWrite: opts.guard ? n => opts.guard!.beforeWrite('expanded', n) : undefined });
+    const version = await mdbtoolsVersion(mdb, imageId, opts.guard);
+    const rawCsv = await runMdbExport(mdb, raw, imageId, opts.guard);
     const tables: ExtractManifest['tables'] = {};
     for (const table of TABLE_NAMES) {
       const target = join(staging, `${table}.csv`);
-      const rows = await projectFile(table, rawCsv[table], target);
+      const rows = await projectFile(table, rawCsv[table], target,
+        opts.guard ? n => opts.guard!.beforeWrite('projected', n) : undefined);
       tables[table] = {
         rows,
         columns: TABLE_SPECS[table].columns.length,
@@ -547,7 +565,7 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
     return manifest;
   } catch (err) {
     const failures = await removeAllContainers();
-    cleanup();
+    if (failures.length === 0) cleanup();
     if (failures.length) {
       throw new Error(`${err instanceof Error ? err.message : String(err)}; ${failures.join('; ')}`);
     }

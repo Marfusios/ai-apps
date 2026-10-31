@@ -1,0 +1,51 @@
+import { afterEach,expect,it,vi } from 'vitest';
+import { mkdtemp,writeFile,rm,readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { environmentConfig,providerKey,WORKER_VARS,type ImporterConfig } from '../../worker/importer/config.js';
+import { ManagedSpace,FILE_LIMITS } from '../../worker/importer/files.js';
+import { spoolFailure,OutageSchema } from '../../worker/importer/recovery.js';
+import { ImportFailure,sourceReminder,SOURCE_REMINDER,SOURCE_CUTOFF } from '../../worker/importer/contracts.js';
+afterEach(()=>vi.unstubAllEnvs());
+async function withConfig(fn:(c:ImporterConfig)=>Promise<void>){
+  for(const name of [...WORKER_VARS,'OPENAI_API_KEY'])vi.stubEnv(name,undefined);
+  const root=await mkdtemp(join(tmpdir(),'importer-config-')),env=join(root,'worker.env');
+  await writeFile(env,['APP_ENV=dev','DATABASE_INGEST_URL=postgres://synthetic:offline@localhost/aviation_test',
+    'ELASTICSEARCH_URL=http://localhost:9200','ELASTICSEARCH_WRITE_API_KEY=synthetic-offline-only',
+    'ELASTICSEARCH_INDEX_PREFIX=aviation-test','AI_MONTHLY_BUDGET_USD=100',
+    'AI_INTERACTIVE_MONTHLY_BUDGET_USD=80','AI_INGESTION_MONTHLY_BUDGET_USD=20',
+    'AVIATION_TRACING_ENABLED=true','LANGFUSE_SECRET_KEY=PRIVATE_SENTINEL','BETTER_AUTH_SECRET=PRIVATE_SENTINEL',
+    'OPENAI_API_KEY="unterminated'].join('\n'),{mode:0o600});
+  const c:ImporterConfig={version:'snapshot-importer.v1',root,hostLock:join(root,'host'),maintenanceLock:join(root,'backup'),
+    code:'a'.repeat(40),installation:null,schedule:{enabled:false,localTime:'05:30',timeZone:'Europe/Prague'},
+    dev:{envFiles:[env],applicationUrl:'http://localhost:3000',container:'synthetic',image:'sha256:'+'b'.repeat(64)}};
+  try{await fn(c);}finally{await rm(root,{recursive:true,force:true});}
+}
+it('never reads a provider key before misses need it, drops unrelated secrets and forcibly disables tracing',async()=>withConfig(async c=>{
+  const app=environmentConfig(c,'dev');
+  expect(JSON.stringify(app)).not.toContain('PRIVATE_SENTINEL');
+  expect(app.tracing.enabled).toBe(false);
+  expect(()=>providerKey(c,'dev')).toThrow();
+  vi.stubEnv('OPENAI_API_KEY','synthetic-process-value');expect(providerKey(c,'dev')).toBe('synthetic-process-value');
+}));
+it('preserves process values and refuses a mixed project or disagreeing schedule',async()=>withConfig(async c=>{
+  vi.stubEnv('AI_INGESTION_MONTHLY_BUDGET_USD','10');
+  expect(environmentConfig(c,'dev').ai.budgets.ingestionMonthlyUsd).toBe(10);
+  vi.stubEnv('APP_ENV','live');expect(()=>environmentConfig(c,'dev')).toThrow();
+  expect(environmentConfig(c,'dev',true).appEnv).toBe('dev');
+  vi.stubEnv('APP_ENV','dev');
+  expect(()=>environmentConfig({...c,schedule:{...c.schedule,enabled:true}},'dev')).toThrow();
+}));
+it('keeps one strict bounded outage record without replacing unresolved artifact evidence',async()=>withConfig(async c=>{
+  const space=new ManagedSpace(c.root,{...FILE_LIMITS,reserve:0});
+  await spoolFailure(space,'dev',new ImportFailure('integrity'),'extract',null,'00000000-0000-4000-8000-000000000001');
+  await spoolFailure(space,'dev',new ImportFailure('busy',false),'check');
+  const raw=JSON.parse(await readFile(join(c.root,'status-dev.json'),'utf8'));
+  expect(OutageSchema.parse(raw).reason).toBe('integrity');
+  expect(OutageSchema.safeParse({...raw,error:'PRIVATE_SENTINEL'}).success).toBe(false);
+}));
+it('emits a fixed March reminder and stops that reminder at the acquisition cutoff',()=>{
+  expect(sourceReminder(new Date(SOURCE_REMINDER-1))).toBeNull();
+  expect(sourceReminder(new Date(SOURCE_REMINDER))).toBe('{"event":"source_transition_reminder","cutoff":"2027-04-05T00:00:00Z"}');
+  expect(sourceReminder(new Date(SOURCE_CUTOFF))).toBeNull();
+});

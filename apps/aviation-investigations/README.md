@@ -25,6 +25,8 @@ published privacy notice; AI features are not enabled yet).
   TypeScript experiments, development/production workflows, and privacy boundaries.
 - [Data assessment](docs/DATA_REVIEW.md): measured archive contents, schema traps,
   real cases, and dashboard opportunities.
+- [Snapshot importer](docs/IMPORTER.md): disabled-by-default scheduled acquisition,
+  certification, artifact spending cap, recovery and installation gate.
 - [Aggregate data profile](docs/data-profile-2026-10-16.json): source identifiers
   and observed counts; no raw personal records.
 - [Security review](docs/SECURITY_REVIEW.md): independent design review and the

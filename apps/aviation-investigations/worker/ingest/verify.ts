@@ -111,6 +111,7 @@ export function findProfile(archiveSha256: string, dir: string = PROFILES_DIR): 
 }
 
 export interface VerifyOptions {
+  maxReportBytes?: number;
   /** Directory for `verify-gen-<id>-<sha256>.json` (default `data/work`). */
   outDir?: string;
   /** A profile to check (its archive hash must match), `null` for none; default: the committed profile for the archive. */
@@ -744,6 +745,7 @@ async function verifyInSnapshot(q: Queryable, generationId: number, opts: Verify
   )}\n`;
   // Content-addressed and written atomically before the hash is recorded: an attempt
   // that fails later leaves at most an unreferenced report, never a damaged one.
+  if (Buffer.byteLength(file) > (opts.maxReportBytes ?? Infinity)) throw new Error('verification report exceeds size limit');
   const { path: reportPath, sha256: reportSha256 } = writeReportAtomically(outDir, generationId, file);
 
   await opts.beforeRecord?.();

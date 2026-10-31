@@ -167,7 +167,8 @@ export function projectCsv(
 }
 
 /** Project one raw CSV file to its allowlisted columns; returns the data row count. */
-export async function projectFile(table: TableName, rawPath: string, outPath: string): Promise<number> {
+export async function projectFile(table: TableName, rawPath: string, outPath: string,
+  beforeWrite?: (bytes: number) => Promise<void>): Promise<number> {
   const counter: ProjectionCounter = { rows: 0 };
   const [utf8, parser, selector, serializer] = projectCsv(table, counter);
   await pipeline(
@@ -176,6 +177,10 @@ export async function projectFile(table: TableName, rawPath: string, outPath: st
     parser,
     selector,
     serializer,
+    new Transform({ transform(chunk: Buffer, _encoding, cb) {
+      if (beforeWrite) void beforeWrite(chunk.length).then(() => cb(null, chunk), cb);
+      else cb(null, chunk);
+    } }),
     createWriteStream(outPath, { flags: 'wx', mode: 0o600 }),
   );
   return counter.rows;
