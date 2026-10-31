@@ -94,6 +94,12 @@ export const SignOutResponseSchema = z.looseObject({ success: z.literal(true) })
 export type SignOutResponse = z.infer<typeof SignOutResponseSchema>;
 
 export const AccountUserSchema = z.strictObject({
+  /**
+   * The account's random application id: the identity the client compares to tell one account
+   * from another (an e-mail can belong to a deleted account and then a new one). Shown only to
+   * the account's own browser; never the Google subject.
+   */
+  id: z.uuid(),
   name: z.string().max(200),
   email: z.string().min(3).max(320),
 });
