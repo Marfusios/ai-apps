@@ -18,7 +18,8 @@ export const AdminUserSchema = z.strictObject({
   lastSignInAt: Iso.nullable(),
   /** The latest AI search the account was charged a search for. */
   lastAiSearchAt: Iso.nullable(),
-  aiSearches: z.strictObject({ today: Count, last7Days: Count, last30Days: Count, total: Count }),
+  /** Charged AI searches; usage records are kept 90 days, so the longest window is 90 days. */
+  aiSearches: z.strictObject({ today: Count, last7Days: Count, last30Days: Count, last90Days: Count }),
   isAdmin: z.boolean(),
 });
 export type AdminUser = z.infer<typeof AdminUserSchema>;
