@@ -34,6 +34,11 @@ export interface StartTracingOptions {
   shutdownTimeoutMillis?: number;
 }
 
+/** Content-free operational JSON, including before the HTTP logger exists. */
+export const tracingExportWarning: NonNullable<StartTracingOptions['warn']> = (metadata, message) => {
+  process.stderr.write(`${JSON.stringify({ level: 40, msg: message, category: 'tracing_export_failed', failedExports: metadata.failedExports })}\n`);
+};
+
 /**
  * Why the Langfuse address is refused, or null (gate 22 finding 4). https always; plain
  * http only to a loopback host, to a host the operator listed in AVIATION_TRACING_HTTP_HOSTS
@@ -103,14 +108,14 @@ export function observableExporter(inner: SpanExporter, opts: StartTracingOption
       timer.unref();
       try { inner.export(spans, result => finish(result.code === 0)); } catch { finish(false); }
     },
-    async shutdown() { try { await inner.shutdown(); } catch { failure(); } },
-    async forceFlush() { try { await inner.forceFlush?.(); } catch { failure(); } },
+    async shutdown() { try { await inner.shutdown(); } catch { tracingStats.internalErrors += 1; } },
+    async forceFlush() { try { await inner.forceFlush?.(); } catch { tracingStats.internalErrors += 1; } },
   };
 }
 
 function bounded(p: Promise<void>, ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
+    const t = setTimeout(() => { tracingStats.internalErrors += 1; resolve(); }, ms);
     t.unref();
     p.then(
       () => {
@@ -119,7 +124,7 @@ function bounded(p: Promise<void>, ms: number): Promise<void> {
       },
       () => {
         clearTimeout(t);
-        tracingStats.exportFailures += 1;
+        tracingStats.internalErrors += 1;
         resolve();
       },
     );
@@ -197,7 +202,7 @@ function safely(fn: () => void): void {
   try {
     fn();
   } catch {
-    tracingStats.exportFailures += 1;
+    tracingStats.internalErrors += 1;
   }
 }
 
@@ -227,7 +232,7 @@ async function runInSpan<T>(
     span = t.startSpan(safeSpanName(name), {}, root ? trace.deleteSpan(context.active()) : undefined);
     apply(span, attrs);
   } catch {
-    tracingStats.exportFailures += 1;
+    tracingStats.internalErrors += 1;
   }
   const s = span;
   const started = performance.now();

@@ -64,6 +64,13 @@ describe('planCompose on live', () => {
     expect(() => planCompose('app-ps', [], {}, [{ APP_ENV: 'live' }])).not.toThrow();
   });
 
+  it('accepts at most 80 tag characters, matching APP_VERSION in the server and contract', () => {
+    expect(() => planCompose('app-up', [], {}, [{ ...live, APP_VERSION: 'v'.repeat(80) }])).not.toThrow();
+    for (const length of [81, 128]) {
+      expect(() => planCompose('app-up', [], {}, [{ ...live, APP_VERSION: 'v'.repeat(length) }])).toThrow(/maximum 80/);
+    }
+  });
+
   it('needs a valid edge subnet in tunnel mode', () => {
     expect(error(() => planCompose('app-up', [], {}, [{ ...live, EDGE_SUBNET: undefined }]))).toMatch(/needs EDGE_SUBNET/);
     expect(error(() => planCompose('app-up', [], {}, [{ ...live, EDGE_SUBNET: '198.51.100.0/28' }]))).toMatch(/private/);

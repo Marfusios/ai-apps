@@ -22,7 +22,7 @@ import { createAiRuntime } from '../../server/ai/runtime.js';
 import { createFakeProvider, type FakeScript } from '../../server/ai/fake.js';
 import { EvidenceScopeOutputSchema, validateEvidenceScope } from '../../server/ai/prompts/scope.e1.js';
 import { createEvidenceRetriever, createEvidenceServices, type EvidenceRetriever } from '../../server/evidence/retrieve.js';
-import { pageOf, readOwnedSearch } from '../../server/evidence/store.js';
+import { pageOf, readOwnedSearch, takeOverSearch } from '../../server/evidence/store.js';
 import { evidenceSnapshot } from '../../server/evidence/snapshot.js';
 import { EvidencePageSchema, CreateEvidenceResponseSchema, CreateEvidenceRequestSchema } from '../../shared/contracts/evidence.js';
 import { ConfigResponseSchema } from '../../shared/contracts/config.js';
@@ -1389,11 +1389,11 @@ describe('v2 evidence retries across the v3 upgrade', () => {
 });
 
 describe('Task 25 private checklist, ratings and admins', () => {
-  it('reports actual stages only to the owner, uses its own poll budget, and disappears on deletion', async () => {
+  it('reports actual stages only to the owner and uses a separate poll budget', async () => {
     let reached!: () => void, release!: () => void;
     const entered = new Promise<void>(r => { reached=r; }), hold = new Promise<void>(r => { release=r; });
     const h = harness({evidenceScope:async()=>{reached();await hold;return {output:success};}},undefined,undefined,{pollRateLimit:2});
-    const signed = await h.account(); const key=randomUUID();
+    await h.account(); const key=randomUUID();
     const task = h.request({},key); await entered;
     const poll = (cookie=h.cookie()) => h.app.inject({url:`/api/evidence/progress/${key}`,headers:{cookie}});
     try {
@@ -1406,12 +1406,47 @@ describe('Task 25 private checklist, ratings and admins', () => {
       // Polling does not exhaust the separate ordinary API limit.
       expect((await h.app.inject({url:'/api/account',headers:{cookie:h.cookie()}})).statusCode).toBe(200);
     } finally { release(); }
-    const page=searchOf(await task);
-    const before=await spent();
-    await issueDeletionConfirmation(db,signed);
-    await deleteAccount({db,runs:h.svc.runs,now},signed);
-    expect((await h.get(page.id)).statusCode).toBe(404);
+    searchOf(await task);
+  });
+  it.each(['deletion', 'handover', 'expiry'] as const)('invalidates a saved progress capability after %s, with a fresh poll budget', async change => {
+    const h = harness();
+    const signed = change === 'handover' ? null : await h.account();
+    // A presented trial cookie binds a later search to that trial, not its network.
+    if (!signed) searchOf(await h.request());
+    const key = randomUUID(), page = searchOf(await h.request({}, key));
+    const originalCookie = h.cookie();
+    const poll = () => h.app.inject({ url: `/api/evidence/progress/${key}`, headers: { cookie: originalCookie } });
+    expect((await poll()).statusCode).toBe(200);
+    const before = await spent();
+    if (change === 'deletion') {
+      await issueDeletionConfirmation(db, signed!);
+      await deleteAccount({ db, runs: h.svc.runs, now }, signed!);
+    } else if (change === 'handover') {
+      const [row] = await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, page.id));
+      const account = await h.account();
+      expect(await takeOverSearch(db, page.id, row!.readOwner, account.hash)).toBe(true);
+    } else {
+      // Advance the saved-search clock only: the process-local progress TTL is still live.
+      clock = new Date(Date.parse(page.expiresAt) + 1);
+    }
+    expect((await poll()).statusCode).toBe(404);
     expect(await spent()).toEqual(before);
+  });
+  it.each([
+    { name: 'terms already executed', scope: success, ranking: 'er-t-v1', expected: 'nothing_to_suggest', suggestion: false },
+    { name: 'remaining terms', scope: success, ranking: 'er-q-v1', expected: 'suggestions', suggestion: true },
+    { name: 'remaining filters', scope: { ...success, filters: { state: ['CA'] } }, ranking: 'er-t-v1', expected: 'suggestions', suggestion: true },
+    { name: 'capability note', scope: { intent: 'operational_advice', filters: {} }, ranking: 'er-q-v1', expected: 'note', suggestion: false },
+  ] as const)('checklist reflects the page: $name', async ({ scope, ranking, expected, suggestion }) => {
+    const h = harness({ evidenceScope: { output: EvidenceScopeOutputSchema.parse(scope) } }, undefined, ranking);
+    await h.account();
+    const key = randomUUID(), page = searchOf(await h.request({}, key));
+    expect(page.suggestion !== null).toBe(suggestion);
+    if (expected === 'note') expect(page.note).toBe('operational_advice');
+    if (expected === 'nothing_to_suggest') expect(page.query).toMatchObject({ source: 'question', keywords: { kind: 'terms' } });
+    const progress = await h.app.inject({ url: `/api/evidence/progress/${key}`, headers: { cookie: h.cookie() } });
+    expect(progress.statusCode).toBe(200);
+    expect(progress.json().question).toEqual({ status: 'done', result: expected });
   });
   it('edited and failed-scope checklists disclose the actual skip/fallback without affecting the saved result', async () => {
     const h=harness({evidenceScope:{fail:'invalid_output'}}); await h.account();
@@ -1422,6 +1457,19 @@ describe('Task 25 private checklist, ratings and admins', () => {
     searchOf(await h.request({kind:'edited',from:page.id,question:undefined,filters:{}},editedKey));
     const edited=await h.app.inject({url:`/api/evidence/progress/${editedKey}`,headers:{cookie:h.cookie()}});
     expect(edited.json().question).toEqual({status:'skipped',result:null});
+  });
+  it('updates the checklist when the final projector omits optional suggestions', async () => {
+    const store = await import('../../server/evidence/store.js');
+    // withSuggestion's byte-budget fallback returns its undecorated input; the unit
+    // test covers the actual boundary. Exercise that outcome through the HTTP run.
+    vi.spyOn(store, 'withSuggestion').mockImplementation(data => data);
+    const h = harness();
+    await h.account();
+    const key = randomUUID(), page = searchOf(await h.request({}, key));
+    expect(page.suggestion).toBeNull();
+    const progress = await h.app.inject({ url: `/api/evidence/progress/${key}`, headers: { cookie: h.cookie() } });
+    expect(progress.statusCode).toBe(200);
+    expect(progress.json().question).toEqual({ status: 'done', result: 'nothing_to_suggest' });
   });
   it('ratings require the current owner, same origin and an unexpired result; latest rating wins exactly once', async () => {
     const h=harness(); const page=searchOf(await h.request()); const money=await spent(), calls=h.llm.calls.length;
@@ -1469,6 +1517,22 @@ describe('Task 25 private checklist, ratings and admins', () => {
     expect((await h.app.inject({url:'/api/account',headers:{cookie:h.cookie()}})).json()).not.toHaveProperty('isAdmin');
     expect(h.logs.join('')).not.toContain('admin@example.test');
     expect(h.logs.filter(line=>line.includes('admin overview access'))).toHaveLength(3);
+  });
+  it.each(['expired session', 'different Google subject'] as const)('refuses an otherwise allowlisted admin with %s even when the cookie resolves', async change => {
+    const h = harness(undefined, undefined, undefined, { env: { AIRCASE_ADMIN_EMAILS: 'admin@example.test' } });
+    const signed = await h.account('admin@example.test');
+    const headers = { cookie: h.cookie() };
+    expect((await h.app.inject({ url: '/api/account', headers })).json().isAdmin).toBe(true);
+    if (change === 'expired session') {
+      // Expire the fixture as migrator; the app correctly cannot rewrite created_at.
+      await migrator.update(authSessions).set({
+        createdAt: new Date(Date.now() - 2 * 86400_000), expiresAt: new Date(Date.now() - 86400_000),
+      }).where(eq(authSessions.id, signed.sessionId));
+    } else {
+      await migrator.update(authAccounts).set({ accountId: randomUUID() }).where(eq(authAccounts.userId, signed.userId));
+    }
+    expect((await h.app.inject({ url: '/api/admin/overview', headers })).statusCode).toBe(404);
+    expect((await h.app.inject({ url: '/api/account', headers })).json()).not.toHaveProperty('isAdmin');
   });
   it('a non-admin gets 404 and no flag, including a percent-encoded route', async () => {
     const h=harness(undefined,undefined,undefined,{env:{AIRCASE_ADMIN_EMAILS:'admin@example.test'}}); await h.account('reader@example.test');

@@ -37,7 +37,7 @@ import { createBriefServices, type BriefServices } from './briefs/services.js';
 import { API_DB_EXECUTION, DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from './db/client.js';
 import { manifestCasesIndex } from './db/generations.js';
 import { startControlMaintenance } from './quota/maintenance.js';
-import { startTracing } from './observability/tracing.js';
+import { startTracing, tracingExportWarning } from './observability/tracing.js';
 import { createEsClient } from './search/es.js';
 import { trustedProxyProblem } from './http/network-identity.js';
 import { retrievalConfig } from './search/retrieval-config.js';
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
   const proxyProblem = config.appEnv === 'live' ? trustedProxyProblem(config.trustedProxyCidrs) : null;
   if (proxyProblem) fail(proxyProblem);
 
-  const tracing = startTracing(config);
+  const tracing = startTracing(config, { warn: tracingExportWarning });
   // The server's logger exists once the app does; until then failed connections go to stderr.
   let dbLog: { warn(obj: object, msg: string): void } | null = null;
   // Opening a connection or waiting for one ends after 5 s; statements are bounded on the

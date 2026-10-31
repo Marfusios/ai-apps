@@ -2445,10 +2445,14 @@ tracing enabled, a best-effort background score updates that search's trace.
 Set `AIRCASE_ADMIN_EMAILS` to comma-separated verified Google email addresses to allow
 `GET /api/admin/overview`. The default grants nobody access. Administrators receive
 `isAdmin: true` from `/api/account`; other responses omit the flag. The overview shows
-names/emails, session activity, charged-search counts over 1/7/30/90 UTC days, daily
+names/emails, session activity, charged evidence-search counts over 1/7/30/90 UTC days, daily
 usage, feedback, settled costs, budgets and system state. It returns at most 1,000 users,
 uses private no-store responses and never traces the overview. Non-admins receive 404.
-The endpoint has no administrative write operations.
+The endpoint has no administrative write operations. It has a 15-second overall deadline
+and refuses to process more than 10,000 accounts. Search metrics exclude AI briefs;
+settled costs include all categories. `costs.interactiveToday` isolates today's interactive
+spend for its daily budget meter. Older reservations without outcome metadata are
+counted as neither known failures nor free undos.
 
 Before enabling tracing for a release, mirror the frozen prompt templates with
 `pnpm -s worker langfuse-prompts --sync` using that environment's project credentials.

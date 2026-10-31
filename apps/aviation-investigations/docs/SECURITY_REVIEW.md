@@ -405,6 +405,7 @@ are not backed up. Identity-free daily totals remain and are backed up. Reservat
 outcome metadata has the existing 90-day lifetime; it contains no question or account data.
 Runtime ingestion cannot read these tables or modify aggregates. The regenerated restore
 privilege baseline covers their grants and SECURITY DEFINER triggers.
+The accepted `evidence_usage` triggers add outcome metadata only, with fixed SECURITY DEFINER search paths and fresh keys; admission is integration-tested.
 
 The asynchronous score queue is bounded and uses fixed score names, numeric values and
 opaque trace ids only. The database rating is authoritative; export failures, timeouts,

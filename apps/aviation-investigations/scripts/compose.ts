@@ -237,7 +237,7 @@ export function planCompose(command: Command, rawArgs: string[], processEnv: Val
   if (appEnv === 'live' && usesImage) {
     const version = values.APP_VERSION;
     if (!version || version === 'dev') throw new UsageError('live needs an explicit APP_VERSION other than dev (a release tag)');
-    if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(version)) throw new UsageError('APP_VERSION is not a valid image tag');
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(version)) throw new UsageError('APP_VERSION is not a valid image tag (maximum 80 characters)');
   }
   const dbUrl = DATABASE_URL_OF[command];
   if (dbUrl) checkDatabaseUrl(dbUrl[0], values[dbUrl[0]]!, appEnv, dbUrl[1]);

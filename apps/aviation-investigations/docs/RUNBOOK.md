@@ -1426,13 +1426,20 @@ this does not cancel the search or change its charge. Later searches use the sig
 trial or account presented when their POST arrived. All progress, feedback and admin
 responses, including errors, are private/no-store.
 
-Admin usage dates are UTC accounting days. Charged searches exclude quota-refunded
-failures and exempt undos; mean cost divides all settled interactive spend in the month
-by its charged searches. Undos are admissions, including failed undo attempts; failures
-are also reported separately. The first rating chooses its aggregate day, even if the
+Admin usage dates are UTC accounting days. Search counts, active visitors, failures
+and free undos cover evidence searches only; AI briefs are excluded. Charged searches
+exclude quota-refunded failures and exempt undos; mean cost divides all settled
+interactive spend in the month (including any brief spend) by charged evidence searches.
+`costs.today` includes every category for the UTC day; `costs.interactiveToday` includes
+only interactive spend, for comparison with the daily interactive budget. Undos are
+admissions, including failed undo attempts; failures are also reported separately. The first rating chooses its aggregate day, even if the
 visitor changes it after midnight. All-time feedback totals survive search expiry and
 account deletion, without identities. The migration cannot reconstruct already-expired
-pre-0026 free undos. Per-account search counts stop at 90 days. The overview is bounded
+pre-0026 free undos; without outcome metadata a reservation counts as neither a failure
+nor a free undo. Per-account search counts stop at 90 days. The overview is bounded
 to 1,000 returned users, 50 cost groups, and 10,000 accounts processed; it refuses beyond
-that processing bound. Expand this implementation before the installation reaches it.
+that processing bound with 503 and log category `admin_overview_user_limit`.
+The whole overview has a 15-second deadline in addition to five-second SQL statement
+limits; timeout returns 503 with `admin_overview_timeout`. Any held overview transaction
+is destroyed on timeout. Expand this implementation before reaching the account bound.
 The dataset's next automatic import stays null: none is scheduled.

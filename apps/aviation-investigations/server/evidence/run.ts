@@ -84,6 +84,11 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
       finalData = withSuggestion({ ...finalData, ...execution, ranking: result.ranking, cases: result.cases, note: result.note }, remainingSuggestion(query, result.suggestion), config.query.highlights);
       // Validate the exact public page before keeping its quota unit or storing success.
       pageOf({ ...row, status: 'results', data: finalData }, 1, ai.now());
+      // Optional decoration may be dropped to keep the result within its storage
+      // budget. Reconcile the checklist with that final visible page too.
+      if (!row.data.edited && result.scopeOutcome === 'used' && !finalData.suggestion) {
+        try { progress.onQuestion?.(finalData.note ? 'note' : 'nothing_to_suggest', false); } catch { /* progress is optional */ }
+      }
       outcome = 'results'; // A rerank abort preserves the already retrieved order.
     } catch (error) {
       if (error instanceof RankingFailure && error.stage !== 'spend') active = error.stage === 'retrieve' ? 'retrieval' : error.stage;

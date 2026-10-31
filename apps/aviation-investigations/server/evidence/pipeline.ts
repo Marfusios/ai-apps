@@ -16,6 +16,7 @@ import type { EvidenceRetriever, EvidenceRetrievalResult } from './retrieve.js';
 import { applyRerank, buildRerankInput } from './rerank.js';
 import { RankingStopped, rankingFailureOutcome, type RankingFailureOutcome } from './outcomes.js';
 import { RankingSpendError, type RankingCall, type RankingSpendGate } from './spend.js';
+import { questionQuery, remainingSuggestion } from './disclosure.js';
 
 export type LexicalSource = 'question' | 'terms' | 'question+terms' | 'fallback_question';
 export interface ExecutedTexts { lexical: string; vector: string }
@@ -176,13 +177,21 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
       input.signal.throwIfAborted();
     }
   }
-  try { observer.onQuestion?.(suggestion ? 'suggestions' : note ? 'note' : scopeOutcome === 'non_search' || scopeOutcome === 'skipped' ? 'nothing_to_suggest' : 'unavailable', !['used', 'non_search', 'skipped'].includes(scopeOutcome)); } catch { /* progress is optional */ }
   const { executed, lexicalSource, addedTerms = null } = input.edited ?? rankingTexts(input.question, suggestion?.terms ?? null, config);
   const automatic = automaticState(policy, input.question, suggestion?.filters ?? null, Boolean(input.edited), scopeOutcome === 'non_search');
   const appliedFilters = automatic.filters ? { ...input.filters, ...automatic.filters } : input.filters;
   if (automatic.filters && suggestion) {
     const { state: _applied, ...filters } = suggestion.filters;
     suggestion = { ...suggestion, filters };
+  }
+  // Use the page's disclosure rule: terms already executed as keywords and filters
+  // already applied are no longer suggestions. Edited searches stay skipped.
+  if (!input.edited) {
+    const visible = remainingSuggestion(questionQuery(lexicalSource, addedTerms), suggestion);
+    const failed = !['used', 'non_search', 'skipped'].includes(scopeOutcome);
+    try {
+      observer.onQuestion?.(failed ? 'unavailable' : visible ? 'suggestions' : note ? 'note' : 'nothing_to_suggest', failed);
+    } catch { /* progress is optional */ }
   }
   const execution: RankingExecution = { executed, lexicalSource, addedTerms, appliedFilters, automaticFilters: automatic.filters,
     autoFilterPolicy: autoFilterIdentity(policy), autoFilterReason: automatic.reason };
