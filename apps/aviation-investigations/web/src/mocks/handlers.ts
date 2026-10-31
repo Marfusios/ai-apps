@@ -18,13 +18,20 @@
  * month), as a replay is; every other pause still refuses it. `/api/config` offers Cloudflare's
  * documented test site key, the AI limits (`MOCK_AI_LIMITS`) and the fields the evidence policy
  * applies on its own (`aiAutomaticFilters`: `['state']` when the mock applies states, else none).
+ *
+ * Task 25: an evidence search's stages are timed like live's (web/mock/evidence-progress.ts, scaled
+ * by `evidenceTiming`, or this tab's session storage `MOCK_EVIDENCE_TIMING_KEY`), its POST answered
+ * once they are over and its progress read under its idempotency key; the owner can rate a search
+ * (`POST /api/evidence/:id/feedback`); and the signed-in mock account can be an admin (`admin`, or
+ * session storage `MOCK_ADMIN_KEY`), for whom alone `GET /api/admin/overview` answers
+ * (web/mock/admin.ts).
  */
 import { delay, http, HttpResponse } from 'msw';
 import type { AiStatusResponse } from '../../../shared/contracts/ai';
 import type { CaseDetail } from '../../../shared/contracts/cases';
 import { CreateBriefRequestSchema, RefinementRequestSchema } from '../../../shared/contracts/briefs';
 import type { ConfigResponse } from '../../../shared/contracts/config';
-import { CreateEvidenceRequestSchema } from '../../../shared/contracts/evidence';
+import { CreateEvidenceRequestSchema, EvidenceFeedbackRequestSchema } from '../../../shared/contracts/evidence';
 import {
   DELETE_REAUTH_PATH,
   DeleteAccountRequestSchema,
@@ -42,7 +49,9 @@ import dashboardDefault from '../../mock/dashboard-default.json';
 import index from '../../mock/search-index.json';
 import { AI_STATUS_SAMPLES, MOCK_AI_LIMITS } from '../../mock/ai-status';
 import { MockBriefs, type MockReader, type MockReply } from '../../mock/briefs';
+import { mockAdminOverview } from '../../mock/admin';
 import { MOCK_EVIDENCE_CONFIG_KEY, MockEvidence, parseMockEvidenceConfig, type MockEvidenceConfig, type MockEvidenceReply } from '../../mock/evidence';
+import { MockEvidenceProgress } from '../../mock/evidence-progress';
 import { searchCorpus, type MockCorpus } from '../../mock/engine';
 
 export const mockCorpus: MockCorpus = {
@@ -86,6 +95,14 @@ export interface HandlerOptions {
    * that does not report it.
    */
   aiAutomaticFilters?: ConfigResponse['aiAutomaticFilters'] | null;
+  /**
+   * Scale of the simulated stage times of an AI search (web/mock/evidence-progress.ts): 1 is as long
+   * as live takes, 0 answers at once (default 0). This tab's session storage overrides it under
+   * `MOCK_EVIDENCE_TIMING_KEY`.
+   */
+  evidenceTiming?: number;
+  /** The signed-in mock account is an admin (`isAdmin`, the admin overview); default: this tab's session storage says so. */
+  admin?: boolean;
 }
 
 /** The mock's Google account: synthetic. */
@@ -96,6 +113,15 @@ const MOCK_ACCOUNT_KEY = 'casebook-mock-account';
 
 /** Set in this tab's session storage (end-to-end tests): deleting asks to confirm with Google first. */
 export const MOCK_DELETION_REAUTH_KEY = 'casebook-mock-deletion-reauth';
+
+/**
+ * This tab's session storage (dev mock mode, end-to-end tests): the scale of an AI search's simulated
+ * stage times, a number (1: as live, 0: at once), over the handlers' own `evidenceTiming`.
+ */
+export const MOCK_EVIDENCE_TIMING_KEY = 'casebook-mock-evidence-timing';
+
+/** This tab's session storage: `1` makes the signed-in mock account an admin. */
+export const MOCK_ADMIN_KEY = 'casebook-mock-admin';
 
 interface MockAccountState {
   signedIn: boolean;
@@ -121,6 +147,25 @@ function loadAccountState(): MockAccountState {
 function deletionReauthFlag(): boolean {
   try {
     return window.sessionStorage.getItem(MOCK_DELETION_REAUTH_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** The stage-time scale this tab's session storage names, or null (none, or not a number from 0 to 10). */
+export function evidenceTimingFlag(): number | null {
+  try {
+    const raw = window.sessionStorage.getItem(MOCK_EVIDENCE_TIMING_KEY);
+    const n = raw === null || raw.trim() === '' ? NaN : Number(raw);
+    return Number.isFinite(n) && n >= 0 && n <= 10 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function adminFlag(): boolean {
+  try {
+    return window.sessionStorage.getItem(MOCK_ADMIN_KEY) === '1';
   } catch {
     return false;
   }
@@ -178,6 +223,8 @@ export function createHandlers({
   accountCheck = false,
   evidence: evidenceConfig = evidenceConfigFlag(),
   aiAutomaticFilters = evidenceConfig.autoFilters === 'state-explicit.v1.3' ? ['state'] : [],
+  evidenceTiming = 0,
+  admin = adminFlag(),
 }: HandlerOptions = {}) {
   const wait = async (): Promise<void> => {
     if (latencyMs > 0) await delay(latencyMs);
@@ -193,8 +240,9 @@ export function createHandlers({
   // Briefs are read by their owner: the account while signed in, else this browser's trial.
   const reader = (): MockReader => (signIn.signedIn ? 'account' : 'trial');
   const briefs = new MockBriefs({ ...(briefPolls === undefined ? {} : { pollsToFinish: briefPolls }), visitor: reader });
-  // Evidence searches are read by their owner, like briefs.
+  // Evidence searches are read by their owner, like briefs; so is their progress, timed like live's.
   const evidence = new MockEvidence({ visitor: reader, config: evidenceConfig });
+  const progress = new MockEvidenceProgress({ visitor: reader, ranking: evidenceConfig.ranking, timing: evidenceTimingFlag() ?? evidenceTiming });
   const accountStatus = (): AiStatusResponse => (accountCheck ? AI_STATUS_SAMPLES.checkedAccount : AI_STATUS_SAMPLES.newAccount);
   let status: AiStatusResponse = signIn.signedIn ? accountStatus() : aiStatus;
   const notFound = () => HttpResponse.json({ error: 'not_found', message: 'Not found.' } satisfies ErrorResponse, { status: 404, headers: NO_STORE });
@@ -262,7 +310,7 @@ export function createHandlers({
     http.get('*/api/account', async () => {
       await wait();
       const live = confirmedUntil !== null && Date.parse(confirmedUntil) > Date.now() ? { deletionConfirmedUntil: confirmedUntil } : {};
-      const body: AccountResponse = signIn.signedIn ? { signedIn: true, user: { ...MOCK_USER }, ...live } : { signedIn: false };
+      const body: AccountResponse = signIn.signedIn ? { signedIn: true, user: { ...MOCK_USER }, ...live, ...(admin ? { isAdmin: true } : {}) } : { signedIn: false };
       return HttpResponse.json(body, { headers: NO_STORE });
     }),
     http.post('*/api/auth/sign-in/social', async ({ request }) => {
@@ -351,7 +399,31 @@ export function createHandlers({
       await wait();
       const parsed = CreateEvidenceRequestSchema.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return badRequest(parsed.error.issues);
-      return refuse(parsed.data.turnstileToken, evidence.quotaExempt(parsed.data)) ?? admit(evidence.create(parsed.data));
+      const refused = refuse(parsed.data.turnstileToken, evidence.quotaExempt(parsed.data));
+      if (refused) return refused;
+      const reply = evidence.create(parsed.data);
+      // Admitted and counted at the start, as the server does; then the answer waits for the stages.
+      const response = admit(reply);
+      const ms = reply.progress ? progress.start(parsed.data, reply.progress) : 0;
+      if (ms > 0) await delay(ms);
+      return response;
+    }),
+    // Before `/api/evidence/:id`: a key, not a search id.
+    http.get('*/api/evidence/progress/:key', async ({ params }) => {
+      await wait();
+      return briefReply(progress.read(String(params.key)));
+    }),
+    http.post('*/api/evidence/:id/feedback', async ({ request, params }) => {
+      await wait();
+      const parsed = EvidenceFeedbackRequestSchema.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return badRequest(parsed.error.issues);
+      return briefReply(evidence.rate(String(params.id), parsed.data.rating));
+    }),
+    http.get('*/api/admin/overview', async () => {
+      await wait();
+      // Only the signed-in admin; everyone else gets the same 404 as a route that does not exist.
+      if (!signIn.signedIn || !admin) return notFound();
+      return HttpResponse.json(mockAdminOverview({ now: new Date(), evidence: evidenceConfig, ratings: evidence.ratingCounts(), admin: MOCK_USER }), { headers: NO_STORE });
     }),
     http.get('*/api/evidence/:id/cases/:ntsbNo', async ({ params }) => {
       await wait();

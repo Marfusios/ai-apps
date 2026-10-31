@@ -3,6 +3,8 @@ import { defineConfig, devices } from '@playwright/test';
 /**
  * End-to-end tests run against the Vite dev server in mock mode (WEB_MOCK_API=1):
  * /api is answered in the browser by MSW from the fixture-built `web/mock` files.
+ * AI searches answer at once (WEB_MOCK_EVIDENCE_TIMING=0); a test that watches the search
+ * checklist times the stages in its tab's session storage (`casebook-mock-evidence-timing`).
  * E2E_PORT picks the port (default 5180). Browsers come from `pnpm exec playwright install chromium`.
  */
 const port = Number(process.env.E2E_PORT) || 5180;
@@ -26,6 +28,6 @@ export default defineConfig({
     url: `http://localhost:${port}`,
     reuseExistingServer: false,
     timeout: 60_000,
-    env: { ...env, WEB_MOCK_API: '1', WEB_DEV_PORT: String(port) },
+    env: { ...env, WEB_MOCK_API: '1', WEB_MOCK_EVIDENCE_TIMING: '0', WEB_DEV_PORT: String(port) },
   },
 });
