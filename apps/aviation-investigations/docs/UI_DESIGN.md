@@ -943,9 +943,13 @@ then state the processed cohort (DESIGN §5).
     deleted.
 - **Privacy page:** plain-language processing notice, linked from the footer
   and the sign-in dialog. The owner approved the final text on 24 October 2026
-  (Owner), amended on 31 October 2026 to say Claude also orders the investigations found and (Task 25, awaiting
-  the owner's approval) that a rating of an AI search is kept, without the question, to measure search
-  quality (§4.11); it was checked statement by statement against the code and is the
+  (Owner), amended on 31 October 2026 to say Claude also orders the investigations found and (Task 25, in the
+  controller's wording until the owner approves it) that a rating of an AI search is kept, without the
+  question, to measure search quality (§4.11): on the search's trace, 24 hours with the search and then
+  only as daily totals that can't be linked to the visitor, in backups as those totals, under the
+  legitimate interest in measuring search quality; and that the operator can see each account's name,
+  e-mail address, sign-up and last sign-in times and AI search counts on a private admin page (§4.12).
+  It was checked statement by statement against the code and is the
   authority on what the site keeps (who is responsible, the site's four cookies,
   what the server, accounts and AI searches keep, the processors, retention,
   legal bases and rights). It names Cloudflare Turnstile (Task 22 review W-14):
@@ -1238,7 +1242,8 @@ the notice box under the control says what happened.
 - **Announcements:** each completion once, through a polite live region ("Question read: suggestions
   ready.", "Search done: 21 cases.", "Leading results ordered by AI."). Skipped rows are not announced.
 - It works at phone width (a result that does not fit wraps under its row's leader) and in both themes,
-  and it does not print. The button that sent the request keeps its "Starting…".
+  and it does not print. The control that sent the request says "Searching…" (busy and off) while the
+  card shows, and "Starting…" only in the moment before it appears.
 
 ### 4.11 Rating a search (Task 25, Proposed)
 
@@ -1277,9 +1282,10 @@ plain words and formatted numbers; times are in the viewer's own time zone, name
   then "Search ratings": useful, not useful and the share rated useful, all time and over 30 days.
 - **Costs:** today (UTC), this month to date, last month, per AI search this month and uncertain
   charges (kept at the reserved cost); the budgets as meters on a track of their own wash (all AI spend
-  this month, interactive this month, interactive today, indexing and evaluation this month), each with
-  "$12.37 of $100.00 · 12%"; this month by category (bars) and by stage, with provider and model, most
-  expensive first. Small sums show to the hundredth of a cent ("$0.0086").
+  this month, interactive this month, interactive today against today's interactive spend, indexing and
+  evaluation this month), each with "$12.37 of $100.00 · 12%"; this month by category (bars) and by
+  stage, with provider and model, most expensive first. Small sums show to the hundredth of a cent
+  ("$0.0086").
 - **System:** the app (version, environment, started, with its uptime); AI search (on or off, without an
   account, account checks, the ranking in plain words, "The question as asked; AI reranks the top 50",
   with its identifier under it, and the automatic filters likewise); tracing (on or off, the last
@@ -1333,7 +1339,7 @@ the tab gets focus until it can (Task 22).
 | Moment | Copy and behaviour |
 | --- | --- |
 | First Ask AI, anonymous | Panel titled "Quick check before your first AI search", with "Up to ten free AI searches a day, subject to daily availability. Search, cases and comparisons never need this." (Task 23: the number and "a day" from `aiLimits`; with the visitor's status only, "Up to ten free AI searches, subject to daily availability."; with neither, "Free AI searches are subject to daily availability.") The Turnstile widget sits inside it. The explanation is shown once per trial identity. |
-| Later anonymous AI requests (Proposed) | Every anonymous AI request, including refinements and retries, needs a fresh single-use Turnstile token (DESIGN §8: tokens expire after five minutes). The page keeps an invisible or managed widget and gets a new token at click time. The button shows "Checking…" briefly, then "Starting…" while the request is on its way (Task 22, Proposed: the server answers once the scope stage is done, a few seconds). Only if Cloudflare demands interaction does the panel reappear, titled "Quick check before this AI search". The server validates every token; an expired or reused token fails before any spend. |
+| Later anonymous AI requests (Proposed) | Every anonymous AI request, including refinements and retries, needs a fresh single-use Turnstile token (DESIGN §8: tokens expire after five minutes). The page keeps an invisible or managed widget and gets a new token at click time. The button shows "Checking…" briefly, then "Starting…" while the request is on its way (Task 22, Proposed: the server answers once the scope stage is done, a few seconds), and for an AI search "Searching…" once its checklist shows (§4.10, Task 25). Only if Cloudflare demands interaction does the panel reappear, titled "Quick check before this AI search". The server validates every token; an expired or reused token fails before any spend. |
 | Trial used up | "That was your tenth free AI search today." / "Sign in with Google to keep asking. New accounts start with 20 AI searches a day, rising to 50 after three days." / [Continue with Google] / "Free AI searches return at 00:00 UTC. Search, case pages, compare and the dashboard stay open without an account." Shown **only while signed-in capacity remains**. Task 23: the anonymous allowance is daily; every number comes from `aiLimits` and the time from the status's `retryAt`, and a line the API gives no number for leaves it out ("Sign in with Google to keep asking."). Where sign-in is not offered (Task 22, Proposed): "That was your tenth free AI search today." / "Free AI searches return at 00:00 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. |
 | AI paused for today | Ink-edged box: "AI search is done for today." / "This beta runs on a small daily AI budget, and today's is used up. It resets at 00:00 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. Shown to everyone, signed in or not. This is a normal state. Proposed variants: for the monthly budget, "AI search is done for this month." / "It returns on {date}."; for maintenance or a provider outage, "AI search is temporarily unavailable." with no time promised. |
 | Operational question (briefs; an evidence search shows its results under the `operational_advice` capability note instead, §4.9) | Blue-edged box: "This tool studies past investigations." / "It can't help with a flight in progress or a maintenance decision. In flight, contact ATC. For airworthiness, use your aircraft's approved data and a certificated mechanic." / "You can still look for past cases like yours:" plus two blue suggestion chips. Static text; no AI-written advice. |
@@ -1682,7 +1688,15 @@ counting rules.
   suggestion's buttons held off over a pending draft, "highest-ranked first", and the strip
   placeholder and "Part of your search didn't load…" in Compare.
 - Builder calls (Task 25), for the owner's review: the search checklist's title, rows, results,
-  note and announcements (§4.10); "Was this search useful?", "Useful", "Not useful", "Saving…",
-  "Thanks — noted.", "Your rating didn't save." and "This search is no longer available, so it can't
-  be rated." (§4.11); the privacy notice's sentence on ratings (§4.8); and the admin page's copy and
-  layout, its plain words for the ranking and automatic-filter identifiers among them (§4.12).
+  note and announcements, and "Searching…" on the control while it shows (§4.10); "Was this search
+  useful?", "Useful", "Not useful", "Saving…", "Thanks — noted.", "Your rating didn't save." and "This
+  search is no longer available, so it can't be rated." (§4.11); the admin page's copy and layout, its
+  plain words for the ranking and automatic-filter identifiers among them (§4.12). And the privacy
+  notice's Task 25 wording, the controller's until the owner approves it (§4.8): "If you rate an AI
+  search, AirCase keeps the rating, without your question, to measure search quality."; the traces
+  sentence "(timings, counts, AI cost and errors, and a search's rating if you give one)"; "The site's
+  operator can see each account's name, e-mail address, sign-up and last sign-in times and AI search
+  counts on a private admin page."; "Ratings: 24 hours with their AI search; after that only daily
+  totals remain, which can't be linked to you."; backups holding "daily rating totals"; and "Running and
+  securing the site, and measuring search quality (… traces, ratings, backups), relies on our legitimate
+  interest…".

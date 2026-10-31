@@ -1147,7 +1147,7 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   cancels another. The first request of a trial identity (`started: false`) shows "Quick
   check before your first AI search"; later ones run invisibly while the button reads
   "Checking…", then "Starting…" while the request is on its way (the server answers once
-  the scope stage is done). Each request's idempotency key is kept for the tab right
+  the scope stage is done), and for an AI search "Searching…" once its checklist shows. Each request's idempotency key is kept for the tab right
   before the request leaves (write-ahead, `web/src/features/ai/unsettled.ts`:
   `sessionStorage`, or memory when storage is unavailable) under a hash of the normalised
   request (question and canonical filters, or brief and change), so a reload or Back
@@ -1231,7 +1231,8 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   /api/evidence/progress/:key` (`EvidenceProgressSchema`) under the POST's own idempotency key about
   every 500 ms (`web/src/features/evidence/checklist.ts`). A 404 is normal until the server has
   registered the search and is read through for the whole wait (once a second after ten in a row);
-  until the first answer the card is unticked. Reading stops when the POST settles, and the card goes.
+  until the first answer the card is unticked. Reading stops when the POST settles, and the card goes;
+  meanwhile the control that asked says "Searching…".
   Completions are announced politely; statuses and counts only, never model text. The card and its
   client load with the first AI request, never with the home page (`SearchWait`).
 - **Rating a search** (UI_DESIGN §4.11): "Was this search useful?" under the results, "Useful" and
@@ -1241,7 +1242,8 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   visitor), so a reload shows it unrated; a failure says so with Try again. Not printed.
 - **Admin** (UI_DESIGN §4.12): for an account `/api/account` says is an admin (`isAdmin`), the header
   links `/admin` (the phone menu too): users, usage (a 30-day chart of small multiples with its
-  table, the ratings), costs (budgets as meters) and the system, all from `GET /api/admin/overview`
+  table, the ratings), costs (budgets as meters, the daily one against `costs.interactiveToday`) and
+  the system, all from `GET /api/admin/overview`
   (`AdminOverviewSchema`; the private `admin` query), times in the viewer's own zone. Everyone else,
   and an admin the API answers 404, sees the ordinary not-found page; the page is not indexed.
 - **Briefs that exist**: the interface starts none. While the server has briefs off
