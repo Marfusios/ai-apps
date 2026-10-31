@@ -130,9 +130,13 @@ test('for an account that is not an admin, and when signed out, /admin is the or
   expect(reads).toBe(0);
   await shot(page, 'admin-not-found-1280-day');
 
-  await page.getByRole('link', { name: 'Account' }).click();
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Account', exact: true }).click();
+  await expect(page).toHaveURL(/\/account$/);
+  const signOut = page.getByRole('button', { name: 'Sign out', exact: true });
+  await expect(signOut).toBeVisible();
+  await signOut.click();
   await expect(page.getByRole('banner').getByRole('button', { name: 'Sign in' })).toBeVisible();
+  // Reloaded signed out: the sign-out is kept in this tab's session storage.
   await page.goto('/admin');
   await expect(page.getByRole('heading', { level: 1, name: 'There is no page here.' })).toBeVisible();
 });
