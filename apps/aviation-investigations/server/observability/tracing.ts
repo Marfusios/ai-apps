@@ -24,6 +24,8 @@ export interface TracingHandle {
 export interface StartTracingOptions {
   /** Replaces the OTLP exporter (tests). The config must still be complete. */
   exporter?: SpanExporter;
+  warn?: (metadata: { category: string; failedExports: number }, message: string) => void;
+  now?: () => number;
   scheduledDelayMillis?: number;
   exportTimeoutMillis?: number;
   maxQueueSize?: number;
@@ -32,6 +34,11 @@ export interface StartTracingOptions {
   shutdownTimeoutMillis?: number;
 }
 
+/** Content-free operational JSON, including before the HTTP logger exists. */
+export const tracingExportWarning: NonNullable<StartTracingOptions['warn']> = (metadata, message) => {
+  process.stderr.write(`${JSON.stringify({ level: 40, msg: message, category: 'tracing_export_failed', failedExports: metadata.failedExports })}\n`);
+};
+
 /**
  * Why the Langfuse address is refused, or null (gate 22 finding 4). https always; plain
  * http only to a loopback host, to a host the operator listed in AVIATION_TRACING_HTTP_HOSTS
@@ -39,7 +46,7 @@ export interface StartTracingOptions {
  * service is reached by its service name: configured, never guessed from the address), or
  * under NODE_ENV=test. The reason names settings only.
  */
-function transportProblem(cfg: AppConfig, baseUrl: string): string | null {
+export function transportProblem(cfg: AppConfig, baseUrl: string): string | null {
   let url: URL;
   try {
     url = new URL(baseUrl);
@@ -71,40 +78,44 @@ const off = (reason: string): TracingHandle => ({ enabled: false, reason, async 
 let tracer: Tracer | undefined;
 let active: TracingHandle | undefined;
 
-/** Reports every export as a success so a Langfuse outage cannot surface anywhere. */
-function swallowing(inner: SpanExporter): SpanExporter {
+/** Operational status only; no endpoint, project key or content. */
+let lastExportOkAt: string | null = null;
+export function tracingHealth() {
+  return { enabled: active?.enabled ?? false, lastExportOkAt, failedExports: tracingStats.exportFailures };
+}
+
+/** Failed exports never change search results. A stuck exporter is bounded too. */
+export function observableExporter(inner: SpanExporter, opts: StartTracingOptions = {}): SpanExporter {
+  const now = opts.now ?? Date.now;
+  let warnedAt = -Infinity;
+  const failure = () => {
+    tracingStats.exportFailures += 1;
+    if (now() - warnedAt < 300_000) return;
+    warnedAt = now();
+    try { (opts.warn ?? ((meta, message) => console.warn(message, meta)))({ category: 'tracing_export_failed', failedExports: tracingStats.exportFailures }, 'tracing export failed'); } catch { /* logging is optional */ }
+  };
   return {
     export(spans: ReadableSpan[], done) {
-      try {
-        inner.export(spans, (result) => {
-          if (result.code !== 0) tracingStats.exportFailures += 1;
-          done({ code: 0 });
-        });
-      } catch {
-        tracingStats.exportFailures += 1;
+      let finished = false;
+      const finish = (ok: boolean) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        if (ok) lastExportOkAt = new Date(now()).toISOString(); else failure();
         done({ code: 0 });
-      }
+      };
+      const timer = setTimeout(() => finish(false), opts.exportTimeoutMillis ?? 3000);
+      timer.unref();
+      try { inner.export(spans, result => finish(result.code === 0)); } catch { finish(false); }
     },
-    async shutdown() {
-      try {
-        await inner.shutdown();
-      } catch {
-        tracingStats.exportFailures += 1;
-      }
-    },
-    async forceFlush() {
-      try {
-        await inner.forceFlush?.();
-      } catch {
-        tracingStats.exportFailures += 1;
-      }
-    },
+    async shutdown() { try { await inner.shutdown(); } catch { tracingStats.internalErrors += 1; } },
+    async forceFlush() { try { await inner.forceFlush?.(); } catch { tracingStats.internalErrors += 1; } },
   };
 }
 
 function bounded(p: Promise<void>, ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
+    const t = setTimeout(() => { tracingStats.internalErrors += 1; resolve(); }, ms);
     t.unref();
     p.then(
       () => {
@@ -113,7 +124,7 @@ function bounded(p: Promise<void>, ms: number): Promise<void> {
       },
       () => {
         clearTimeout(t);
-        tracingStats.exportFailures += 1;
+        tracingStats.internalErrors += 1;
         resolve();
       },
     );
@@ -150,7 +161,7 @@ export function startTracing(cfg: AppConfig, opts: StartTracingOptions = {}): Tr
     resource: resourceFromAttributes(tracingResourceAttributes(cfg)),
     spanProcessors: [
       new BatchSpanProcessor({
-        exporter: swallowing(inner),
+        exporter: observableExporter(inner, opts),
         maxQueueSize: opts.maxQueueSize ?? 256,
         maxExportBatchSize: opts.maxExportBatchSize ?? 64,
         scheduledDelayMillis: opts.scheduledDelayMillis ?? 5000,
@@ -174,6 +185,8 @@ export function startTracing(cfg: AppConfig, opts: StartTracingOptions = {}): Tr
 }
 
 export interface StageSpanHandle {
+  /** Private trace identifier, never a public response field. */
+  readonly traceId?: string;
   /** Adds allowlisted attributes (e.g. usage known only after the call). */
   setAttrs(attrs: AllowedAttrs): void;
   /**
@@ -189,7 +202,7 @@ function safely(fn: () => void): void {
   try {
     fn();
   } catch {
-    tracingStats.exportFailures += 1;
+    tracingStats.internalErrors += 1;
   }
 }
 
@@ -219,12 +232,13 @@ async function runInSpan<T>(
     span = t.startSpan(safeSpanName(name), {}, root ? trace.deleteSpan(context.active()) : undefined);
     apply(span, attrs);
   } catch {
-    tracingStats.exportFailures += 1;
+    tracingStats.internalErrors += 1;
   }
   const s = span;
   const started = performance.now();
   let stopped = false;
   const handle: StageSpanHandle = {
+    ...(s ? { traceId: s.spanContext().traceId } : {}),
     setAttrs(more) {
       if (s) safely(() => apply(s, more));
     },

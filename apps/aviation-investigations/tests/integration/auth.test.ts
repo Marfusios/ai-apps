@@ -305,6 +305,9 @@ async function rows<T>(query: ReturnType<typeof sql>): Promise<T[]> {
 }
 const count = async (table: string): Promise<number> => (await rows<{ n: number }>(sql.raw(`SELECT count(*)::int AS n FROM ${table}`)))[0]!.n;
 
+/** The account's application id (`auth_users.id`), which `/api/account` shows the account's own browser. */
+const userIdOf = async (email: string): Promise<string> => (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users WHERE email = ${email}`))[0]!.id;
+
 const accountHash = (sub: string) => accountIdentityHash(IDENTITY_SECRET, GOOGLE_ISSUER, sub);
 
 /** The anti-abuse records, `retain_until` as an ISO instant. */
@@ -343,7 +346,9 @@ describe('Google sign-in', () => {
     expect(back.status).toBe(302);
     // A new account comes back to the page it started from, with the welcome.
     expect(back.headers.location).toBe('/explore?q=icing&welcome=1');
-    expect(await account(h, jar)).toEqual({ signedIn: true, user: { name: user.name, email: user.email } });
+    // Who is signed in: the account's random application id (never the Google subject), name and e-mail.
+    expect(await account(h, jar)).toEqual({ signedIn: true, user: { id: await userIdOf(user.email), name: user.name, email: user.email } });
+    expect(JSON.stringify(await account(h, jar))).not.toContain(user.sub);
     // The code exchange carried the PKCE verifier and the client secret.
     expect(google.tokenRequests).toMatchObject([{ grantType: 'authorization_code', hasSecret: true, redirectUri: CALLBACK, status: 200 }]);
 
@@ -1336,6 +1341,7 @@ describe('retries and billing after sign-in', () => {
     }
     expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'account', leftToday: 3, limitToday: 5, leftThisMonth: 148 } });
     const firstUser = (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users`))[0]!.id;
+    expect(await account(h, browser)).toMatchObject({ signedIn: true, user: { id: firstUser, email: user.email } });
 
     expect((await deleteAccount(h, browser)).status).toBe(200);
     expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'trial' } });
@@ -1347,6 +1353,8 @@ describe('retries and billing after sign-in', () => {
     expect(again.headers.location).toBe('/?welcome=1');
     const secondUser = (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users`))[0]!.id;
     expect(secondUser).not.toBe(firstUser);
+    // Its account read says so: a new id under the same e-mail, which the page tells from the account before.
+    expect(await account(h, browser)).toMatchObject({ signedIn: true, user: { id: secondUser, email: user.email } });
     expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'account', leftToday: 3, limitToday: 5, leftThisMonth: 148 } });
     advance(MIN);
     expect((await ask(h, browser, 'Engine power loss again', { token: false })).status).toBe(202);
@@ -1457,7 +1465,7 @@ describe('deleting needs a recent Google sign-in (OWASP re-authentication)', () 
     expect((await send(h, 'POST', '/api/account/delete/start', { jar: thief, body: {} })).json).toEqual({ next: 'reauthenticate' });
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: thief, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
     expect(await count('auth_deletion_confirmations')).toBe(0);
-    expect(await account(h, browser)).toEqual({ signedIn: true, user: { name: user.name, email: user.email } });
+    expect(await account(h, browser)).toEqual({ signedIn: true, user: { id: await userIdOf(user.email), name: user.name, email: user.email } });
 
     // The owner signs in with Google again from the account page; Google is asked for this account.
     const url = await startSignIn(h, browser, DELETE_REAUTH_PATH);
@@ -1489,7 +1497,7 @@ describe('deleting needs a recent Google sign-in (OWASP re-authentication)', () 
     const url = await startSignIn(h, browser, DELETE_REAUTH_PATH);
     await callback(h, browser, google.authorize(url, other));
     expect(reauthLogs(h)).toEqual(['other_account']);
-    expect(await account(h, browser)).toEqual({ signedIn: true, user: { name: other.name, email: other.email } });
+    expect(await account(h, browser)).toEqual({ signedIn: true, user: { id: await userIdOf(other.email), name: other.name, email: other.email } });
     expect(await count('auth_deletion_confirmations')).toBe(0);
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
     expect(await count('auth_users')).toBe(2);

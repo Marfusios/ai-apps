@@ -1,3 +1,4 @@
+import { syncLangfusePrompts } from './langfuse-prompts.js';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -56,6 +57,7 @@ const USAGE = [
   '  worker restore-check [--empty]',
   '  worker restore-reconcile (--interactive-usd <n> --ingestion-usd <n> | --charge-remaining) --note <text> [--dry-run]',
   '  worker ai-preflight',
+  '  worker langfuse-prompts --sync',
   '  worker brief-diagnose <brief-id> [--step <n>] [--include-expired]',
 ].join('\n');
 
@@ -665,6 +667,13 @@ async function main(argv: string[]): Promise<number> {
     }
     return 0;
   }
+  if (command === 'langfuse-prompts') {
+    const { values } = parseArgs({ args: rest, options: { sync: { type: 'boolean' } }, strict: true });
+    if (!values.sync) throw new Error('langfuse-prompts requires --sync');
+    for (const report of await syncLangfusePrompts(workerConfig())) console.log(JSON.stringify(report));
+    return 0;
+  }
+
   if (command === 'ai-preflight') {
     // Free: token counts only (Anthropic messages.countTokens); the client refuses generation.
     parseArgs({ args: rest, options: {}, strict: true });

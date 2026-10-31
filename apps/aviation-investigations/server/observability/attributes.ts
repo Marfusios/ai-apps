@@ -164,6 +164,9 @@ const ENUM_LISTS: Readonly<Partial<Record<keyof AllowedAttrs, ReadonlySet<string
 
 export const ALLOWED_ATTR_KEYS: readonly string[] = Object.keys(KINDS);
 
+/** Explicit generation and frozen prompt links derived from sanitized attributes. */
+export const LANGFUSE_ATTR_KEYS = ['langfuse.observation.type', 'langfuse.observation.model.name', 'langfuse.observation.prompt.name', 'langfuse.observation.prompt.version'] as const;
+
 /**
  * OpenTelemetry GenAI semantic attributes, which Langfuse maps to a generation's model,
  * usage and cost (`gen_ai.usage.cost` is Langfuse's key, stored as the `total` cost).
@@ -173,7 +176,7 @@ export const ALLOWED_ATTR_KEYS: readonly string[] = Object.keys(KINDS);
 export const GEN_AI_ATTR_KEYS = ['gen_ai.request.model', 'gen_ai.usage.input_tokens', 'gen_ai.usage.output_tokens', 'gen_ai.usage.cost'] as const;
 
 /** Every key an exported span can carry: the allowlist and the derived GenAI keys. */
-export const SPAN_ATTR_KEYS: readonly string[] = [...ALLOWED_ATTR_KEYS, ...GEN_AI_ATTR_KEYS];
+export const SPAN_ATTR_KEYS: readonly string[] = [...ALLOWED_ATTR_KEYS, ...GEN_AI_ATTR_KEYS, ...LANGFUSE_ATTR_KEYS];
 
 /**
  * The GenAI attributes of a model call's span, from its sanitized attributes so far:
@@ -187,6 +190,12 @@ export function genAiAttributes(a: Readonly<Record<string, string | number>>): R
   const n = (v: string | number | undefined) => (typeof v === 'number' ? v : 0);
   return {
     'gen_ai.request.model': a.model,
+    'langfuse.observation.type': 'generation',
+    'langfuse.observation.model.name': a.model,
+    ...(['scope.e3', 'rerank.r1'].includes(String(a.promptVersion)) ? {
+      'langfuse.observation.prompt.name': `aircase-${a.promptVersion}`,
+      'langfuse.observation.prompt.version': 1,
+    } : {}),
     ...(typeof a.inputTokens === 'number' ? { 'gen_ai.usage.input_tokens': a.inputTokens + n(a.cacheWriteTokens) + n(a.cacheReadTokens) } : {}),
     ...(typeof a.outputTokens === 'number' ? { 'gen_ai.usage.output_tokens': a.outputTokens } : {}),
     ...(typeof a.usd === 'number' ? { 'gen_ai.usage.cost': a.usd } : {}),
@@ -200,12 +209,13 @@ const VALUE_RE = /^[A-Za-z0-9._:@+-]+$/;
 const NAME_RE = /^[A-Za-z0-9_.:-]+$/;
 
 /** Operational counters; no content. */
-export const tracingStats = { droppedAttrs: 0, droppedNames: 0, exportFailures: 0 };
+export const tracingStats = { droppedAttrs: 0, droppedNames: 0, exportFailures: 0, internalErrors: 0 };
 
 export function resetTracingStats(): void {
   tracingStats.droppedAttrs = 0;
   tracingStats.droppedNames = 0;
   tracingStats.exportFailures = 0;
+  tracingStats.internalErrors = 0;
 }
 
 /**

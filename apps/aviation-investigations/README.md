@@ -1097,7 +1097,7 @@ Pages (UI_DESIGN §3–§7): Home ("Clear sky"), Explore (keyword search with fa
 counts, the case drawer and the compare tray), the full case page and Compare
 (flight strips with NTSB columns, "Same in all", sort and Print for class), the AI
 evidence search (`/ai/:id`), AI briefs that exist (`/briefs/:id`; the interface starts
-none), plus About and Privacy. View state is in the URL: the search
+none), the admin page for admin accounts (`/admin`), plus About and Privacy. View state is in the URL: the search
 keys of `SearchRequest` (`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`,
 `sort`, `page`), the open case (`case`), the compare selection (`cases`), for an
 evidence search the pages shown (`pages`) and the search Compare was opened from
@@ -1147,7 +1147,7 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   cancels another. The first request of a trial identity (`started: false`) shows "Quick
   check before your first AI search"; later ones run invisibly while the button reads
   "Checking…", then "Starting…" while the request is on its way (the server answers once
-  the scope stage is done). Each request's idempotency key is kept for the tab right
+  the scope stage is done), and for an AI search "Searching…" once its checklist shows. Each request's idempotency key is kept for the tab right
   before the request leaves (write-ahead, `web/src/features/ai/unsettled.ts`:
   `sessionStorage`, or memory when storage is unavailable) under a hash of the normalised
   request (question and canonical filters, or brief and change), so a reload or Back
@@ -1223,6 +1223,31 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   by AI: only NTSB text, coded data, the contract's fixed copy, the reader's own question and
   edits, and the AI's terms only quoted under their label and as labelled counts and marks (a
   component test checks every text node). Model text is always rendered as text, never markup.
+- **The search checklist** (UI_DESIGN §4.10, Task 25): while `POST /api/evidence` runs, a
+  question's or an edit's, a cockpit checklist card shows where the visitor waits (under the box or
+  nudge Ask AI was pressed in, or under "Your search" for an edit): the question, "Search 24,291
+  investigations" (the default cohort from `/api/config`) and the order of the leading results, each
+  filling in its result with a magenta ✓ as its stage ends, read from `GET
+  /api/evidence/progress/:key` (`EvidenceProgressSchema`) under the POST's own idempotency key about
+  every 500 ms (`web/src/features/evidence/checklist.ts`). A 404 is normal until the server has
+  registered the search and is read through for the whole wait (once a second after ten in a row);
+  a 429 is waited out for its whole `Retry-After`, and one over 30 s ends the reading, the card as it
+  is (nothing reads sooner: not focus, a reconnect or a reset, `web/src/features/evidence/progress.ts`);
+  until the first answer the card is unticked. Reading stops when the POST settles, and the card goes;
+  meanwhile the control that asked says "Searching…".
+  Completions are announced politely; statuses and counts only, never model text. The card and its
+  client load with the first AI request, never with the home page (`SearchWait`).
+- **Rating a search** (UI_DESIGN §4.11): "Was this search useful?" under the results, "Useful" and
+  "Not useful" (`POST /api/evidence/:id/feedback`, `EvidenceFeedbackRequestSchema`; no AI search used);
+  "Thanks — noted." with the choice chosen once the server has it, changeable (the latest counts); kept
+  per search in this tab's memory only (`web/src/features/evidence/ratings.ts`, forgotten with the
+  visitor), so a reload shows it unrated; a failure says so with Try again. Not printed.
+- **Admin** (UI_DESIGN §4.12): for an account `/api/account` says is an admin (`isAdmin`), the header
+  links `/admin` (the phone menu too): users, usage (a 30-day chart of small multiples with its
+  table, the ratings), costs (budgets as meters, the daily one against `costs.interactiveToday`) and
+  the system, all from `GET /api/admin/overview`
+  (`AdminOverviewSchema`; the private `admin` query), times in the viewer's own zone. Everyone else,
+  and an admin the API answers 404, sees the ordinary not-found page; the page is not indexed.
 - **Briefs that exist**: the interface starts none. While the server has briefs off
   (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
   failed step offers New search, not Try again.
@@ -1259,11 +1284,11 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
 
 ```sh
 pnpm dev:web          # Vite dev server; /api is proxied to the API server
-WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/mock
+WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/mock (AI searches take live's time)
 pnpm build:web        # production build into dist/web
 pnpm test:web         # component tests (jsdom, offline, MSW)
 pnpm test:e2e         # Playwright against the dev server in mock mode
-pnpm test:e2e:real    # Playwright against the real API server: the fixture index, AI evidence search with offline fakes (and, on E2E_REAL_V3_PORT, the evidence configuration live runs), signing in and out
+pnpm test:e2e:real    # Playwright against the real API server: the fixture index, AI evidence search with offline fakes (and, on E2E_REAL_V3_PORT, the reviewed state policy; on E2E_REAL_LIVE_PORT, what live runs, with sign-in and an admin), signing in and out
 ```
 
 ### API contracts and the mock API
@@ -1338,12 +1363,30 @@ aiAutomaticFilters })` sets it, and `null` leaves it out as a server without the
 words Explore's AI nudge and the About page's AI line (a missing field reads as nothing applied).
 A unit test fails when the committed mock files are out of date.
 
+An AI search's progress (`GET /api/evidence/progress/:key`) is answered by
+`web/mock/evidence-progress.ts`: the search's stages timed like live's (the key registered after
+0.8 s, the question about 1.5 s, the search 1.7 s, the configuration's reranker 2.7 s for Haiku on
+the top 50; an edit skips the question, a configuration without a reranker the order), each ending as
+the mock's search did (`MockStageOutcome`; a search lost after admission fails at retrieval), read
+only by its asker, and the POST's answer waits for them. The stage times are scaled by
+`createHandlers({ evidenceTiming })` (default 0: no wait, for the component tests), in the dev mock
+mode by `WEB_MOCK_EVIDENCE_TIMING` (default 1, as live; `pnpm test:e2e` runs with 0), and in a tab by
+its session storage `casebook-mock-evidence-timing`, which wins. `POST /api/evidence/:id/feedback` keeps
+the owner's latest rating on the mock's search (a question with "rating fails" fails its first one).
+`/api/account` says `isAdmin: true` for the signed-in mock account when `createHandlers({ admin })` or
+this tab's session storage `casebook-mock-admin` (`1`) says so, and `GET /api/admin/overview`
+(`web/mock/admin.ts`) answers that admin, and only that admin, with a synthetic overview: 37 made-up
+accounts at the example domains, 30 days of use with a weekly rhythm, a small beta's costs, the
+ratings the mock was given and the configuration it stands in for. `tests/unit/evidence-progress-mock.test.ts`
+checks them against the contracts.
+
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
 `--with-deps` on a fresh Linux machine). The AI specs install a local stand-in for
 Cloudflare's widget before the app loads (`tests/e2e/fake-turnstile.ts`), so the AI tests
 make no network requests. `tests/e2e/evidence.spec.ts` runs the evidence view on a desktop
-by day and a phone at night.
+by day and a phone at night; `tests/e2e/search-checklist.spec.ts` the search checklist (with
+live's stage times) and ratings, and `tests/e2e/admin.spec.ts` the admin page, likewise.
 
 `WEB_DEV_PORT` (default 5173) and `WEB_DEV_API_URL` (default
 `http://localhost:3000`) are read from the process environment by `vite.config.ts`
@@ -1589,9 +1632,16 @@ since every browser of the run is 127.0.0.1. `tests/e2e-real/evidence.spec.ts` d
 evidence view through it, with the mock suite's Turnstile stand-in in the browser, and
 replays the known context-loss examples (`tests/support/context-loss.ts`) on the initial
 card, drawer, Compare and print; `E2E_SCREENSHOTS=<dir>` keeps its screenshots. The same process
-serves the evidence configuration live runs (`er-q-v1` with `state-explicit.v1.3`) as a second app
+serves the reviewed state policy (`er-q-v1` with `state-explicit.v1.3`) as a second app
 on `E2E_REAL_V3_PORT` (default `E2E_REAL_PORT` + 3), sharing the database, for
-`tests/e2e-real/evidence-v3.spec.ts`. It also starts a
+`tests/e2e-real/evidence-v3.spec.ts`, and what live runs (`er-q-h50-v1` with `none`, the fake
+reranker) as a third on `E2E_REAL_LIVE_PORT` (default `E2E_REAL_PORT` + 4), with Google sign-in
+through the stand-in below and `AIRCASE_ADMIN_EMAILS` naming its `e2e-admin@example.com`, for the
+search checklist, ratings and the admin page (`tests/e2e-real/search-checklist.spec.ts`,
+`admin.spec.ts`): its fake scope stage and reranker each take about a second and its search
+answers wait a little longer, so the checklist's reads see each stage under way and then the
+finished search. The admin tests run after the rest (project `chromium-real-admin`), since their
+sign-ins add sessions that `sign-in-out.spec.ts` counts. It also starts a
 second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.0.0.1 at
 `E2E_AUTH_PORT`, default 5182) and an offline stand-in for Google on another site
 (localhost at `E2E_GOOGLE_PORT`, default 5183), so that Chromium applies `SameSite` to the
@@ -2254,7 +2304,16 @@ lock order in migration 0019.
   tab, whatever the sign-out's answer: as soon as the sign-out starts, nothing started for
   the visitor is kept or sent, and once the answer is in (or none can come), everything
   private goes. Anything but the server's success, read in full, reads the account again and
-  says the server has not confirmed the sign-out. No other Better Auth endpoint is served.
+  says the server has not confirmed the sign-out. A page that reads another account than the
+  one it had, or none, with no sign-out of its own (the session ended, or another account
+  signed in from another tab; also a page back from the back/forward cache) forgets the
+  previous one the same way before it shows the new account, without telling the other tabs,
+  which each find the change at their own next read; every return to a page reads the account
+  again. Another account means another application id (`user.id`), whatever the e-mail: a
+  deleted account's e-mail can belong to a new account next, so the page never compares
+  e-mails, and the same id under a new e-mail is the same visitor. Signing in where the page
+  was signed out forgets nothing (the trial's work moves to the account). No other Better Auth
+  endpoint is served.
 - **What is accepted and kept.** An ID token from Google's token endpoint (the only
   source: ID-token sign-in is off) whose header says RS256 and carries a signature, for
   this client and no other audience, with finite `exp` (not passed) and `iat` (not in
@@ -2310,7 +2369,10 @@ lock order in migration 0019.
   like every anonymous AI request, takes a fresh Turnstile check) answers 403 `moved`
   (sign in to view it): never a replay or a new run.
 - **Account** (`GET /api/account`, `POST /api/account/delete/start`,
-  `POST /api/account/delete`, `server/auth/deletion.ts`). Deleting needs a recent Google
+  `POST /api/account/delete`, `server/auth/deletion.ts`). The account read shows the signed-in
+  browser its account's random application id (`auth_users.id`, never the Google subject), name
+  and e-mail, `isAdmin` for an admin and any live deletion confirmation; the page tells one
+  account from another by that id (`acceptAccount`, `web/src/features/auth/visitor.ts`). Deleting needs a recent Google
   sign-in: within 5 minutes of signing in, `start` gives the session a 5-minute,
   single-use confirmation; otherwise the page signs in with Google again
   (`/account?delete=confirm`, Google asked for the same account), which confirms the new
@@ -2424,3 +2486,40 @@ is applied automatically. See
 [the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migration
 0025, the matching client, rollback and accounting. Existing v2 records upgrade on
 read; the original scope.e3 wire schema and all evaluated ranking hashes are unchanged.
+
+### Search progress, ratings and administration
+
+`GET /api/evidence/progress/:key` returns the real scope, retrieval (including embedding),
+and rerank stages from `EvidenceProgressSchema`. The key is the POST's idempotency key.
+Progress is bound to the account or valid trial presented at POST arrival, or to the
+HMAC'd network identity when neither is presented. The latter lets the first anonymous
+search show progress before its trial cookie arrives. Poll with the same identity;
+404 means unknown, expired or mismatched. A changed network during that first search
+falls back to the generic loading card. No poll creates an identity or starts work.
+Entries last five minutes after completion, with a process-local 1,000-entry LRU.
+
+`POST /api/evidence/:id/feedback` accepts `{rating: "useful" | "not_useful"}` and returns
+204. Only the current owner may rate an unexpired result. Changing a rating replaces
+it; repeated submissions do not add votes. This costs no search or provider request.
+The private rating expires with its search; identity-free daily counts remain. With
+tracing enabled, a best-effort background score updates that search's trace.
+
+Set `AIRCASE_ADMIN_EMAILS` to comma-separated verified Google email addresses to allow
+`GET /api/admin/overview`. The default grants nobody access. Administrators receive
+`isAdmin: true` from `/api/account`; other responses omit the flag. The overview shows
+names/emails, session activity, charged evidence-search counts over 1/7/30/90 UTC days, daily
+usage, feedback, settled costs, budgets and system state. It returns at most 1,000 users,
+uses private no-store responses and never traces the overview. Non-admins receive 404.
+The endpoint has no administrative write operations. It has a 15-second overall deadline
+and refuses to process more than 10,000 accounts. Search metrics exclude AI briefs;
+settled costs include all categories. `costs.interactiveToday` isolates today's interactive
+spend for its daily budget meter. Older reservations without outcome metadata are
+counted as neither known failures nor free undos.
+
+Before enabling tracing for a release, mirror the frozen prompt templates with
+`pnpm -s worker langfuse-prompts --sync` using that environment's project credentials.
+The command creates version 1 of `aircase-scope.e3` and `aircase-rerank.r1`, or verifies
+the existing content hash. A mismatch stops it; prompts are never fetched by searches.
+Generation spans link these versions and export model names. Export failures remain
+non-blocking, produce at most one sanitized warning every five minutes, and appear
+with the last successful export time in the admin overview.

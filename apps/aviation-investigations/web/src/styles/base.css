@@ -216,9 +216,15 @@
     order: 2;
   }
 
-  /* The drawer slides in over 200ms ease-out; nothing else animates (§2.6). */
+  /* The drawer slides in over 200ms ease-out, and a checklist row ticks as its stage finishes;
+     nothing else animates (§2.6). */
   .drawer[data-state="open"] {
     animation: casebook-drawer-in 200ms ease-out;
+  }
+
+  .checklist-tick {
+    display: inline-block;
+    animation: casebook-tick-in 180ms ease-out;
   }
 
   .sheet[data-state="open"] {
@@ -256,6 +262,13 @@
 @keyframes casebook-sheet-in {
   from {
     transform: translateY(100%);
+  }
+}
+
+@keyframes casebook-tick-in {
+  from {
+    opacity: 0;
+    transform: scale(.6);
   }
 }
 

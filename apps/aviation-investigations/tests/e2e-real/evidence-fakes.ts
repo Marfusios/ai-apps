@@ -14,7 +14,25 @@
  * - anything else: a case search suggesting the question's own words as terms, no filters.
  */
 import type { FakeResult } from '../../server/ai/fake.js';
+import type { RerankInput, RerankOutput } from '../../server/ai/prompts/rerank.r1.js';
 import type { EvidenceScopeInput, EvidenceScopeOutput } from '../../server/ai/prompts/scope.e1.js';
+
+/**
+ * The stand-in for Google's client both sign-in apps share (tests/e2e-real/auth-server.ts, and the
+ * live-configuration app of tests/e2e-real/server.ts); synthetic.
+ */
+export const E2E_GOOGLE_CLIENT = { id: 'casebook-e2e.apps.googleusercontent.com', secret: 'synthetic-google-client-secret' } as const;
+
+/** The live-configuration app's admin (`AIRCASE_ADMIN_EMAILS`): the stand-in's account for `e2e_user=admin`. */
+export const E2E_ADMIN_EMAIL = 'e2e-admin@example.com';
+
+/**
+ * The fake reranker of the live-configuration app: a grade for every case it is given, 3 down to 0
+ * in turn, so the leading results are put in another order than the match's.
+ */
+export function e2eRerank(input: RerankInput): FakeResult<RerankOutput> {
+  return { output: { grades: input.cases.map((c, i) => ({ id: c.id, grade: 3 - (i % 4) })) } };
+}
 
 export const E2E_QUESTIONS = {
   carb: 'Carburetor icing on approach',

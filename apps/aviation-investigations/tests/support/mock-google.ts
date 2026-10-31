@@ -78,8 +78,12 @@ export class MockGoogle {
   private readonly publicKey: KeyObject;
   private readonly kid = `test-${randomBytes(4).toString('hex')}`;
 
+  /**
+   * `client.otherRedirectUris`: more redirect URIs registered for the same client (another app
+   * signing in through this stand-in, as one Google client may serve several origins).
+   */
   constructor(
-    private readonly client: { clientId: string; clientSecret: string; redirectUri: string },
+    private readonly client: { clientId: string; clientSecret: string; redirectUri: string; otherRedirectUris?: readonly string[] },
     private readonly now: () => number = Date.now,
   ) {
     const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -117,20 +121,21 @@ export class MockGoogle {
     const r = MockGoogle.parse(url);
     if (r.responseType !== 'code') throw new Error('response_type must be code');
     if (r.clientId !== this.client.clientId) throw new Error('unknown client_id');
-    if (r.redirectUri !== this.client.redirectUri) throw new Error('redirect_uri_mismatch');
+    const redirectUri = r.redirectUri;
+    if (redirectUri === null || (redirectUri !== this.client.redirectUri && !(this.client.otherRedirectUris ?? []).includes(redirectUri))) throw new Error('redirect_uri_mismatch');
     if (!r.state) throw new Error('state missing');
     if (r.codeChallengeMethod !== 'S256' || !r.codeChallenge) throw new Error('PKCE S256 challenge missing');
     const code = `4/${randomBytes(24).toString('base64url')}`;
     this.grants.set(code, {
       challenge: r.codeChallenge,
-      redirectUri: r.redirectUri,
+      redirectUri,
       nonce: r.nonce,
       user,
       claims: opts.claims ?? {},
       used: false,
     });
     // What Google's redirect carries besides the code and state.
-    const redirect = new URL(r.redirectUri);
+    const redirect = new URL(redirectUri);
     redirect.searchParams.set('state', r.state);
     redirect.searchParams.set('code', code);
     redirect.searchParams.set('scope', 'email profile openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile');

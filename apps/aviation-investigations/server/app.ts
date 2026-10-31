@@ -52,6 +52,13 @@
  * Fastify runs with `trustProxy: false`; `request.ip` is never used.
  */
 import type { EvidenceServices } from './evidence/retrieve.js';
+import { adminRoutes } from './routes/admin.js';
+import { feedbackExporter } from './evidence/feedback.js';
+import { langfuseApi } from './observability/langfuse.js';
+import { tracingHealth } from './observability/tracing.js';
+import { DEFAULT_EVIDENCE_RANKING } from '../shared/evidence-ranking.js';
+import { DEFAULT_EVIDENCE_AUTO_FILTERS } from '../shared/evidence-auto-filters.js';
+import { EvidenceProgressStore } from './evidence/progress.js';
 import { evidenceRoutes } from './routes/evidence.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -94,7 +101,7 @@ declare module 'fastify' {
 
 export interface AppDeps {
   /** `appEnv` (default `dev`): only `live` lets search engines index the site. */
-  config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'> & Partial<Pick<AppConfig, 'appEnv' | 'ai'>>;
+  config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'> & Partial<Pick<AppConfig, 'appEnv' | 'ai' | 'auth' | 'adminEmails' | 'appVersion' | 'tracing' | 'nodeEnv'>>;
   /** The configured embedding model and dimensions: a published passages index must match them. */
   embedding?: { model: string; dims: number };
   /** PostgreSQL as `aviation_app`. */
@@ -171,8 +178,8 @@ export const CONNECTION_CHECK_MS = 5_000;
  */
 export const ASSET_ROUTES: ReadonlySet<string> = new Set([...PUBLIC_PAGE_ROUTES, ROBOTS_ROUTE, '/*']);
 const HEALTH_ROUTE = '/api/health';
-/** Read by the brief page about once a second while a step runs. */
-export const POLL_ROUTES: ReadonlySet<string> = new Set(['/api/briefs/:id']);
+/** Separate polling budget: brief status about once a second, evidence progress about twice. */
+export const POLL_ROUTES: ReadonlySet<string> = new Set(['/api/briefs/:id', '/api/evidence/progress/:key']);
 /**
  * The sitemaps: built once per dataset and served from memory, with a generous limit of their
  * own (`sitemapRateLimit`). Under the API's 60 a minute a crawler that had just fetched the
@@ -321,7 +328,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS,
     // The HTTP parser's own refusals (before routing) carry the security headers too.
     clientErrorHandler: makeClientErrorHandler(headers, { trusted }),
-    routerOptions: { ignoreTrailingSlash: true, maxParamLength: 64 },
+    routerOptions: { ignoreTrailingSlash: true, maxParamLength: 128 },
     // The router's own refusals (a malformed URL) get the security headers and an ErrorResponse.
     // `onRequest` never runs for them, so the tunnel's peer check applies here too: a peer
     // that is not the connector gets 403, not a 400 that tells it how we parse URLs.
@@ -361,6 +368,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     auth: deps.auth ?? null,
     briefs,
     evidence: deps.evidence ?? null,
+    progress: new EvidenceProgressStore(deps.now),
+    adminEmails: deps.config.adminEmails ?? [],
     briefsEnabled: deps.config.ai?.briefsEnabled ?? false,
     aiEvidence: deps.aiEvidence ?? (async () => {
       if (deps.evidence) {
@@ -374,6 +383,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       app.log.warn({ facet, value: value.slice(0, 16) }, 'facet value outside the vocabulary left out of the buckets'),
   };
 
+  if (deps.config.tracing?.enabled && tracingHealth().enabled) {
+    try {
+      const api = langfuseApi(deps.config as AppConfig);
+      let warnedAt = -Infinity;
+      ctx.feedback = feedbackExporter(ctx.db, api, deps.config.appEnv ?? 'dev', () => {
+        if (Date.now() - warnedAt < 300_000) return;
+        warnedAt = Date.now(); app.log.warn({ category: 'feedback_export_failed' }, 'feedback export failed');
+      });
+    } catch { app.log.warn({ category: 'feedback_export_disabled' }, 'feedback export disabled'); }
+  }
+
   app.decorateRequest('networkIdentity', null);
 
   // Shutdown, before the HTTP drain (which would otherwise wait for requests that wait
@@ -386,6 +406,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   let drain: NodeJS.Timeout | undefined;
   app.addHook('preClose', async () => {
     closing = true;
+    ctx.feedback?.stop();
     const deadline = performance.now() + (deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS);
     const left = () => Math.max(0, deadline - performance.now());
     if (briefs || deps.evidence) {
@@ -455,7 +476,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }
     request.log.info(
       { method: request.method, route, status: reply.statusCode, ms: Math.round(reply.elapsedTime) },
-      'api request',
+      matched === '/api/admin/overview' ? 'admin overview access' : 'api request',
     );
   });
 
@@ -492,6 +513,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   aiStatusRoutes(app, ctx);
   briefRoutes(app, ctx, { appUrl: deps.config.appUrl, enabled: deps.config.ai?.briefsEnabled ?? false });
   evidenceRoutes(app, ctx, deps.config.appUrl);
+  adminRoutes(app, ctx, {emails: deps.config.adminEmails ?? [], identitySecret: deps.config.auth?.identityHmacSecret,
+    budgets: deps.config.ai?.budgets, appEnv: deps.config.appEnv ?? 'dev', appVersion: deps.config.appVersion,
+    startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+    ranking: deps.config.ai?.evidenceRanking ?? DEFAULT_EVIDENCE_RANKING,
+    automaticFilters: deps.config.ai?.evidenceAutoFilters ?? DEFAULT_EVIDENCE_AUTO_FILTERS });
   accountRoutes(app, ctx, { appUrl: deps.config.appUrl });
   for (const problem of deps.ai?.problems ?? ['AI is not configured']) app.log.warn({ problem }, 'AI feature off');
   if (deps.ai?.gate?.testKeys) app.log.warn('Turnstile test keys in use: every challenge passes (development only)');

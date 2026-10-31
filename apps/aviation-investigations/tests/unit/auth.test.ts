@@ -259,11 +259,24 @@ describe('contracts and copy', () => {
   });
 
   it('the account says who is signed in and nothing more', () => {
-    expect(AccountResponseSchema.safeParse({ signedIn: true, user: { name: 'A', email: 'a@example.com', id: 'x' } }).success).toBe(false);
-    expect(AccountResponseSchema.safeParse({ signedIn: false, user: { name: 'A', email: 'a@example.com' } }).success).toBe(false);
+    const id = '6f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f';
+    expect(AccountResponseSchema.safeParse({ signedIn: true, user: { id, name: 'A', email: 'a@example.com', sub: 'x' } }).success).toBe(false);
+    expect(AccountResponseSchema.safeParse({ signedIn: false, user: { id, name: 'A', email: 'a@example.com' } }).success).toBe(false);
     expect(AccountResponseSchema.safeParse({ signedIn: false, deletionConfirmedUntil: '2026-11-01T10:05:00.000Z' }).success).toBe(false);
     const until = '2026-11-01T10:05:00.000Z';
-    expect(AccountResponseSchema.parse({ signedIn: true, user: { name: 'A', email: 'a@example.com' }, deletionConfirmedUntil: until })).toMatchObject({ deletionConfirmedUntil: until });
+    expect(AccountResponseSchema.parse({ signedIn: true, user: { id, name: 'A', email: 'a@example.com' }, deletionConfirmedUntil: until })).toMatchObject({ deletionConfirmedUntil: until });
+  });
+
+  it('a signed-in account always carries its application id, a UUID: the browser tells one account from another by it, not by e-mail', () => {
+    const user = { name: 'A', email: 'a@example.com' };
+    expect(AccountResponseSchema.safeParse({ signedIn: true, user }).success).toBe(false);
+    for (const id of ['x', '', 'google-subject-1234567890', '6f1c2d3e4b5a4c6d8e7f0a1b2c3d4e5f']) {
+      expect(AccountResponseSchema.safeParse({ signedIn: true, user: { id, ...user } }).success, id).toBe(false);
+    }
+    expect(AccountResponseSchema.parse({ signedIn: true, user: { id: '6f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f', ...user } })).toEqual({
+      signedIn: true,
+      user: { id: '6f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f', ...user },
+    });
   });
 
   it('deleting starts with a confirmation, or a Google sign-in first', () => {

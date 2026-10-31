@@ -22,13 +22,13 @@ import { createAiRuntime } from '../../server/ai/runtime.js';
 import { createFakeProvider, type FakeScript } from '../../server/ai/fake.js';
 import { EvidenceScopeOutputSchema, validateEvidenceScope } from '../../server/ai/prompts/scope.e1.js';
 import { createEvidenceRetriever, createEvidenceServices, type EvidenceRetriever } from '../../server/evidence/retrieve.js';
-import { pageOf, readOwnedSearch } from '../../server/evidence/store.js';
+import { pageOf, readOwnedSearch, takeOverSearch } from '../../server/evidence/store.js';
 import { evidenceSnapshot } from '../../server/evidence/snapshot.js';
 import { EvidencePageSchema, CreateEvidenceResponseSchema, CreateEvidenceRequestSchema } from '../../shared/contracts/evidence.js';
 import { ConfigResponseSchema } from '../../shared/contracts/config.js';
 import { loadConfig } from '../../shared/config.js';
 import { closeDb, type Db } from '../../server/db/client.js';
-import { authUsers, authSessions, evidenceSearches } from '../../server/db/schema/index.js';
+import { authUsers, authSessions, authAccounts, evidenceSearches } from '../../server/db/schema/index.js';
 import { completeHandover, handoverCandidate } from '../../server/auth/handover.js';
 import { accountLockKey } from '../../server/auth/lifecycle.js';
 import { type AuthService, type SignedIn } from '../../server/auth/better-auth.js';
@@ -65,7 +65,7 @@ afterEach(async () => { vi.restoreAllMocks(); for (const h of harnesses.splice(0
 afterAll(async () => { await resetControls(); await deleteIndices(writer, prefix); await resetCorpus();
   await Promise.all([closeDb(db), closeDb(ingest), closeDb(migrator), es.close(), writer.close()]); });
 
-function harness(script: FakeScript = { evidenceScope: { output: success } }, wrap?: (r: EvidenceRetriever) => EvidenceRetriever, ranking?: EvidenceRankingVersion, options: { autoFilters?: EvidenceAutoFilterVersion; env?: Record<string, string> } = {}) {
+function harness(script: FakeScript = { evidenceScope: { output: success } }, wrap?: (r: EvidenceRetriever) => EvidenceRetriever, ranking?: EvidenceRankingVersion, options: { autoFilters?: EvidenceAutoFilterVersion; env?: Record<string, string>; rateLimit?: number; pollRateLimit?: number; infoLogs?: boolean } = {}) {
   const config = configs(options.env);
   if (options.autoFilters) config.ai.evidenceAutoFilters = options.autoFilters;
   if (ranking) config.ai.evidenceRanking = ranking;
@@ -82,7 +82,7 @@ function harness(script: FakeScript = { evidenceScope: { output: success } }, wr
     finishSignOut: async () => true, hasPendingSignOut: () => false, pendingSignOutCookie: () => '', donePendingSignOutCookie: () => '', checkSchema: async () => {} };
   const logs: string[] = [];
   const app = buildApp({ db, es, config, ai, auth, evidence: svc, embedding: FIXTURE_EMBEDDING, manifestTtlMs: 0,
-    rateLimit: { limit: 1000, windowMs: 60_000 }, logger: { level: 'warn', stream: { write: (s: string) => logs.push(s) } } });
+    rateLimit: { limit: options.rateLimit ?? 1000, windowMs: 60_000 }, pollRateLimit: { limit: options.pollRateLimit ?? 150, windowMs: 60_000 }, logger: { level: options.infoLogs ? 'info' : 'warn', stream: { write: (s: string) => logs.push(s) } } });
   let cookie = '';
   const request = async (body: Record<string, unknown> = {}, key = randomUUID()) => {
     const res = await app.inject({ method: 'POST', url: '/api/evidence', remoteAddress: '127.0.0.1',
@@ -93,10 +93,11 @@ function harness(script: FakeScript = { evidenceScope: { output: success } }, wr
   };
   const get = (id: string, page = 1, withCookie = cookie) => app.inject({ url: `/api/evidence/${id}?page=${page}`, headers: { cookie: withCookie } });
   const h = { app, ai, llm, svc, embed, verify, logs, request, get, cookie: () => cookie,
-    async account() {
+    async account(email?: string) {
       const principal = { kind: 'account' as const, issuer: 'https://accounts.google.com', subject: randomUUID(), createdAt: now() };
       const hash = principalHash(ai.policy!, principal);
-      const [u] = await db.insert(authUsers).values({ name: 'Test', email: `${principal.subject}@example.com`, emailVerified: true, createdAt: now(), updatedAt: now() }).returning();
+      const [u] = await db.insert(authUsers).values({ name: 'Test', email: email ?? `${principal.subject}@example.com`, emailVerified: true, createdAt: now(), updatedAt: now() }).returning();
+      await db.insert(authAccounts).values({userId:u!.id,accountId:principal.subject,providerId:'google',createdAt:now(),updatedAt:now()});
       const [s] = await db.insert(authSessions).values({ userId: u!.id, token: randomUUID(), createdAt: now(), updatedAt: now(), expiresAt: new Date(Date.now() + 7 * 86400_000) }).returning();
       signed = { principal, hash, userId: u!.id, sessionId: s!.id, name: 'Test', email: u!.email };
       cookie += '; account=yes';
@@ -1385,4 +1386,182 @@ describe('v2 evidence retries across the v3 upgrade', () => {
     expect(await spent()).toEqual(before); expect(await counts()).toEqual(previousCounts);
     expect(h.llm.calls).toHaveLength(1); expect(h.embed).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('Task 25 private checklist, ratings and admins', () => {
+  it('reports actual stages only to the owner and uses a separate poll budget', async () => {
+    let reached!: () => void, release!: () => void;
+    const entered = new Promise<void>(r => { reached=r; }), hold = new Promise<void>(r => { release=r; });
+    const h = harness({evidenceScope:async()=>{reached();await hold;return {output:success};}},undefined,undefined,{pollRateLimit:2});
+    await h.account(); const key=randomUUID();
+    const task = h.request({},key); await entered;
+    const poll = (cookie=h.cookie()) => h.app.inject({url:`/api/evidence/progress/${key}`,headers:{cookie}});
+    try {
+      const progress=await poll(); expect(progress.statusCode).toBe(200);
+      expect(progress.headers['cache-control']).toBe('private, no-store');
+      expect(progress.json()).toMatchObject({state:'running',question:{status:'running'},search:{status:'pending'}});
+      expect(progress.body).not.toMatch(/Find engine|maintenance|question.*power/);
+      expect((await poll('')).statusCode).toBe(404);
+      expect((await poll()).statusCode).toBe(429);
+      // Polling does not exhaust the separate ordinary API limit.
+      expect((await h.app.inject({url:'/api/account',headers:{cookie:h.cookie()}})).statusCode).toBe(200);
+    } finally { release(); }
+    searchOf(await task);
+  });
+  it.each(['deletion', 'handover', 'expiry'] as const)('invalidates a saved progress capability after %s, with a fresh poll budget', async change => {
+    const h = harness();
+    const signed = change === 'handover' ? null : await h.account();
+    // A presented trial cookie binds a later search to that trial, not its network.
+    if (!signed) searchOf(await h.request());
+    const key = randomUUID(), page = searchOf(await h.request({}, key));
+    const originalCookie = h.cookie();
+    const poll = () => h.app.inject({ url: `/api/evidence/progress/${key}`, headers: { cookie: originalCookie } });
+    expect((await poll()).statusCode).toBe(200);
+    const before = await spent();
+    if (change === 'deletion') {
+      await issueDeletionConfirmation(db, signed!);
+      await deleteAccount({ db, runs: h.svc.runs, now }, signed!);
+    } else if (change === 'handover') {
+      const [row] = await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, page.id));
+      const account = await h.account();
+      expect(await takeOverSearch(db, page.id, row!.readOwner, account.hash)).toBe(true);
+    } else {
+      // Advance the saved-search clock only: the process-local progress TTL is still live.
+      clock = new Date(Date.parse(page.expiresAt) + 1);
+    }
+    expect((await poll()).statusCode).toBe(404);
+    expect(await spent()).toEqual(before);
+  });
+  it.each([
+    { name: 'terms already executed', scope: success, ranking: 'er-t-v1', expected: 'nothing_to_suggest', suggestion: false },
+    { name: 'remaining terms', scope: success, ranking: 'er-q-v1', expected: 'suggestions', suggestion: true },
+    { name: 'remaining filters', scope: { ...success, filters: { state: ['CA'] } }, ranking: 'er-t-v1', expected: 'suggestions', suggestion: true },
+    { name: 'capability note', scope: { intent: 'operational_advice', filters: {} }, ranking: 'er-q-v1', expected: 'note', suggestion: false },
+  ] as const)('checklist reflects the page: $name', async ({ scope, ranking, expected, suggestion }) => {
+    const h = harness({ evidenceScope: { output: EvidenceScopeOutputSchema.parse(scope) } }, undefined, ranking);
+    await h.account();
+    const key = randomUUID(), page = searchOf(await h.request({}, key));
+    expect(page.suggestion !== null).toBe(suggestion);
+    if (expected === 'note') expect(page.note).toBe('operational_advice');
+    if (expected === 'nothing_to_suggest') expect(page.query).toMatchObject({ source: 'question', keywords: { kind: 'terms' } });
+    const progress = await h.app.inject({ url: `/api/evidence/progress/${key}`, headers: { cookie: h.cookie() } });
+    expect(progress.statusCode).toBe(200);
+    expect(progress.json().question).toEqual({ status: 'done', result: expected });
+  });
+  it('edited and failed-scope checklists disclose the actual skip/fallback without affecting the saved result', async () => {
+    const h=harness({evidenceScope:{fail:'invalid_output'}}); await h.account();
+    const key=randomUUID(), page=searchOf(await h.request({},key));
+    const poll=await h.app.inject({url:`/api/evidence/progress/${key}`,headers:{cookie:h.cookie()}});
+    expect(poll.json()).toMatchObject({state:'done',question:{status:'failed',result:'unavailable'},search:{status:'done'},order:{status:'skipped',result:'match'}});
+    const editedKey=randomUUID();
+    searchOf(await h.request({kind:'edited',from:page.id,question:undefined,filters:{}},editedKey));
+    const edited=await h.app.inject({url:`/api/evidence/progress/${editedKey}`,headers:{cookie:h.cookie()}});
+    expect(edited.json().question).toEqual({status:'skipped',result:null});
+  });
+  it('updates the checklist when the final projector omits optional suggestions', async () => {
+    const store = await import('../../server/evidence/store.js');
+    // withSuggestion's byte-budget fallback returns its undecorated input; the unit
+    // test covers the actual boundary. Exercise that outcome through the HTTP run.
+    vi.spyOn(store, 'withSuggestion').mockImplementation(data => data);
+    const h = harness();
+    await h.account();
+    const key = randomUUID(), page = searchOf(await h.request({}, key));
+    expect(page.suggestion).toBeNull();
+    const progress = await h.app.inject({ url: `/api/evidence/progress/${key}`, headers: { cookie: h.cookie() } });
+    expect(progress.statusCode).toBe(200);
+    expect(progress.json().question).toEqual({ status: 'done', result: 'nothing_to_suggest' });
+  });
+  it('ratings require the current owner, same origin and an unexpired result; latest rating wins exactly once', async () => {
+    const h=harness(); const page=searchOf(await h.request()); const money=await spent(), calls=h.llm.calls.length;
+    const rate=(rating:string,cookie=h.cookie(),origin='https://aircase.example')=>h.app.inject({method:'POST',url:`/api/evidence/${page.id}/feedback`,headers:{cookie,origin},payload:{rating}});
+    expect((await rate('useful','')).statusCode).toBe(404);
+    expect((await rate('useful',h.cookie(),'https://attacker.example')).statusCode).toBe(403);
+    expect((await rate('bad')).statusCode).toBe(400);
+    expect((await rate('useful')).statusCode).toBe(204);
+    expect((await rate('useful')).statusCode).toBe(204);
+    expect((await rate('not_useful')).statusCode).toBe(204);
+    const totals=(await db.execute(sql`SELECT rating, count::int AS n FROM evidence_feedback_daily ORDER BY rating`)).rows;
+    expect(totals).toEqual([{rating:'not_useful',n:1},{rating:'useful',n:0}]);
+    expect(await spent()).toEqual(money); expect(h.llm.calls.length).toBe(calls);
+    const publicPage=await h.get(page.id); expect(publicPage.body).not.toMatch(/traceId|feedbackRating|feedbackDay/);
+    clock=new Date(clock.getTime()+86400_001);
+    expect((await rate('useful')).statusCode).toBe(404);
+    expect((await h.app.inject({url:'/api/evidence/progress/unknown-key',headers:{cookie:h.cookie()}})).statusCode).toBe(404);
+    await expect(ingest.execute(sql`SELECT * FROM evidence_feedback_daily`)).rejects.toThrow();
+    await expect(db.execute(sql`UPDATE evidence_feedback_daily SET count=99`)).rejects.toThrow();
+  });
+  it('ratings and overview use the ordinary API rate limit', async () => {
+    const h=harness(undefined,undefined,undefined,{rateLimit:1});
+    expect((await h.app.inject({method:'POST',url:`/api/evidence/${randomUUID()}/feedback`,payload:{rating:'useful'}})).statusCode).toBe(404);
+    expect((await h.app.inject({url:'/api/admin/overview'})).statusCode).toBe(429);
+  });
+  it('requires a fresh verified Google admin session, maps its usage by subject, and audits without PII', async () => {
+    const h=harness(undefined,undefined,undefined,{infoLogs:true,env:{AIRCASE_ADMIN_EMAILS:'Admin@Example.test'}});
+    const overview=(cookie=h.cookie())=>h.app.inject({url:'/api/admin/overview',headers:{cookie}});
+    expect((await overview()).statusCode).toBe(404);
+    const signed=await h.account('admin@example.test');
+    expect((await h.app.inject({url:'/api/account',headers:{cookie:h.cookie()}})).json().isAdmin).toBe(true);
+    const page=searchOf(await h.request());
+    await h.app.inject({method:'POST',url:`/api/evidence/${page.id}/feedback`,headers:{cookie:h.cookie()},payload:{rating:'useful'}});
+    const response=await overview(); expect(response.statusCode,response.body).toBe(200);
+    expect(response.headers['cache-control']).toBe('private, no-store');
+    const data=response.json();
+    expect(data.users.list[0]).toMatchObject({email:'admin@example.test',isAdmin:true,aiSearches:{today:1,last7Days:1,last30Days:1,last90Days:1}});
+    expect(data.usage.days).toHaveLength(30); expect(data.usage.days.at(-1).accountSearches).toBe(1);
+    expect(data.usage.feedback.useful).toBe(1); expect(data.costs.perSearch.searches).toBe(1);
+    expect(data.costs.monthToDate).toBeGreaterThan(0); expect(data.system.dataset.eligibleCases).toBeGreaterThan(0);
+    expect(response.body).not.toContain(signed.principal.subject); expect(response.body).not.toContain(signed.hash);
+    await db.delete(authSessions).where(eq(authSessions.id,signed.sessionId));
+    // The fake auth cache still says signed in: the route must recheck the database.
+    expect((await overview()).statusCode).toBe(404);
+    expect((await h.app.inject({url:'/api/account',headers:{cookie:h.cookie()}})).json()).not.toHaveProperty('isAdmin');
+    expect(h.logs.join('')).not.toContain('admin@example.test');
+    expect(h.logs.filter(line=>line.includes('admin overview access'))).toHaveLength(3);
+  });
+  it.each(['expired session', 'different Google subject'] as const)('refuses an otherwise allowlisted admin with %s even when the cookie resolves', async change => {
+    const h = harness(undefined, undefined, undefined, { env: { AIRCASE_ADMIN_EMAILS: 'admin@example.test' } });
+    const signed = await h.account('admin@example.test');
+    const headers = { cookie: h.cookie() };
+    expect((await h.app.inject({ url: '/api/account', headers })).json().isAdmin).toBe(true);
+    if (change === 'expired session') {
+      // Expire the fixture as migrator; the app correctly cannot rewrite created_at.
+      await migrator.update(authSessions).set({
+        createdAt: new Date(Date.now() - 2 * 86400_000), expiresAt: new Date(Date.now() - 86400_000),
+      }).where(eq(authSessions.id, signed.sessionId));
+    } else {
+      await migrator.update(authAccounts).set({ accountId: randomUUID() }).where(eq(authAccounts.userId, signed.userId));
+    }
+    expect((await h.app.inject({ url: '/api/admin/overview', headers })).statusCode).toBe(404);
+    expect((await h.app.inject({ url: '/api/account', headers })).json()).not.toHaveProperty('isAdmin');
+  });
+  it('a non-admin gets 404 and no flag, including a percent-encoded route', async () => {
+    const h=harness(undefined,undefined,undefined,{env:{AIRCASE_ADMIN_EMAILS:'admin@example.test'}}); await h.account('reader@example.test');
+    expect((await h.app.inject({url:'/api/account',headers:{cookie:h.cookie()}})).json()).not.toHaveProperty('isAdmin');
+    const response=await h.app.inject({url:'/%61pi/admin/overview',headers:{cookie:h.cookie()}});
+    expect(response.statusCode).toBe(404); expect(response.headers['cache-control']).toBe('private, no-store');
+  });
+});
+
+it('cookieless progress binds to the presented network plus capability, not the newly issued trial', async () => {
+  const other=harness(); searchOf(await other.request()); const unrelatedTrial=other.cookie();
+  let entered!:()=>void, release!:()=>void;
+  const reached=new Promise<void>(r=>{entered=r;}), held=new Promise<void>(r=>{release=r;});
+  const h=harness({evidenceScope:async()=>{entered();await held;return {output:success};}});
+  const key=randomUUID();
+  const work=h.app.inject({method:'POST',url:'/api/evidence',remoteAddress:'2001:db8:1111::1',
+    payload:{kind:'question',question:'Find engine power loss',idempotencyKey:key,turnstileToken:h.verify.issue()}});
+  void work.then(()=>{}); await reached;
+  const poll=(ip='2001:db8:1111::2',cookie='',k=key)=>h.app.inject({url:`/api/evidence/progress/${k}`,remoteAddress:ip,headers:{cookie}});
+  try {
+    expect((await poll()).statusCode).toBe(200); // Same normalized /64, no cookie.
+    expect((await poll('2001:db8:2222::1')).statusCode).toBe(404);
+    expect((await poll('2001:db8:1111::2','',randomUUID())).statusCode).toBe(404);
+    expect((await poll('2001:db8:1111::2',unrelatedTrial)).statusCode).toBe(404);
+    expect((await db.execute(sql`SELECT count(*)::int AS n FROM trial_identities`)).rows[0]?.n).toBe(2);
+  } finally {release();}
+  const response=await work; searchOf(response);
+  const cookie=response.cookies.filter(c=>c.name.includes('trial')).map(c=>`${c.name}=${c.value}`).join('; ');
+  expect(cookie).not.toBe('');
+  expect((await poll()).json().state).toBe('done');
+  expect((await poll('2001:db8:1111::2',cookie)).statusCode).toBe(404);
 });

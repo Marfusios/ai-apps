@@ -118,6 +118,8 @@ services:
       # Peers whose proxy headers are trusted; compose.tunnel.yaml sets EDGE_SUBNET.
       TRUSTED_PROXY_CIDRS: ""
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      AIRCASE_ADMIN_EMAILS: ${AIRCASE_ADMIN_EMAILS:-}
+      APP_VERSION: ${APP_VERSION:-dev}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
