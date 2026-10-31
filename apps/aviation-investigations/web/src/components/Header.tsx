@@ -5,29 +5,35 @@ import { cx } from '../lib/cx';
 import { BrandLockup } from './BrandLockup';
 import { ThemeSwitch } from './ThemeSwitch';
 
-const NAV = [
+const NAV: readonly { to: string; label: string }[] = [
   { to: '/explore', label: 'Explore' },
   { to: '/dashboard', label: 'Dashboard' },
-] as const;
+];
+/** The admin page's link, after the others, only for an admin account (UI_DESIGN §4.12). */
+const ADMIN_NAV = { to: '/admin', label: 'Admin' } as const;
 
 export interface HeaderProps {
   /** The AI counter (UI_DESIGN §5). Stays visible on phones. */
   aiCounter?: ReactNode;
   /** Sign in, or the account menu when signed in. In the ☰ menu on phones. */
   auth?: ReactNode;
+  /** The signed-in account is an admin: the navigation links the admin page too. */
+  admin?: boolean;
 }
 
 /**
  * Global header (UI_DESIGN §3): the lockup (the mark and the wordmark linking home, and what
- * AirCase shows), Explore and Dashboard, the AI counter, the Day/Night switch and sign-in,
+ * AirCase shows), Explore and Dashboard (and Admin for an admin account), the AI counter, the
+ * Day/Night switch and sign-in,
  * over the blue rule with its tick scale. Below 1024px the row wraps: the descriptor takes a
  * second line under the wordmark, with the rest of the header on the first (3px apart on a
  * tablet, clear of the active item's underline). Below 640px the nav, switch and sign-in move
  * into a ☰ menu (§6), centred on both lines. The wordmark is one short word, so it is the same
  * at every width.
  */
-export function Header({ aiCounter, auth }: HeaderProps) {
+export function Header({ aiCounter, auth, admin = false }: HeaderProps) {
   const location = useLocation();
+  const nav = admin ? [...NAV, ADMIN_NAV] : NAV;
   // The menu belongs to the location it was opened on, so any navigation closes it.
   const [openOn, setOpenOn] = useState<string | null>(null);
   const open = openOn === location.key;
@@ -45,8 +51,9 @@ export function Header({ aiCounter, auth }: HeaderProps) {
     <header className="header-rule relative z-20 bg-header" onKeyDown={onKeyDown}>
       <div className="relative mx-auto flex min-h-[66px] max-w-page flex-wrap content-center items-center gap-x-3 py-[11px] pr-[62px] pl-4 sm:min-h-0 sm:gap-x-4 sm:gap-y-[3px] sm:px-[22px] lg:flex-nowrap lg:gap-x-[1.4rem]">
         <BrandLockup />
-        <nav aria-label="Main" className="hidden gap-[1.1rem] sm:flex" data-print="hide">
-          {NAV.map((item) => (
+        {/* Three links (an admin's) sit a little closer on a tablet, so the AI counter keeps its room. */}
+        <nav aria-label="Main" className={cx('hidden sm:flex', admin ? 'gap-3 lg:gap-[1.1rem]' : 'gap-[1.1rem]')} data-print="hide">
+          {nav.map((item) => (
             <NavLink key={item.to} to={item.to} className={navClass}>
               {item.label}
             </NavLink>
@@ -75,7 +82,7 @@ export function Header({ aiCounter, auth }: HeaderProps) {
       <div id={menuId} hidden={!open} className="border-t border-hairline px-4 pt-2 pb-5 sm:hidden" data-print="hide">
         <nav aria-label="Main">
           <ul>
-            {NAV.map((item) => (
+            {nav.map((item) => (
               <li key={item.to} className="border-b border-hairline">
                 <NavLink
                   to={item.to}

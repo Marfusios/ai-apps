@@ -42,3 +42,13 @@ export function HeaderAuth() {
     </button>
   );
 }
+
+/**
+ * Whether the signed-in account is an admin (`/api/account` `isAdmin`, Task 25): the header then
+ * links the admin page. The server decides; the page only follows what the account says.
+ */
+export function useIsAdmin(): boolean {
+  const signIn = useSignIn();
+  const account = useQuery({ ...accountQuery(), enabled: signIn.enabled });
+  return signIn.enabled && account.data?.signedIn === true && account.data.isAdmin === true;
+}
