@@ -9,9 +9,9 @@
  * against scripted progress and against the mock's own stage timing.
  */
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { focusManager, onlineManager } from '@tanstack/react-query';
+import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
 import { delay, http, HttpResponse } from 'msw';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AiStatusResponse } from '../../shared/contracts/ai';
 import { EVIDENCE_HEADING, EvidenceProgressSchema, type EvidenceProgress } from '../../shared/contracts/evidence';
 import { MOCK_EVIDENCE_QUESTIONS, MOCK_EVIDENCE_RELEASE } from '../../web/mock/evidence';
@@ -20,6 +20,7 @@ import { COPY } from '../../web/src/features/ai/AiNoticeBox';
 import { busyLabel } from '../../web/src/features/ai/AskAiButton';
 import type { TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
 import { resetUnsettledForTests } from '../../web/src/features/ai/unsettled';
+import { VisitorChangedError, forgetVisitor, visitorGeneration } from '../../web/src/features/auth/visitor';
 import {
   CHALLENGES,
   PROGRESS_LONGEST_RETRY_AFTER_MS,
@@ -33,11 +34,13 @@ import {
   SPOKEN,
   checklistAnnouncement,
   checklistRows,
+  progressRetryAfterMs,
   elapsed,
   progressPollDelay,
   type ChecklistRow,
   type ProgressPollState,
 } from '../../web/src/features/evidence/checklist';
+import { evidenceProgressQuery } from '../../web/src/features/evidence/progress';
 import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
 import baseCss from '../../web/src/styles/base.css?raw';
 import { evidenceAnswer } from './evidence-answer';
@@ -125,6 +128,8 @@ describe('the rows, state by state', () => {
     [{ status: 'failed', result: 'unavailable' }, 'NOT AVAILABLE', 'skipped', false, SPOKEN.unavailable],
     [{ status: 'failed', result: null }, 'NOT AVAILABLE', 'skipped', false, SPOKEN.unavailable],
     [{ status: 'skipped', result: null }, 'SKIPPED', 'skipped', false, null],
+    // Done, without a result: read, and nothing the server did not say.
+    [{ status: 'done', result: null }, 'READ', 'done', true, SPOKEN.read],
   ] as const)('the question row: %j reads %s', (q, result, tone, tick, spoken) => {
     const row = question(progress({ state: 'running', question: q }))[0] as ChecklistRow;
     expect([row.result, row.tone, row.tick, row.spoken]).toEqual([result, tone, tick, spoken]);
@@ -156,16 +161,23 @@ describe('the rows, state by state', () => {
     [{ status: 'skipped', result: null }, 'NOT USED', 'skipped', false, null],
     [{ status: 'failed', result: 'match' }, 'MATCH ORDER', 'skipped', false, null],
     [{ status: 'failed', result: null }, 'DIDN’T FINISH', 'skipped', false, null],
+    // Done, without a result: no kind of order is claimed.
+    [{ status: 'done', result: null }, 'DONE', 'done', true, SPOKEN.ordered],
   ] as const)('the order row: %j reads %s', (o, result, tone, tick, spoken) => {
     const row = question(progress({ state: 'done', question: { status: 'done', result: 'suggestions' }, search: { status: 'done', cases: 21 }, order: o }))[2] as ChecklistRow;
     expect([row.result, row.tone, row.tick, row.spoken]).toEqual([result, tone, tick, spoken]);
   });
 
-  it('the live line says the latest completion; skipped rows are not announced; the timer reads minutes and seconds', () => {
-    expect(checklistAnnouncement(question(null))).toBe('');
-    expect(checklistAnnouncement(question(progress({ state: 'running', question: { status: 'done', result: 'note' }, search: { status: 'running', cases: null } })))).toBe(SPOKEN.note);
+  it('the live line says every completion not said yet, in order, so stages that end between two reads are each said; skipped rows are not announced; the timer reads minutes and seconds', () => {
+    const none = new Set<ChecklistRow['id']>();
+    expect(checklistAnnouncement(question(null), none)).toBe('');
+    expect(checklistAnnouncement(question(progress({ state: 'running', question: { status: 'done', result: 'note' }, search: { status: 'running', cases: null } })), none)).toBe(SPOKEN.note);
     const done = progress({ state: 'done', question: { status: 'done', result: 'suggestions' }, search: { status: 'done', cases: 21 }, order: { status: 'skipped', result: null } });
-    expect(checklistAnnouncement(question(done))).toBe('Search done: 21 cases.');
+    // Both ended since the last read: both said, the question first; the skipped order says nothing.
+    expect(checklistAnnouncement(question(done), none)).toBe('Question read: suggestions ready. Search done: 21 cases.');
+    // The question was said before: only the search now.
+    expect(checklistAnnouncement(question(done), new Set(['question'] as const))).toBe('Search done: 21 cases.');
+    expect(checklistAnnouncement(question(done), new Set(['question', 'search'] as const))).toBe('');
     expect([elapsed(0, 4_999), elapsed(0, 65_000), elapsed(10, 0)]).toEqual(['0:04', '1:05', '0:00']);
   });
 });
@@ -220,6 +232,57 @@ describe('when the progress is read again', () => {
     expect(after(30)).toBe(30_000);
     expect(PROGRESS_LONGEST_RETRY_AFTER_MS).toBe(30_000);
     for (const seconds of [31, 60, 3_600]) expect(after(seconds), `${seconds} s`).toBe(false);
+    // The wait itself is the server's, however long: a replay of the key may read once it has passed.
+    expect([progressRetryAfterMs(new ApiError(429, null, 60)), progressRetryAfterMs(new ApiError(429, null))]).toEqual([60_000, PROGRESS_MAX_BACKOFF_MS]);
+  });
+
+  it('once the visitor has changed, never: the search is the previous visitor’s', () => {
+    expect(progressPollDelay(poll({ status: 'error', error: new VisitorChangedError('the visitor changed'), errorUpdateCount: 1 }))).toBe(false);
+  });
+
+  it('a read of the previous visitor’s search sends nothing, whatever asks for it (such as the reset as the visitor changes); the current visitor’s search is read (review Minor 1)', async () => {
+    let reads = 0;
+    server.use(
+      http.get('*/api/evidence/progress/:key', () => {
+        reads += 1;
+        return HttpResponse.json(progress({ state: 'running' }));
+      }),
+    );
+    const client = new QueryClient();
+    const sentBy = visitorGeneration();
+    await act(() => forgetVisitor(client, { announce: false }));
+    await expect(client.fetchQuery(evidenceProgressQuery('previous-visitor-key-000000000001', sentBy))).rejects.toBeInstanceOf(VisitorChangedError);
+    expect(reads).toBe(0);
+    await expect(client.fetchQuery(evidenceProgressQuery('current-visitor-key-0000000000001', visitorGeneration()))).resolves.toMatchObject({ state: 'running' });
+    expect(reads).toBe(1);
+  });
+
+  it('a long Retry-After holds the key until the server’s own deadline, not for ever: a replay of the same key reads again once it has passed (review Minor 4)', async () => {
+    const key = 'held-key-0000-4000-8000-000000000001';
+    let reads = 0;
+    server.use(
+      http.get('*/api/evidence/progress/:key', () => {
+        reads += 1;
+        return reads === 1
+          ? HttpResponse.json({ error: 'rate_limited', message: 'Slow down.', retryAfter: 60 }, { status: 429, headers: { 'retry-after': '60' } })
+          : HttpResponse.json(progress({ state: 'running' }));
+      }),
+    );
+    const client = new QueryClient();
+    const read = () => client.fetchQuery({ ...evidenceProgressQuery(key, visitorGeneration()), staleTime: 0 });
+    await expect(read()).rejects.toMatchObject({ status: 429 });
+    // Within the minute: the refusal stands, and nothing is sent.
+    await expect(read()).rejects.toMatchObject({ status: 429 });
+    expect(reads).toBe(1);
+    // A minute later the same key is read again.
+    const later = Date.now() + 61_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => later);
+    try {
+      await expect(read()).resolves.toMatchObject({ state: 'running' });
+    } finally {
+      clock.mockRestore();
+    }
+    expect(reads).toBe(2);
   });
 });
 
@@ -439,6 +502,67 @@ describe('the card where the visitor waits', { timeout: 30_000 }, () => {
     focusManager.setFocused(undefined);
     act(() => release2());
     await waitFor(() => expect(card()).toBeNull(), SLOW);
+  });
+
+  it('stages that end between two reads are each announced, together and in order (review Minor 2)', async () => {
+    freshApi();
+    const running = progress({ state: 'running', question: { status: 'running', result: null } });
+    const done = progress({ state: 'done', question: { status: 'done', result: 'suggestions' }, search: { status: 'done', cases: 21 }, order: { status: 'done', result: 'ai_relevance' } });
+    const s = scripted([running, done]);
+    await askFromHome(MOCK_EVIDENCE_QUESTIONS.carb);
+    const el = await waitFor(() => card() ?? Promise.reject(new Error('no card yet')), SLOW);
+    await waitFor(() => expect(rowText(el, 'order')).toBe('Order the leading results · ORDERED BY AI ✓'), SLOW);
+    await waitFor(() => expect(el.querySelector('[data-checklist-live]')?.textContent).toBe(`${SPOKEN.suggestions} Search done: 21 cases. ${SPOKEN.aiOrder}`));
+    s.release();
+    await waitFor(() => expect(card()).toBeNull(), SLOW);
+  });
+
+  it('leaving the page while a search is on its way stops the reading: the card and its query go (review Minor 8)', async () => {
+    freshApi();
+    const s = scripted([progress({ state: 'running', question: { status: 'running', result: null } })]);
+    const app = await askFromHome(MOCK_EVIDENCE_QUESTIONS.carb);
+    await waitFor(() => expect(card()).not.toBeNull(), SLOW);
+    await waitFor(() => expect(s.reads.length).toBeGreaterThan(1), SLOW);
+    await act(() => app.router.navigate('/about'));
+    expect(card()).toBeNull();
+    const readsWhenLeft = s.reads.length;
+    await act(() => delay(1_500));
+    expect(s.reads.length).toBe(readsWhenLeft);
+    expect(app.client.getQueryCache().findAll({ queryKey: ['evidence-progress'] })).toEqual([]);
+    s.release();
+  });
+
+  it('a visitor change while a search is on its way takes its card at once, reads nothing more, and its answer opens and keeps nothing (review Minors 1 and 8)', async () => {
+    freshApi();
+    const s = scripted([progress({ state: 'running', question: { status: 'done', result: 'suggestions' }, search: { status: 'running', cases: null } })]);
+    // Every progress request sent, also one cut off before it is answered.
+    let sent = 0;
+    server.events.on('request:start', ({ request }) => {
+      if (new URL(request.url).pathname.startsWith('/api/evidence/progress/')) sent += 1;
+    });
+    const app = await askFromHome(MOCK_EVIDENCE_QUESTIONS.carb);
+    const el = await waitFor(() => card() ?? Promise.reject(new Error('no card yet')), SLOW);
+    await waitFor(() => expect(rowText(el, 'question')).toBe('Question · READ · SUGGESTIONS READY ✓'), SLOW);
+    // Right after a read, so that none is on its way: another tab signs out (or the account read
+    // shows another account), and this tab forgets the visitor. Nothing more is sent, not even by the
+    // reset that forgetting makes while the card is still there.
+    const earlier = s.reads.length;
+    await waitFor(() => expect(s.reads.length).toBeGreaterThan(earlier), SLOW);
+    const readsAtChange = s.reads.length;
+    const sentAtChange = sent;
+    await act(() => forgetVisitor(app.client, { announce: false }));
+    expect(card()).toBeNull();
+    await act(() => delay(1_500));
+    expect(sent).toBe(sentAtChange);
+    expect(s.reads.length).toBe(readsAtChange);
+    expect(app.client.getQueryCache().findAll({ queryKey: ['evidence-progress'] }).every((q) => q.state.data === undefined)).toBe(true);
+    // The previous visitor's search answers now: nothing opens, nothing of it is kept.
+    s.release();
+    await act(() => delay(300));
+    expect(currentUrl(app.router)).toBe('/');
+    expect(app.client.getQueriesData({ queryKey: ['evidence'] }).every(([, data]) => data === undefined)).toBe(true);
+    expect(card()).toBeNull();
+    expect(s.reads.length).toBe(readsAtChange);
   });
 
   it('from Explore’s nudge the card shows under the nudge, not under the search bar', async () => {

@@ -9,8 +9,9 @@ const cookie = 'font-mono text-[0.85em]';
 /**
  * The privacy notice (UI_DESIGN §4.8, DESIGN §7), approved by the owner on 24 October 2026 and
  * amended on 31 October 2026 to say that Claude also orders the investigations found. The Task 25
- * statements are the controller's wording after the security review (condition 2), pending the
- * owner's approval before they are published: a rating kept with its search for the search's 24
+ * statements are the controller's wording after the security review (condition 2), published with
+ * Task 25 on 31 October 2026 while the owner's approval is pending (controller ruling, so the
+ * features never run without an accurate notice): a rating kept with its search for the search's 24
  * hours and on the search's trace (30 days, which AirCase can match to the search while the search
  * is kept), daily rating totals linked to no one and kept with no set end, cost and search-usage
  * records without content for 90 days (a deleted account's too), trace backups for 7 days and

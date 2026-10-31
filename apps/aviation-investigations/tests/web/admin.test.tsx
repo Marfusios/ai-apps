@@ -296,6 +296,48 @@ describe('the admin page', { timeout: 20_000 }, () => {
     expect(region(ADMIN_COPY.users).textContent).toContain(ADMIN_COPY.noUsers);
   });
 
+  it('a mean cost of no searches and a share of no ratings show “—”, which screen readers hear as “None”, like the users’ dashes', async () => {
+    signedIn();
+    serve((o) => ({
+      ...o,
+      costs: { ...o.costs, perSearch: { searches: 0, meanUsd: null } },
+      usage: { ...o.usage, feedback: { useful: 0, notUseful: 0, usefulLast30Days: 0, notUsefulLast30Days: 0 } },
+    }));
+    await openAdmin();
+    const mean = region(ADMIN_COPY.costs).querySelector('[data-stat="Per AI search"] dd');
+    expect(mean?.querySelector('[aria-hidden="true"]')?.textContent).toBe('—');
+    expect(mean?.querySelector('.sr-only')?.textContent).toBe(ADMIN_COPY.none);
+    const ratings = within(region(ADMIN_COPY.usage)).getByRole('table', { name: 'Search ratings' });
+    const share = within(ratings).getAllByRole('row').at(-1) as HTMLElement;
+    expect(share.textContent).toBe(`Rated useful—${ADMIN_COPY.none}—${ADMIN_COPY.none}`);
+    for (const cell of within(share).getAllByRole('cell')) {
+      expect(cell.querySelector('[aria-hidden="true"]')?.textContent).toBe('—');
+      expect(cell.querySelector('.sr-only')?.textContent).toBe(ADMIN_COPY.none);
+    }
+  });
+
+  it('an account read that fails, and fails again, says the page didn’t load, with Try again, not “not found”; Try again opens it for an admin', async () => {
+    signedIn();
+    let reads = 0;
+    server.use(
+      http.get('*/api/account', () => {
+        reads += 1;
+        // The first read and its one retry fail.
+        return reads <= 2 ? HttpResponse.json({ error: 'internal', message: 'Something went wrong.' }, { status: 500 }) : undefined;
+      }),
+    );
+    const overviewReads = recordOverviewReads();
+    renderApp('/admin');
+    const failed = (await screen.findByText(ADMIN_COPY.accountFailed, {}, SLOW)).closest('[role="alert"]') as HTMLElement;
+    expect(failed.textContent).toContain(ADMIN_COPY.loadFailedText);
+    expect(reads).toBe(2);
+    expect(screen.queryByRole('heading', { level: 1, name: NOT_FOUND_TITLE })).toBeNull();
+    expect(overviewReads).toEqual([]);
+    fireEvent.click(within(failed).getByRole('button', { name: ADMIN_COPY.tryAgain }));
+    await screen.findByRole('region', { name: ADMIN_COPY.users }, SLOW);
+    expect(screen.queryByText(ADMIN_COPY.accountFailed)).toBeNull();
+  });
+
   it('figures that do not load say so, with Try again; Refresh reads them again', async () => {
     signedIn();
     let reads = 0;

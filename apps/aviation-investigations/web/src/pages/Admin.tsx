@@ -33,6 +33,8 @@ export const ADMIN_COPY = {
   refreshing: 'Refreshing…',
   loadFailed: 'The admin figures didn’t load.',
   loadFailedText: 'Check your connection and try again.',
+  /** Who is signed in could not be read (twice): the page cannot tell whether to show anything. */
+  accountFailed: 'This page didn’t load.',
   tryAgain: 'Try again',
   users: 'Users',
   usage: 'Usage',
@@ -65,7 +67,7 @@ function Panel({ id, title, children, className }: { id: string; title: string; 
 }
 
 /** A headline figure: its label, the value, and what it is measured over. */
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: string }) {
   return (
     <div className="min-w-0" data-stat={label}>
       <dt className="text-micro font-bold tracking-caps text-muted uppercase">{label}</dt>
@@ -261,8 +263,8 @@ function Ratings({ feedback }: { feedback: AdminOverview['usage']['feedback'] })
           <th scope="row" className="py-1 text-left font-normal text-muted">
             Rated useful
           </th>
-          <td className={cell}>{all > 0 ? formatShare(feedback.useful, all) : '—'}</td>
-          <td className={cell}>{recent > 0 ? formatShare(feedback.usefulLast30Days, recent) : '—'}</td>
+          <td className={cell}>{all > 0 ? formatShare(feedback.useful, all) : <Missing words={ADMIN_COPY.none} />}</td>
+          <td className={cell}>{recent > 0 ? formatShare(feedback.usefulLast30Days, recent) : <Missing words={ADMIN_COPY.none} />}</td>
         </tr>
       </tbody>
     </table>
@@ -333,7 +335,7 @@ function Costs({ costs }: { costs: AdminOverview['costs'] }) {
         <Stat label="Last month" value={formatUsd(costs.previousMonth)} />
         <Stat
           label="Per AI search"
-          value={costs.perSearch.meanUsd === null ? '—' : formatUsd(costs.perSearch.meanUsd)}
+          value={costs.perSearch.meanUsd === null ? <Missing words={ADMIN_COPY.none} /> : formatUsd(costs.perSearch.meanUsd)}
           sub={`this month, ${formatCount(costs.perSearch.searches)} ${costs.perSearch.searches === 1 ? 'search' : 'searches'}`}
         />
         <Stat label="Uncertain charges" value={formatUsd(costs.uncertainUsd)} sub="this month, at the reserved cost" />
@@ -508,7 +510,8 @@ function Frame({ children }: { children: ReactNode }) {
  * (`/api/account` `isAdmin`), everything from `GET /api/admin/overview`: users, usage, costs and the
  * system, in plain words and formatted numbers, times in the viewer's own zone, named once. Everyone
  * else, signed out or not an admin, gets the ordinary "not found" page, as the API answers them 404.
- * Private and not indexed.
+ * When who is signed in cannot be read (the account read and its retry failed), the page says it
+ * didn't load, with Try again, rather than "not found". Private and not indexed.
  */
 export function Admin() {
   const signIn = useSignIn();
@@ -521,6 +524,20 @@ export function Admin() {
     return (
       <Frame>
         <Skeleton />
+      </Frame>
+    );
+  }
+  // Who is signed in is unknown: not "not found", which would tell an admin the page is not theirs.
+  if (signIn.enabled && account.data === undefined && account.isError) {
+    return (
+      <Frame>
+        <div role="alert" className="mt-4 rounded-card border border-hairline bg-raised px-4 py-4" data-account-failed="">
+          <p className="font-serif text-[16px] font-semibold">{ADMIN_COPY.accountFailed}</p>
+          <p className="mt-1 mb-3 text-meta text-muted">{ADMIN_COPY.loadFailedText}</p>
+          <Button variant="search" size="sm" onClick={() => void account.refetch()} disabled={account.isFetching} aria-busy={account.isFetching}>
+            {ADMIN_COPY.tryAgain}
+          </Button>
+        </div>
       </Frame>
     );
   }
