@@ -1097,7 +1097,7 @@ Pages (UI_DESIGN §3–§7): Home ("Clear sky"), Explore (keyword search with fa
 counts, the case drawer and the compare tray), the full case page and Compare
 (flight strips with NTSB columns, "Same in all", sort and Print for class), the AI
 evidence search (`/ai/:id`), AI briefs that exist (`/briefs/:id`; the interface starts
-none), plus About and Privacy. View state is in the URL: the search
+none), the admin page for admin accounts (`/admin`), plus About and Privacy. View state is in the URL: the search
 keys of `SearchRequest` (`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`,
 `sort`, `page`), the open case (`case`), the compare selection (`cases`), for an
 evidence search the pages shown (`pages`) and the search Compare was opened from
@@ -1223,6 +1223,27 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   by AI: only NTSB text, coded data, the contract's fixed copy, the reader's own question and
   edits, and the AI's terms only quoted under their label and as labelled counts and marks (a
   component test checks every text node). Model text is always rendered as text, never markup.
+- **The search checklist** (UI_DESIGN §4.10, Task 25): while `POST /api/evidence` runs, a
+  question's or an edit's, a cockpit checklist card shows where the visitor waits (under the box or
+  nudge Ask AI was pressed in, or under "Your search" for an edit): the question, "Search 24,291
+  investigations" (the default cohort from `/api/config`) and the order of the leading results, each
+  filling in its result with a magenta ✓ as its stage ends, read from `GET
+  /api/evidence/progress/:key` (`EvidenceProgressSchema`) under the POST's own idempotency key about
+  every 500 ms (`web/src/features/evidence/checklist.ts`). A 404 is normal until the server has
+  registered the search and is read through for the whole wait (once a second after ten in a row);
+  until the first answer the card is unticked. Reading stops when the POST settles, and the card goes.
+  Completions are announced politely; statuses and counts only, never model text. The card and its
+  client load with the first AI request, never with the home page (`SearchWait`).
+- **Rating a search** (UI_DESIGN §4.11): "Was this search useful?" under the results, "Useful" and
+  "Not useful" (`POST /api/evidence/:id/feedback`, `EvidenceFeedbackRequestSchema`; no AI search used);
+  "Thanks — noted." with the choice chosen once the server has it, changeable (the latest counts); kept
+  per search in this tab's memory only (`web/src/features/evidence/ratings.ts`, forgotten with the
+  visitor), so a reload shows it unrated; a failure says so with Try again. Not printed.
+- **Admin** (UI_DESIGN §4.12): for an account `/api/account` says is an admin (`isAdmin`), the header
+  links `/admin` (the phone menu too): users, usage (a 30-day chart of small multiples with its
+  table, the ratings), costs (budgets as meters) and the system, all from `GET /api/admin/overview`
+  (`AdminOverviewSchema`; the private `admin` query), times in the viewer's own zone. Everyone else,
+  and an admin the API answers 404, sees the ordinary not-found page; the page is not indexed.
 - **Briefs that exist**: the interface starts none. While the server has briefs off
   (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
   failed step offers New search, not Try again.
@@ -1259,7 +1280,7 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
 
 ```sh
 pnpm dev:web          # Vite dev server; /api is proxied to the API server
-WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/mock
+WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/mock (AI searches take live's time)
 pnpm build:web        # production build into dist/web
 pnpm test:web         # component tests (jsdom, offline, MSW)
 pnpm test:e2e         # Playwright against the dev server in mock mode
@@ -1338,12 +1359,30 @@ aiAutomaticFilters })` sets it, and `null` leaves it out as a server without the
 words Explore's AI nudge and the About page's AI line (a missing field reads as nothing applied).
 A unit test fails when the committed mock files are out of date.
 
+An AI search's progress (`GET /api/evidence/progress/:key`) is answered by
+`web/mock/evidence-progress.ts`: the search's stages timed like live's (the key registered after
+0.8 s, the question about 1.5 s, the search 1.7 s, the configuration's reranker 2.7 s for Haiku on
+the top 50; an edit skips the question, a configuration without a reranker the order), each ending as
+the mock's search did (`MockStageOutcome`; a search lost after admission fails at retrieval), read
+only by its asker, and the POST's answer waits for them. The stage times are scaled by
+`createHandlers({ evidenceTiming })` (default 0: no wait, for the component tests), in the dev mock
+mode by `WEB_MOCK_EVIDENCE_TIMING` (default 1, as live; `pnpm test:e2e` runs with 0), and in a tab by
+its session storage `casebook-mock-evidence-timing`, which wins. `POST /api/evidence/:id/feedback` keeps
+the owner's latest rating on the mock's search (a question with "rating fails" fails its first one).
+`/api/account` says `isAdmin: true` for the signed-in mock account when `createHandlers({ admin })` or
+this tab's session storage `casebook-mock-admin` (`1`) says so, and `GET /api/admin/overview`
+(`web/mock/admin.ts`) answers that admin, and only that admin, with a synthetic overview: 37 made-up
+accounts at the example domains, 30 days of use with a weekly rhythm, a small beta's costs, the
+ratings the mock was given and the configuration it stands in for. `tests/unit/evidence-progress-mock.test.ts`
+checks them against the contracts.
+
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
 `--with-deps` on a fresh Linux machine). The AI specs install a local stand-in for
 Cloudflare's widget before the app loads (`tests/e2e/fake-turnstile.ts`), so the AI tests
 make no network requests. `tests/e2e/evidence.spec.ts` runs the evidence view on a desktop
-by day and a phone at night.
+by day and a phone at night; `tests/e2e/search-checklist.spec.ts` the search checklist (with
+live's stage times) and ratings, and `tests/e2e/admin.spec.ts` the admin page, likewise.
 
 `WEB_DEV_PORT` (default 5173) and `WEB_DEV_API_URL` (default
 `http://localhost:3000`) are read from the process environment by `vite.config.ts`

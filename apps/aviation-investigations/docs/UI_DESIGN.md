@@ -358,7 +358,8 @@ Switching themes (Proposed):
   headers keep their heights; on a tablet the header grows by the line (about
   19px; more where touch targets make the first line taller). It does not
   print (§7).
-- Explore and Dashboard navigation, with the active item underlined in blue
+- Explore and Dashboard navigation, with the active item underlined in blue; for an account the
+  server lists as an admin, "Admin" after them, in the phone menu too (§4.12, Task 25)
 - the AI counter (§5)
 - the Day/Night switch
 - Sign in, or when signed in a person icon linking to the Account page (its name is "Account"; the word shows beside it in the phone menu; Owner, 2026-10-24)
@@ -397,6 +398,7 @@ lives in the URL:
 | `/compare?cases=A,B,C,D&brief=:id&step=n` | Compare plus that brief step's AI columns |
 | `/dashboard?…cohort…` | Dashboard |
 | `/account`, `/privacy`, `/about` | Account, privacy and about pages |
+| `/admin` | The admin page (§4.12): only for an admin account, private and not indexed; for everyone else the ordinary not-found page |
 
 A brief ID in a shared link reveals nothing to another user.
 
@@ -741,6 +743,8 @@ partial answer text. Whether to use polling or SSE is a Builder decision.
 
 Cancel still counts as a search (Owner-approved).
 
+The AI evidence view (§4.9) has a checklist of its own while a search runs: §4.10.
+
 ### 4.5 Case drawer: "Story order" (Owner)
 
 The drawer opens from the right over the results. It is about 58% of the viewport
@@ -939,7 +943,9 @@ then state the processed cohort (DESIGN §5).
     deleted.
 - **Privacy page:** plain-language processing notice, linked from the footer
   and the sign-in dialog. The owner approved the final text on 24 October 2026
-  (Owner), amended on 31 October 2026 to say Claude also orders the investigations found; it was checked statement by statement against the code and is the
+  (Owner), amended on 31 October 2026 to say Claude also orders the investigations found and (Task 25, awaiting
+  the owner's approval) that a rating of an AI search is kept, without the question, to measure search
+  quality (§4.11); it was checked statement by statement against the code and is the
   authority on what the site keeps (who is responsible, the site's four cookies,
   what the server, accounts and AI searches keep, the processors, retention,
   legal bases and rights). It names Cloudflare Turnstile (Task 22 review W-14):
@@ -1198,6 +1204,89 @@ case sheet (§6).
 accounts 50 a day, new accounts 20 a day for their first 3 days, 600 a month, reset 00:00 UTC) and the
 visitor's own counts in `/api/ai/status`. Without them a line leaves the number out (§5).
 
+### 4.10 While an AI search runs: "Search checklist" (Task 25, Proposed)
+
+The checklist of §4.4, adapted to the evidence view. While `POST /api/evidence` runs, for a question
+(Ask AI on Home, Explore or the gone page) and for an edit (Search again, Apply) alike, a checklist
+card shows where the visitor waits: under the box or the nudge Ask AI was pressed in, or, for an
+edit, under "Your search" and the suggestion. It goes once the POST settles: the results open, or
+the notice box under the control says what happened.
+
+- **Header bar:** ink background, paper text (the engraved placard at night, as §4.4), the title
+  "SEARCH CHECKLIST", and on the right the time since the request left ("0:04"), not announced.
+- **Rows:** B612 Mono with dotted leaders to the result:
+
+  | Row | Result |
+  | --- | --- |
+  | Question | READ · SUGGESTIONS READY, READ · NOTHING TO SUGGEST, NOTE ADDED (a capability note), NOT AVAILABLE (the stage failed: no suggestion); SKIPPED when the server did not read the question; SKIPPED · YOUR EDIT for an edit, from the start |
+  | Search 24,291 investigations (the default cohort from `/api/config`) | 21 CASES (1 CASE); DIDN'T FINISH |
+  | Order the leading results | ORDERED BY AI, MATCH ORDER; NOT USED without an AI reranker |
+
+- Each row fills in its real result as its stage ends, with a magenta ✓ (a stage with nothing to
+  give, or not run, gets none and stays muted). The row under way has the faint magenta wash and a
+  magenta "IN PROGRESS"; rows not reached are muted with "—". The ✓ ticks in over 180ms; with reduced
+  motion it appears at once.
+- **Note under the card:** "AirCase shows NTSB investigations; nothing is written by AI. Usually 5–10
+  seconds." Live takes 5–7 s: the check and admission, then the question about 1.5 s, the embedding and
+  retrieval about 1.7 s and the AI rerank of the top 50 about 2.7 s.
+- **Progress:** read from `GET /api/evidence/progress/:key` with the POST's own idempotency key about
+  every 500 ms while the POST runs, and never after it settles. A 404 is normal until the server has
+  registered the search (after the Turnstile check and admission, a second or two) and is read through
+  for the whole wait, once a second after ten in a row (a network identity that changed mid-search
+  leaves 404s throughout). Until the first answer the card is unticked: no row under way. Statuses and
+  counts only, never model text.
+- **Announcements:** each completion once, through a polite live region ("Question read: suggestions
+  ready.", "Search done: 21 cases.", "Leading results ordered by AI."). Skipped rows are not announced.
+- It works at phone width (a result that does not fit wraps under its row's leader) and in both themes,
+  and it does not print. The button that sent the request keeps its "Starting…".
+
+### 4.11 Rating a search (Task 25, Proposed)
+
+On the results sheet, under the results and the line that says when the search is deleted: "Was
+this search useful?" and two chips, "Useful" and "Not useful" (the filter chip's shape; the chosen
+one filled blue and `aria-pressed`). A click sends `POST /api/evidence/:id/feedback` (no AI search
+used); while it is on its way the line beside them says "Saving…", and once the server has it the
+chip is chosen and the line says "Thanks — noted.". The reader can change it, the latest counting;
+the chosen one clicked again sends nothing. The page keeps what it sent, per search, in memory only
+(the server never sends a rating back): after a reload the search shows unrated again, and a
+sign-out forgets it. A rating that did not save says "Your rating didn't save." with Try again (the
+rating the server has stays chosen); a search that is gone says "This search is no longer available,
+so it can't be rated." It does not print. The privacy notice says "If you rate an AI search, AirCase
+keeps the rating, without your question, to measure search quality." (§4.8).
+
+### 4.12 Admin (Task 25, Proposed)
+
+For the accounts the server lists as admins (`/api/account` `isAdmin`). The header's navigation adds
+"Admin" after Dashboard, in the phone menu too; with three links the navigation sits a little closer on
+a tablet, so the AI counter keeps its room. `/admin` is private (its data is the visitor's and is
+forgotten on sign-out) and not indexed. For everyone else, signed in or not, it is the ordinary
+not-found page, as the API answers them 404. Everything on it comes from `GET /api/admin/overview`, in
+plain words and formatted numbers; times are in the viewer's own time zone, named once.
+
+- **Head:** "Admin", "Figures as of 31 Oct 2026, 18:50. Times are in your time zone, Europe/Prague.",
+  Refresh, and links to the four sections, each a card with a serif heading.
+- **Users:** "Accounts" and "New in the last 7 days"; then every account, most recently active first:
+  name (with an "Admin" tag), e-mail, joined, last sign-in, last AI search, and AI searches today and
+  over 7, 30 and 90 days (usage records are kept 90 days). A table from 640px; on a phone each account
+  is a block of labelled lines ("10 in 7 days"). A missing time is "—", said "None" or "Never".
+- **Usage:** AI searches, active trials, active accounts, free undos and failed searches over the last
+  30 days; "AI searches per UTC day, last 30 days" as four small multiples in chart blue, one series
+  each, so no row needs a colour of its own (trials and accounts share a scale; free undos and failed
+  searches each have their own), today hatched as data still coming in, a band and a tooltip for the
+  day under the pointer or picked with the arrow keys, and "Show the figures" for the same as a table;
+  then "Search ratings": useful, not useful and the share rated useful, all time and over 30 days.
+- **Costs:** today (UTC), this month to date, last month, per AI search this month and uncertain
+  charges (kept at the reserved cost); the budgets as meters on a track of their own wash (all AI spend
+  this month, interactive this month, interactive today, indexing and evaluation this month), each with
+  "$12.37 of $100.00 · 12%"; this month by category (bars) and by stage, with provider and model, most
+  expensive first. Small sums show to the hundredth of a cent ("$0.0086").
+- **System:** the app (version, environment, started, with its uptime); AI search (on or off, without an
+  account, account checks, the ranking in plain words, "The question as asked; AI reranks the top 50",
+  with its identifier under it, and the automatic filters likewise); tracing (on or off, the last
+  export, failed exports); the dataset (NTSB snapshot, loaded, published, cases, generation); the next
+  automatic import, "Not set up yet" while there is none.
+- A failed read says "The admin figures didn't load." with Try again.
+
 ## 5. States and copy (Owner-approved)
 
 **AI counter in the header:**
@@ -1364,6 +1453,7 @@ browser with the same stylesheet. Print uses:
 - the footer "Not an NTSB service · Source: NTSB · printed {date}", then the credit
   line "Built by Mariusz Kotas · mkotas.cz" (the website prints as text)
 - strips that never split across pages
+- the search checklist (§4.10) and the rating control (§4.11) do not print
 - the AI evidence view (§4.9) with its heading, notice, capability note, what was searched ("Your
   search") and its cards whole (long paragraphs print open); the suggestion, the hint and the controls
   do not print
@@ -1378,12 +1468,15 @@ Target **WCAG 2.2 AA**.
 - **Drawer and sheets:** `role="dialog"` with `aria-modal`. Focus moves to the
   headline, Esc closes, focus returns to the trigger, and the prev/next buttons
   have accessible names.
-- **Checklist:** stage completions are announced through `aria-live="polite"`.
+- **Checklist:** stage completions are announced through `aria-live="polite"`, the brief's and the
+  search checklist's (§4.10) alike.
   The timer is not announced.
 - **Charts and facets:** every bar is a real button with a full accessible name,
   e.g. "Landing, 7,849 investigations, 32 percent. Open these cases." Each chart
   keeps its sentence as a visible caption. The year chart and map have a
-  visually hidden table or summary.
+  visually hidden table or summary. The admin page's usage chart (§4.12) reads a
+  day at a time with the arrow keys, says it politely, and has its table a click
+  away ("Show the figures").
 - **Focus:** a visible 2px focus ring. The page is fully usable by keyboard,
   with a logical order.
 - **Reflow and targets:** the layout reflows at 320px width and at 200% text
@@ -1588,3 +1681,8 @@ counting rules.
   server has briefs off; and, from the UI review, dashed "not searched yet" draft chips, the
   suggestion's buttons held off over a pending draft, "highest-ranked first", and the strip
   placeholder and "Part of your search didn't load…" in Compare.
+- Builder calls (Task 25), for the owner's review: the search checklist's title, rows, results,
+  note and announcements (§4.10); "Was this search useful?", "Useful", "Not useful", "Saving…",
+  "Thanks — noted.", "Your rating didn't save." and "This search is no longer available, so it can't
+  be rated." (§4.11); the privacy notice's sentence on ratings (§4.8); and the admin page's copy and
+  layout, its plain words for the ranking and automatic-filter identifiers among them (§4.12).
