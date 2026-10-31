@@ -24,10 +24,12 @@
  *   - the web client's routes (`ASSET_ROUTES`: the pages, robots.txt and the static files)
  *     and the not-found handler (the 404 page or a plain 404), which need no client address
  *     and are not limited; a case page (`/cases/:ntsbNo`) and the sitemaps read the database
- *     and have a limit of their own (`pageRateLimit`, `CRAWL_ROUTES`), generous enough for a
- *     search engine's crawler and separate from the API's, so crawling cannot use up a visitor's
- *     API allowance nor the API a crawler's (a page request refused or failing, 429, 500 or 503,
- *     gets the page with that status: `Pages.failed`, server/routes/pages.ts), and
+ *     and have limits of their own, apart from the API's, so crawling cannot use up a visitor's
+ *     API allowance nor the API a crawler's: the sitemaps, built once per dataset and served
+ *     from memory, a generous one (`sitemapRateLimit`); a case page, one database read each, a
+ *     moderate one (`pageRateLimit`) that still suits a search engine's crawler (a page request
+ *     refused or failing, 429, 500 or 503, gets the page with that status: `Pages.failed`,
+ *     server/routes/pages.ts), and
  *   - `GET /api/health` from loopback (the container's own health check).
  *   In tunnel mode only the trusted connector may connect at all (403 otherwise).
  * - Every response carries the security headers (server/http/security-headers.ts),
@@ -119,8 +121,10 @@ export interface AppDeps {
   rateLimit?: { limit: number; windowMs: number };
   /** Brief polling limit per network identity (default 150 a minute). */
   pollRateLimit?: { limit: number; windowMs: number };
-  /** Case pages' and sitemaps' limit per network identity (default 600 a minute: crawlers). */
+  /** Case pages' limit per network identity (default a burst of 120, then 5 a second). */
   pageRateLimit?: { limit: number; windowMs: number };
+  /** The sitemaps' limit per network identity (default a burst of 600, then 10 a second). */
+  sitemapRateLimit?: { limit: number; windowMs: number };
   /** How long the active manifest is reused (default 5 s). */
   manifestTtlMs?: number;
   /** The closing deadline (default `SHUTDOWN_GRACE_MS`). */
@@ -170,20 +174,23 @@ const HEALTH_ROUTE = '/api/health';
 /** Read by the brief page about once a second while a step runs. */
 export const POLL_ROUTES: ReadonlySet<string> = new Set(['/api/briefs/:id']);
 /**
- * Public pages that read the database and that search engines crawl: the case pages and the
- * sitemaps. They have their own, crawler-sized limit (`pageRateLimit`): a sitemap refused under
- * the API's 60 a minute is a sitemap a search engine "couldn't fetch".
+ * The sitemaps: built once per dataset and served from memory, with a generous limit of their
+ * own (`sitemapRateLimit`). Under the API's 60 a minute a crawler that had just fetched the
+ * index and begun on the case pages was refused one: a sitemap it "couldn't fetch".
  */
-export const CRAWL_ROUTES: ReadonlySet<string> = new Set([CASE_PAGE_ROUTE, SITEMAP_INDEX_ROUTE, SITEMAP_FILE_ROUTE]);
+export const SITEMAP_ROUTES: ReadonlySet<string> = new Set([SITEMAP_INDEX_ROUTE, SITEMAP_FILE_ROUTE]);
 
-type Access = 'asset' | 'health' | 'api' | 'poll' | 'page';
+type Access = 'asset' | 'health' | 'api' | 'poll' | 'page' | 'sitemap';
 
 /** The access class of a request, from its matched route; an unmatched request is the not-found handler. */
 function accessOf(route: string | undefined, method = 'GET'): Access {
   if (route === undefined || ASSET_ROUTES.has(route)) return 'asset';
   if (route === HEALTH_ROUTE) return 'health';
   if (POLL_ROUTES.has(route) && method === 'GET') return 'poll';
-  if (CRAWL_ROUTES.has(route) && (method === 'GET' || method === 'HEAD')) return 'page';
+  const read = method === 'GET' || method === 'HEAD';
+  if (SITEMAP_ROUTES.has(route) && read) return 'sitemap';
+  // A case page reads the database once: a limit of its own, moderate, apart from the API's.
+  if (route === CASE_PAGE_ROUTE && read) return 'page';
   return 'api';
 }
 
@@ -333,7 +340,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   const limiter = new RateLimiter({ ...(deps.rateLimit ?? { limit: 60, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
   const pollLimiter = new RateLimiter({ ...(deps.pollRateLimit ?? { limit: 150, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
-  const pageLimiter = new RateLimiter({ ...(deps.pageRateLimit ?? { limit: 600, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
+  // A burst of 120, then 5 a second: a crawler's pace, at most 5 case reads a second per identity.
+  const pageLimiter = new RateLimiter({ ...(deps.pageRateLimit ?? { limit: 120, windowMs: 24_000 }), ...(deps.now ? { now: deps.now } : {}) });
+  const sitemapLimiter = new RateLimiter({ ...(deps.sitemapRateLimit ?? { limit: 600, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
   const datasets = new DatasetResolver(deps.db, deps.es, {
     ...(deps.embedding ? { embedding: deps.embedding } : {}),
     // `reason` is a fixed category (never upstream text).
@@ -419,7 +428,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }
     request.networkIdentity = identity.identity;
     if (access === 'asset') return;
-    const decision = (access === 'poll' ? pollLimiter : access === 'page' ? pageLimiter : limiter).take(identity.identity);
+    const bucket = access === 'poll' ? pollLimiter : access === 'page' ? pageLimiter : access === 'sitemap' ? sitemapLimiter : limiter;
+    const decision = bucket.take(identity.identity);
     if (!decision.ok) {
       reply.header('retry-after', String(decision.retryAfterSeconds));
       // A refused page request (a case page) gets the page with 429; the API its ErrorResponse.

@@ -194,12 +194,15 @@ describe('pages for search engines and link previews', () => {
     }
   });
 
-  it('case pages and the sitemaps have a limit of their own, apart from the API’s, and need a network identity; other pages do not', async () => {
-    const limited = makeApp({ rateLimit: { limit: 2, windowMs: 60_000 }, pageRateLimit: { limit: 3, windowMs: 60_000 } });
+  it('case pages, the sitemaps and the API each have a limit of their own; case pages and the sitemaps need a network identity; other pages do not', async () => {
+    const limited = makeApp({ rateLimit: { limit: 2, windowMs: 60_000 }, pageRateLimit: { limit: 2, windowMs: 60_000 }, sitemapRateLimit: { limit: 2, windowMs: 60_000 } });
     expect((await page('/cases/DFW08TA066', { app: limited })).status).toBe(200);
     expect((await page('/cases/ZZZ99ZZ999', { app: limited })).status).toBe(404);
+    // The sitemaps' allowance is apart from the case pages': both of its requests go through.
     expect((await get('/sitemap.xml', { app: limited })).status).toBe(200);
-    // The pages' allowance is used up: a refused page request gets the page with 429, noindex, and Retry-After.
+    expect((await get('/sitemaps/pages.xml', { app: limited })).status).toBe(200);
+    expect((await get('/sitemaps/pages.xml', { app: limited })).status).toBe(429);
+    // The case pages' allowance is used up: a refused page request gets the page with 429, noindex, and Retry-After.
     const refused = await page('/cases/DFW08TA066', { app: limited });
     expect(refused.status).toBe(429);
     expect(refused.body).toContain('<div id="root">');
@@ -207,7 +210,6 @@ describe('pages for search engines and link previews', () => {
     expect(refused.headers['cache-control']).toBe('no-store');
     expect(Number(refused.headers['retry-after'])).toBeGreaterThanOrEqual(1);
     expect((await page('/cases/ZZZ99ZZ999', { app: limited })).status).toBe(429);
-    expect((await get('/sitemaps/pages.xml', { app: limited })).status).toBe(429);
     // Crawling did not use the API's allowance, which still refuses past its own limit.
     expect((await get('/api/cases/DFW08TA066', { app: limited })).status).toBe(200);
     expect((await get('/api/cases/DFW08TA066', { app: limited })).status).toBe(200);

@@ -1537,10 +1537,11 @@ stalled connections are checked every 5 s.
   files) and the not-found handler (the 404 page or a plain 404), which need no client
   address and are not limited, and `GET /api/health` over loopback (the container's health
   check). A case page (`/cases/:ntsbNo`) and the sitemaps read the database, so they are
-  limited too, by a limit of their own (`CRAWL_ROUTES`, 600 a minute per network identity by
-  default) sized for search-engine crawlers and kept apart from the API's 60 a minute: a
-  crawler cannot use up a visitor's API allowance, and a sitemap refused under the API's limit
-  was one a search engine "couldn't fetch". Whether a 404 is JSON or the page also follows the decoded path
+  limited too, each by a limit of its own apart from the API's 60 a minute, so a crawler cannot
+  use up a visitor's API allowance: the sitemaps, served from memory, a burst of 600 then 10 a
+  second (`SITEMAP_ROUTES`; under the API's limit a sitemap was one a search engine "couldn't
+  fetch"); a case page, one database read, a burst of 120 then 5 a second per network identity.
+  Whether a 404 is JSON or the page also follows the decoded path
   (`/%61pi/nope` is a JSON 404).
 - **Network identity** (`server/http/network-identity.ts`). Without trusted proxies
   the bucket key is the socket address. With `TRUSTED_PROXY_CIDRS` (tunnel mode) only
@@ -1629,8 +1630,8 @@ string: a served case number not in canonical form (`/cases/dfw08ta066`), a page
 trailing slash, a page path in the wrong letter case (`/About` to `/about`) and `/index.html`
 (to `/`). The page goes to GET and HEAD requests whose `Accept` is absent or takes `text/html`
 or `*/*`; other requests, and a path with a file extension that no route serves, get a
-plain-text 404. A case page reads the database: it counts against the pages' own rate limit
-(600 a minute per network identity, apart from the API's) and needs a network identity. A page request that is refused (429) or fails (500, 503) gets the
+plain-text 404. A case page reads the database: it counts against the case pages' own rate limit
+(a burst of 120, then 5 a second per network identity, apart from the API's) and needs a network identity. A page request that is refused (429) or fails (500, 503) gets the
 page with that status, noindex, without a canonical URL, and with the `Retry-After` the API
 would send; the API keeps its `ErrorResponse`. Explore's and Compare's titles read the query
 string with bounded work (`shared/page-params.ts`), as those pages are not rate limited.

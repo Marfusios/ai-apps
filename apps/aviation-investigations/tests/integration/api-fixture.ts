@@ -48,6 +48,7 @@ export function makeApp(overrides: Partial<AppDeps> = {}): FastifyInstance {
     webRoot,
     rateLimit: { limit: 100_000, windowMs: 60_000 },
     pageRateLimit: { limit: 100_000, windowMs: 60_000 },
+    sitemapRateLimit: { limit: 100_000, windowMs: 60_000 },
     ...overrides,
   });
   apps.push(built);
