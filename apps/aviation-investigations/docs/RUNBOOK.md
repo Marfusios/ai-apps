@@ -1394,8 +1394,10 @@ tag and digest together.
 
 ## Task 25: prompt mirrors, ratings and the admin overview
 
-1. Apply migration **0026_search_observability** with the migrator and deploy the matching
-   server. It adds private trace/rating columns, identity-free daily feedback totals and
+1. Deploy the release as in [Deploying an environment](#deploying-an-environment): run
+   `pnpm app:migrate`, which applies migration **0026_search_observability** with the
+   migrator, then the free [AI preflight](#ai-preflight), then `pnpm app:up`. The migration adds
+   private trace/rating columns, identity-free daily feedback totals and
    reservation-lifetime outcome metadata. Existing evidence.v3 responses are unchanged.
    Regenerated privilege checks include all new tables/functions; backups include daily
    totals and 90-day outcome metadata and still exclude private evidence rows.
@@ -1417,6 +1419,20 @@ tag and digest together.
    minutes; never enable verbose upstream response/error logging to investigate it.
    The counts reset on process restart. Scores are best effort and may lag or be lost;
    use PostgreSQL feedback totals as the authoritative rating count.
+
+**Record with the release** (Task 25 security review, condition 4): the live migrator applied
+0026 and the privilege baseline was verified; the live allowlist holds only the intended verified
+accounts; the prompt sync used the live project and its second run returned the same content
+hashes at version 1; and the free preflight passed with the final live settings.
+
+**Rolling back.** Keep migration 0026: set the previous release's `APP_VERSION` and run
+`pnpm app:up`, which starts its tagged image unchanged (rollback in
+[Deploying an environment](#deploying-an-environment)). There is no down migration and no
+database restore. The migration only adds nullable columns, two tables and their triggers:
+the previous release never writes the new columns, the triggers go on recording search
+usage, and its retention still prunes those records with their reservations after 90 days.
+Ratings, progress reads and the admin overview return with the next deployment of this
+release; the daily rating totals already kept stay.
 
 Progress reads have their own polling allowance (shared with brief polling), no model
 calls and no identity creation. The browser should poll at about 2 Hz, retain its random
