@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
+import { lstat, open } from 'node:fs/promises';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
 import { readDotenvAllowlisted } from '../../shared/env-files.js';
@@ -70,6 +70,12 @@ export async function readImporterConfig(path: string): Promise<ImporterConfig> 
     const dirs = [c.root, c.hostLock, c.maintenanceLock].map((p) => resolve(p));
     if (new Set(dirs).size !== 3 || dirs.slice(1).some((p) => p.startsWith(`${dirs[0]}/`)))
       throw new ImportFailure('configuration');
+    // A safe lock file is insufficient if another user can replace its directory entry.
+    for (const lock of [c.hostLock, c.maintenanceLock]) {
+      const parent = await lstat(dirname(lock));
+      if (!parent.isDirectory() || parent.uid !== process.getuid?.() || (parent.mode & 0o022) !== 0)
+        throw new ImportFailure('configuration');
+    }
     return c;
   } catch {
     throw new ImportFailure('configuration');

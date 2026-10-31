@@ -1,10 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { chmod, lstat, mkdir, mkdtemp, writeFile, rm, readFile, symlink } from 'node:fs/promises';
+import { join, parse } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   environmentConfig,
   providerKey,
+  readImporterConfig,
   WORKER_VARS,
   type ImporterConfig,
 } from '../../worker/importer/config.js';
@@ -120,8 +121,6 @@ it('emits a fixed March reminder and stops that reminder at the acquisition cuto
 
 it('refuses different image pins, symlinked configs and a configuration owned by an unsafe mode', async () =>
   withConfig(async (c) => {
-    const { readImporterConfig } = await import('../../worker/importer/config.js');
-    const { symlink, chmod } = await import('node:fs/promises');
     const path = join(c.root, 'config.json');
     const config = {
       ...c,
@@ -138,6 +137,65 @@ it('refuses different image pins, symlinked configs and a configuration owned by
     await chmod(path, 0o644);
     await expect(readImporterConfig(path)).rejects.toThrow('configuration');
   }));
+
+it.each(['hostLock', 'maintenanceLock'] as const)(
+  'validates the %s parent before accepting the importer configuration',
+  async (name) =>
+    withConfig(async (c) => {
+      const parent = join(c.root, 'locks');
+      await mkdir(parent, { mode: 0o700 });
+      const configPath = join(c.root, 'config.json');
+      const config = { ...c, root: join(c.root, 'workspace'), [name]: join(parent, 'import.lock') };
+      await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
+
+      for (const mode of [0o700, 0o750, 0o755]) {
+        await chmod(parent, mode);
+        await expect(readImporterConfig(configPath)).resolves.toMatchObject({
+          [name]: config[name],
+        });
+      }
+      for (const mode of [0o720, 0o702, 0o777, 0o1777]) {
+        await chmod(parent, mode);
+        await expect(readImporterConfig(configPath)).rejects.toThrow(/^configuration$/);
+      }
+      await chmod(parent, 0o700);
+
+      const link = join(c.root, 'lock-link');
+      await symlink(parent, link);
+      for (const invalidParent of [link, join(c.root, 'absent'), c.dev.envFiles[0]!]) {
+        await writeFile(
+          configPath,
+          JSON.stringify({ ...config, [name]: join(invalidParent, 'import.lock') }),
+        );
+        await expect(readImporterConfig(configPath)).rejects.toThrow(/^configuration$/);
+      }
+    }),
+);
+
+// Non-root runs can use the root-owned filesystem directory to prove the owner check
+// without chown, elevated privileges, mocked filesystem data or creating a lock there.
+it.skipIf(!process.getuid || process.getuid() === 0).each(['hostLock', 'maintenanceLock'] as const)(
+  'refuses a foreign-owned %s parent even without group or other write permission',
+  async (name) =>
+    withConfig(async (c) => {
+      const foreignParent = parse(c.root).root;
+      const parent = await lstat(foreignParent);
+      expect(parent.uid).not.toBe(process.getuid!());
+      expect(parent.isDirectory()).toBe(true);
+      expect(parent.mode & 0o022).toBe(0);
+      const configPath = join(c.root, 'config.json');
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          ...c,
+          root: join(c.root, 'workspace'),
+          [name]: join(foreignParent, 'aircase-config-test.lock'),
+        }),
+        { mode: 0o600 },
+      );
+      await expect(readImporterConfig(configPath)).rejects.toThrow(/^configuration$/);
+    }),
+);
 
 it('uses only the selected environment provider account, even with a process key', async () =>
   withConfig(async (c) => {

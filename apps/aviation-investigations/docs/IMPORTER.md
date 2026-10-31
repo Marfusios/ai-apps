@@ -372,9 +372,14 @@ Do not install as part of implementation testing. Before the controller installs
    publication/canary; record cost, misses, every reservation/settlement, disk and time.
 2. Measure the actual backing filesystems and operating headroom above. Verify the
    same maintenance flock really excludes AirCase's own scheduled and manual
-   database backups in both directions, with a separately running pinned dev app
-   available for the canary. Put `backupMutexConfirmed: true` and the approved headroom report's
-   SHA-256 in `installation`. The worker does not invent that evidence.
+   database backups in both directions. Set `AVIATION_MAINTENANCE_LOCK` in every
+   dev/live backup and restore environment to the same existing host file as the
+   importer's `maintenanceLock`; follow [RUNBOOK — Maintenance lock](RUNBOOK.md#maintenance-lock)
+   for file setup and the exclusion proof. Both importer lock parents must be
+   directories owned by the invoking user, without group or other write permission
+   or a symlink. Keep a separately running pinned dev app available for the canary.
+   Put `backupMutexConfirmed: true` and the approved headroom report's SHA-256 in
+   `installation`. The worker does not invent that evidence.
 3. Fill the placeholders in `ops/importer/aircase-importer.service.in`, including a
    Node-24-capable PATH, app directory, pnpm executable, config and writable private
    directories. Copy the reviewed service and timer to the user systemd unit directory.
