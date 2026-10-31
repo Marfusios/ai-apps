@@ -157,6 +157,8 @@ configured intent, not a probe of systemd. Time and zone come from
 
 Only allowlisted worker variables are read; existing nonempty process values win.
 Conflicting process/database/ES project settings refuse rather than mix environments.
+The database must be `aviation_<environment>` with the `aviation_ingest` role switch,
+and the index prefix must be `ai-aviation-<environment>`, as in the Compose wrapper.
 The provider key is loaded lazily, only for an admitted nonzero miss plan. No auth,
 visitor HMAC, Langfuse or infrastructure/admin credentials belong in the worker.
 Keep credentials out of command arguments. Examples use shell variables for paths

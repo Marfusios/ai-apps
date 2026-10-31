@@ -66,6 +66,13 @@ export function environmentConfig(config:ImporterConfig,environment:'dev'|'live'
     || app.ai.openai.embeddingModel!=='text-embedding-3-small' || app.ai.openai.embeddingDimensions!==1536) {
     throw new ImportFailure('configuration');
   }
+  try {
+    const database=new URL(app.databaseIngestUrl);
+    if(!['postgres:','postgresql:'].includes(database.protocol)||database.pathname!==`/aviation_${environment}`
+      ||database.searchParams.getAll('options').length!==1
+      ||!/^\s*-c\s*role=aviation_ingest\s*$/.test(database.searchParams.get('options')??'')
+      ||app.elasticsearch.indexPrefix!==`ai-aviation-${environment}`)throw new ImportFailure('configuration');
+  }catch{throw new ImportFailure('configuration');}
   return app;
 }
 /** Called only after a nonzero miss plan has passed the cap; existing nonempty process keys win. */

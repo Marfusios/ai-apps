@@ -10,9 +10,9 @@ afterEach(()=>vi.unstubAllEnvs());
 async function withConfig(fn:(c:ImporterConfig)=>Promise<void>){
   for(const name of [...WORKER_VARS,'OPENAI_API_KEY'])vi.stubEnv(name,undefined);
   const root=await mkdtemp(join(tmpdir(),'importer-config-')),env=join(root,'worker.env');
-  await writeFile(env,['APP_ENV=dev','DATABASE_INGEST_URL=postgres://synthetic:offline@localhost/aviation_test',
+  await writeFile(env,['APP_ENV=dev','DATABASE_INGEST_URL=postgres://synthetic:offline@localhost/aviation_dev?options=-c%20role%3Daviation_ingest',
     'ELASTICSEARCH_URL=http://localhost:9200','ELASTICSEARCH_WRITE_API_KEY=synthetic-offline-only',
-    'ELASTICSEARCH_INDEX_PREFIX=aviation-test','AI_MONTHLY_BUDGET_USD=100',
+    'ELASTICSEARCH_INDEX_PREFIX=ai-aviation-dev','AI_MONTHLY_BUDGET_USD=100',
     'AI_INTERACTIVE_MONTHLY_BUDGET_USD=80','AI_INGESTION_MONTHLY_BUDGET_USD=20',
     'AVIATION_TRACING_ENABLED=true','LANGFUSE_SECRET_KEY=PRIVATE_SENTINEL','BETTER_AUTH_SECRET=PRIVATE_SENTINEL',
     'OPENAI_API_KEY="unterminated'].join('\n'),{mode:0o600});
@@ -36,6 +36,14 @@ it('preserves process values and refuses a mixed project or disagreeing schedule
   vi.stubEnv('APP_ENV','dev');
   expect(()=>environmentConfig({...c,schedule:{...c.schedule,enabled:true}},'dev')).toThrow();
 }));
+it.each([['/aviation_dev','/aviation_live'],['role%3Daviation_ingest','role%3Daviation_migrator'],
+  ['role%3Daviation_ingest','role%3Daviation_ingest%20-c%20role%3Daviation_migrator'],
+  ['role%3Daviation_ingest','role%3Daviation_ingest&options=-c%20role%3Daviation_migrator'],
+  ['ELASTICSEARCH_INDEX_PREFIX=ai-aviation-dev','ELASTICSEARCH_INDEX_PREFIX=ai-aviation-live']])
+  ('refuses an inconsistent %s before connecting',async(from,to)=>withConfig(async c=>{
+    const path=c.dev.envFiles[0]!;await writeFile(path,(await readFile(path,'utf8')).replace(from,to),{mode:0o600});
+    expect(()=>environmentConfig(c,'dev')).toThrow(ImportFailure);
+  }));
 it('keeps one strict bounded outage record without replacing unresolved artifact evidence',async()=>withConfig(async c=>{
   const space=new ManagedSpace(c.root,{...FILE_LIMITS,reserve:0});
   await spoolFailure(space,'dev',new ImportFailure('integrity'),'extract',null,'00000000-0000-4000-8000-000000000001');
