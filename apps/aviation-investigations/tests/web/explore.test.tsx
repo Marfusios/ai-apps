@@ -79,6 +79,8 @@ describe('Privacy', () => {
       expect(text).toContain(cookie);
     }
     expect(text).toContain('Backups: daily, kept 14 days on the same computer.');
+    // Task 25: a search's rating, in the AI searches paragraph.
+    expect(text).toContain('If you rate an AI search, AirCase keeps the rating, without your question, to measure search quality.');
     expect(text).toContain('Last updated: 31 October 2026');
     expect(text).not.toContain('Draft notice');
     expect(within(main).getByRole('link', { name: 'uoou.gov.cz' }).getAttribute('href')).toBe('https://uoou.gov.cz');

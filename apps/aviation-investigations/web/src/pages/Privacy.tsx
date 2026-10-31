@@ -8,7 +8,9 @@ const cookie = 'font-mono text-[0.85em]';
 
 /**
  * The privacy notice (UI_DESIGN §4.8, DESIGN §7), approved by the owner on 24 October 2026 and
- * amended on 31 October 2026 to say that Claude also orders the investigations found.
+ * amended on 31 October 2026 to say that Claude also orders the investigations found and that a
+ * rating of an AI search is kept without the question (Task 25; that sentence awaits the owner's
+ * approval).
  * Publishing it (`PRIVACY_NOTICE.final`, shared/privacy.ts) is what lets live turn Google sign-in
  * on. Every statement was checked against the code: change the text, and its date, in the same
  * commit as any change to what the site keeps or who receives it. It keeps the Turnstile
@@ -97,7 +99,8 @@ export function Privacy() {
         terms and puts the investigations found in order of relevance, and to OpenAI, which turns it into numbers (an “embedding”) for finding passages of similar meaning.
         Neither gets anything else about you, but please keep personal details out of your questions. Results are NTSB
         text and data, not AI-written summaries. Your question, filters and results are kept 24 hours, then deleted;
-        only your browser or account can open them.
+        only your browser or account can open them. If you rate an AI search, AirCase keeps the rating, without your
+        question, to measure search quality.
       </p>
       <p>
         To stop abuse and share free searches fairly, we count AI searches per browser, account and network, under keyed

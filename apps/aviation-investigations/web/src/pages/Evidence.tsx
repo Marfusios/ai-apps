@@ -38,6 +38,7 @@ import {
 import { EvidenceCard } from '../features/evidence/EvidenceCard';
 import { EvidenceHint } from '../features/evidence/Hint';
 import { SearchPanel } from '../features/evidence/SearchPanel';
+import { SearchRating } from '../features/evidence/SearchRating';
 import { SearchWait } from '../features/evidence/SearchWait';
 import { takeArrival } from '../features/evidence/arrival';
 import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
@@ -141,10 +142,10 @@ function FewResults({ search }: { search: EvidencePage }) {
  * capability note when the question's intent selects one (nothing blocks a search), then the
  * investigations retrieved under the fixed heading and notice, as cards of NTSB text and coded
  * data, highest-ranked first or with the leading ones in AI's order (the count line says which),
- * ten at a time ("Show more" is free and reads the pinned ranking). While a search the page asks
- * for runs, its checklist shows where the reader waits (§4.10). The drawer, Compare and print show
- * the same projection and the notice. Every read is the viewer's own; a search that is gone, or not
- * theirs, shows the expired state.
+ * ten at a time ("Show more" is free and reads the pinned ranking), and under them "Was this search
+ * useful?" (§4.11). While a search the page asks for runs, its checklist shows where the reader
+ * waits (§4.10). The drawer, Compare and print show the same projection and the notice. Every read
+ * is the viewer's own; a search that is gone, or not theirs, shows the expired state.
  */
 export function Evidence() {
   const { id = '' } = useParams();
@@ -389,6 +390,8 @@ export function Evidence() {
           {search.total > 0 && search.total < TINY_RESULTS && <FewResults search={search} />}
           <p className="mt-4 text-meta text-muted">{expiryLine(search.expiresAt)}</p>
         </section>
+        {/* The reader's rating of the search: fixed copy of the page's own, apart from the results. */}
+        <SearchRating key={`rating:${search.id}`} searchId={search.id} className="mt-5 border-t border-hairline pt-3" />
 
         <CompareTray
           selected={compare.selected}
