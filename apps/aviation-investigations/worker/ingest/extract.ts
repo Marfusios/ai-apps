@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, rmSync } from 'node:fs';
-import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { constants, existsSync, rmSync } from 'node:fs';
+import { lstat, mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -42,13 +42,13 @@ export const SANDBOX_FLAGS = [
   '--pids-limit', '64',
 ] as const;
 
-/** Match the private bind-mounted file's owner without granting root or group-root access. */
+/** MDBTools never inherits the operator's identity, even for a private file bind mount. */
 export function sandboxFlags(uid = process.getuid?.(), gid = process.getgid?.()): readonly string[] {
   if (typeof uid !== 'number' || typeof gid !== 'number' || !Number.isSafeInteger(uid)
     || !Number.isSafeInteger(gid) || uid <= 0 || gid <= 0) {
     throw new Error('extraction requires an unprivileged host user and group');
   }
-  return [...SANDBOX_FLAGS, '--user', `${uid}:${gid}`];
+  return [...SANDBOX_FLAGS, '--user', '65534:65534'];
 }
 
 /**
@@ -378,6 +378,26 @@ function mdbMount(mdbPath: string): string[] {
   return ['-v', `${resolve(mdbPath)}:/in/avall.mdb:ro`];
 }
 
+/** The file bind bypasses host directory traversal; the host workspace remains owner-only. */
+export async function prepareMdbMount(mdbPath: string): Promise<void> {
+  sandboxFlags(); // Refuse a privileged operator before changing permissions.
+  const parent = await lstat(dirname(mdbPath));
+  if (!parent.isDirectory() || parent.isSymbolicLink() || parent.uid !== process.getuid?.()
+    || (parent.mode & 0o777) !== 0o700) {
+    throw new Error('MDB mount requires an owner-only workspace');
+  }
+  const handle = await open(mdbPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const file = await handle.stat();
+    if (!file.isFile() || file.uid !== process.getuid?.() || file.nlink !== 1) {
+      throw new Error('MDB mount requires an owned regular file');
+    }
+    await handle.chmod(0o644);
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Resolve the local image once; every container then runs against this immutable ID. */
 export async function resolveImageId(image = EXTRACT_IMAGE): Promise<string> {
   const r = await dockerCall(['image', 'inspect', '--format', '{{.Id}}', image]);
@@ -543,6 +563,7 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
     const imageId = await resolveImageId();
     const mdb = await extractMember(opts.archive, 'avall.mdb', raw, { ...DEFAULT_LIMITS,
       beforeWrite: opts.guard ? n => opts.guard!.beforeWrite('expanded', n) : undefined });
+    await prepareMdbMount(mdb);
     const version = await mdbtoolsVersion(mdb, imageId, opts.guard);
     const rawCsv = await runMdbExport(mdb, raw, imageId, opts.guard);
     const tables: ExtractManifest['tables'] = {};

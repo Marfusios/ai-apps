@@ -128,7 +128,7 @@ describe('runContainer lifecycle', () => {
     for (const [uid, gid] of [[0, 1000], [1000, 0], [-1, 1000], [1000, -1], [1.5, 1000], [NaN, 1000]]) {
       expect(() => sandboxFlags(uid, gid)).toThrow(/unprivileged/);
     }
-    expect(sandboxFlags(1000, 1001)).toContain('1000:1001');
+    expect(sandboxFlags(1000, 1001)).toContain('65534:65534');
   });
 
   it('removes the container explicitly after a successful run', async () => {
@@ -157,7 +157,7 @@ describe('runContainer lifecycle', () => {
     expect(createLine()).toMatch(/^create --name ai-aviation-dev-extract-[0-9a-f]{12} /);
     expect(createLine()).toContain(labels('dev'));
     expect(createLine()).toContain(
-      `--network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64 --user ${process.getuid!()}:${process.getgid!()}`,
+      '--log-driver=none --network none --read-only --cap-drop ALL --security-opt no-new-privileges --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64 --user 65534:65534',
     );
     rmSync(log, { force: true });
     setExtractEnvironment('live');
