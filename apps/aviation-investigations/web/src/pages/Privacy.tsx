@@ -8,9 +8,10 @@ const cookie = 'font-mono text-[0.85em]';
 
 /**
  * The privacy notice (UI_DESIGN §4.8, DESIGN §7), approved by the owner on 24 October 2026 and
- * amended on 31 October 2026 to say that Claude also orders the investigations found and that a
- * rating of an AI search is kept without the question (Task 25; that sentence awaits the owner's
- * approval).
+ * amended on 31 October 2026 to say that Claude also orders the investigations found, and (Task 25,
+ * the controller's wording until the owner approves it) that a rating of an AI search is kept without
+ * the question, what it is kept for and how long, and that the operator sees each account's details
+ * and AI search counts on a private admin page.
  * Publishing it (`PRIVACY_NOTICE.final`, shared/privacy.ts) is what lets live turn Google sign-in
  * on. Every statement was checked against the code: change the text, and its date, in the same
  * commit as any change to what the site keeps or who receives it. It keeps the Turnstile
@@ -76,15 +77,17 @@ export function Privacy() {
         AirCase runs on its operator’s own computer in the Czech Republic, behind Cloudflare. The server holds your IP
         address only in memory, to limit how many requests one network can send, and never saves it. Logs hold only
         technical events, such as each request’s type, result and duration. Keyword searches, case pages and the
-        dashboard are not stored or tied to you. Search traces (timings, counts, AI cost and errors) hold no search words
-        or identities.
+        dashboard are not stored or tied to you. Search traces (timings, counts, AI cost and errors, and a search’s
+        rating if you give one) hold no search words or identities.
       </p>
 
       <h2>Accounts</h2>
       <p>
         An account is optional and gives you more AI searches. Google sign-in gives us your Google account ID, verified
         e-mail address and basic profile; we keep the ID, e-mail address and name as they were at your first sign-in,
-        and nothing else from Google. Sessions are stored without your IP address or browser details. We send no e-mail.
+        and nothing else from Google. The site’s operator can see each account’s name, e-mail address, sign-up and last
+        sign-in times and AI search counts on a private admin page. Sessions are stored without your IP address or
+        browser details. We send no e-mail.
       </p>
       <p>
         You can delete your account on the Account page, after confirming with Google if you signed in over 5 minutes
@@ -129,6 +132,7 @@ export function Privacy() {
       <h2>How long data is kept</h2>
       <ul className={list}>
         <li>AI searches and their retry records: 24 hours.</li>
+        <li>Ratings: 24 hours with their AI search; after that only daily totals remain, which can’t be linked to you.</li>
         <li>Free-search records: 30 days.</li>
         <li>Sessions: 7 days, or until you sign out.</li>
         <li>Accounts: until you delete them.</li>
@@ -136,16 +140,16 @@ export function Privacy() {
         <li>Cost records: 90 days.</li>
         <li>Traces: 30 days.</li>
         <li>
-          Backups: daily, kept 14 days on the same computer. They hold counters, free-search and cost records, never
-          accounts, sessions or AI searches, so deleted accounts can’t return.
+          Backups: daily, kept 14 days on the same computer. They hold counters, free-search and cost records and daily
+          rating totals, never accounts, sessions or AI searches, so deleted accounts can’t return.
         </li>
       </ul>
 
       <h2>Why we may use it</h2>
       <p>
-        Running and securing the site (Cloudflare, Turnstile, limits, counters, logs, traces, backups) relies on our
-        legitimate interest in a safe, working, affordable site; accounts and AI searches rely on providing the service
-        you asked for.
+        Running and securing the site, and measuring search quality (Cloudflare, Turnstile, limits, counters, logs,
+        traces, ratings, backups), relies on our legitimate interest in a safe, working, affordable site; accounts and AI
+        searches rely on providing the service you asked for.
       </p>
 
       <h2>Your rights</h2>

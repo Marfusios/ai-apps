@@ -79,8 +79,19 @@ describe('Privacy', () => {
       expect(text).toContain(cookie);
     }
     expect(text).toContain('Backups: daily, kept 14 days on the same computer.');
-    // Task 25: a search's rating, in the AI searches paragraph.
+    // Task 25: a search's rating (the AI searches paragraph, traces, retention, backups and why), and the admin page.
     expect(text).toContain('If you rate an AI search, AirCase keeps the rating, without your question, to measure search quality.');
+    expect(text).toContain('Search traces (timings, counts, AI cost and errors, and a search’s rating if you give one) hold no search words or identities.');
+    expect(text).toContain(
+      'and nothing else from Google. The site’s operator can see each account’s name, e-mail address, sign-up and last sign-in times and AI search counts on a private admin page.',
+    );
+    expect(text).toContain('AI searches and their retry records: 24 hours.Ratings: 24 hours with their AI search; after that only daily totals remain, which can’t be linked to you.');
+    expect(text).toContain(
+      'They hold counters, free-search and cost records and daily rating totals, never accounts, sessions or AI searches, so deleted accounts can’t return.',
+    );
+    expect(text).toContain(
+      'Running and securing the site, and measuring search quality (Cloudflare, Turnstile, limits, counters, logs, traces, ratings, backups), relies on our legitimate interest in a safe, working, affordable site; accounts and AI searches rely on providing the service you asked for.',
+    );
     expect(text).toContain('Last updated: 31 October 2026');
     expect(text).not.toContain('Draft notice');
     expect(within(main).getByRole('link', { name: 'uoou.gov.cz' }).getAttribute('href')).toBe('https://uoou.gov.cz');
