@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import type { BriefFilters } from '../../../../shared/contracts/briefs';
 import type { CreateEvidenceRequest, EvidencePage } from '../../../../shared/contracts/evidence';
 import { forgetUnsettled, rememberUnsettled, settleOnArrival, unsettledId, unsettledKey, type AiRequestShape } from '../ai/unsettled';
-import { newIdempotencyKey, useAiRequest } from '../ai/useAiRequest';
+import { newIdempotencyKey, useAiRequest, type AiPhase } from '../ai/useAiRequest';
 import { VisitorChangedError, visitorGeneration } from '../auth/visitor';
 import { rememberQuestion } from '../brief/memory';
 import { ApiError, isNotFound } from '../../api';
@@ -55,9 +55,10 @@ export interface EvidenceEdit {
  * blocks a search (gate answer 2): the answer is always results, which open the search's page with
  * page 1 already in the cache (the POST answers with it).
  *
- * While a search's POST runs, `pending` names it (its key, its kind and when it left), and its
+ * While a search's POST runs, `pending` names it (its key, its kind and when it left), its
  * checklist reads its progress under that key (web/src/features/evidence/SearchWait.tsx, UI_DESIGN
- * §4.10); a request refused before it leaves, or a Turnstile check, shows none.
+ * §4.10) and `phase` is `searching` (the control says "Searching…"); a request refused before it
+ * leaves, or a Turnstile check, shows none.
  *
  * The idempotency key is kept for the tab right before the request leaves (write-ahead,
  * web/src/features/ai/unsettled.ts), so a reload or Back while it is on its way loses nothing,
@@ -244,5 +245,7 @@ export function useEvidenceSearch() {
     [queryClient, send, setNotice],
   );
 
-  return { ...request, phase: verifying ? ('checking' as const) : request.phase, staleHint, pending, ask, edit };
+  // Once its checklist shows, the control that asked says "Searching…" (before that, "Starting…").
+  const phase: AiPhase = verifying ? 'checking' : pending !== null ? 'searching' : request.phase;
+  return { ...request, phase, staleHint, pending, ask, edit };
 }

@@ -74,6 +74,8 @@ for (const [width, theme] of [
     })()`);
     expect(below).toBe(true);
 
+    // The control that asked says "Searching…" while the card shows.
+    await expect(page.getByRole('search').getByRole('button', { name: 'Searching…' })).toHaveAttribute('aria-busy', 'true');
     // The question under way: washed, its result in magenta.
     await expect(row(page, 'question')).toHaveAttribute('data-state', 'current');
     await expect(row(page, 'question').locator('[data-result]')).toHaveText('IN PROGRESS');
@@ -141,6 +143,7 @@ test('an edit’s checklist skips the question; every read used the POST’s own
   await yours.getByRole('button', { name: 'Search again · uses 1' }).click();
   await expect(card(page)).toBeVisible();
   await expect(row(page, 'question').locator('[data-result]')).toHaveText('SKIPPED · YOUR EDIT');
+  await expect(yours.getByRole('button', { name: 'Searching…' })).toBeVisible();
   await expect(row(page, 'question')).toHaveAttribute('data-state', 'skipped');
   await expect(row(page, 'search')).toHaveAttribute('data-state', 'current');
   await shot(page, 'checklist-edit-1280-night');

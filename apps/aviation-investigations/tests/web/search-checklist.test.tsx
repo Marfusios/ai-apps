@@ -16,6 +16,7 @@ import { EVIDENCE_HEADING, EvidenceProgressSchema, type EvidenceProgress } from 
 import { MOCK_EVIDENCE_QUESTIONS, MOCK_EVIDENCE_RELEASE } from '../../web/mock/evidence';
 import { ApiError } from '../../web/src/api';
 import { COPY } from '../../web/src/features/ai/AiNoticeBox';
+import { busyLabel } from '../../web/src/features/ai/AskAiButton';
 import type { TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
 import { resetUnsettledForTests } from '../../web/src/features/ai/unsettled';
 import {
@@ -167,6 +168,12 @@ describe('the rows, state by state', () => {
   });
 });
 
+describe('what the control says', () => {
+  it('“Checking…” for the check, “Starting…” on the way, “Searching…” once the checklist shows', () => {
+    expect([busyLabel('idle'), busyLabel('checking'), busyLabel('sending'), busyLabel('searching')]).toEqual([null, 'Checking…', 'Starting…', 'Searching…']);
+  });
+});
+
 describe('motion', () => {
   it('a row’s ✓ ticks in as its stage finishes, and with reduced motion appears at once', () => {
     expect(baseCss).toMatch(/\.checklist-tick \{[^}]*animation: casebook-tick-in 180ms ease-out;/);
@@ -267,6 +274,10 @@ describe('the card where the visitor waits', { timeout: 30_000 }, () => {
     expect(within(el).getAllByRole('listitem')).toHaveLength(3);
     expect(rowText(el, 'search')).toBe('Search 21 investigations · —');
     expect(el.querySelector('[aria-current]')).toBeNull();
+    // The control that asked says "Searching…" while the card shows, busy and off.
+    const asking = within(screen.getByRole('search')).getByRole('button', { name: 'Searching…' });
+    expect(asking.getAttribute('aria-busy')).toBe('true');
+    expect(asking.getAttribute('aria-disabled')).toBe('true');
     // Then the question under way, washed and in magenta.
     await waitFor(() => expect(rowState(el, 'question')).toBe('current'), SLOW);
     expect(el.querySelector('[data-row="question"]')?.getAttribute('aria-current')).toBe('step');
@@ -338,6 +349,7 @@ describe('the card where the visitor waits', { timeout: 30_000 }, () => {
     fireEvent.click(await within(yours).findByRole('button', { name: /^Search again\s*·\s*uses 1$/ }));
     const el = await waitFor(() => card() ?? Promise.reject(new Error('no card yet')), SLOW);
     expect(rowText(el, 'question')).toBe('Question · SKIPPED · YOUR EDIT');
+    expect(within(yours).getByRole('button', { name: 'Searching…' }).getAttribute('aria-busy')).toBe('true');
     await waitFor(() => expect(rowState(el, 'search')).toBe('current'), SLOW);
     // Under the box the edit was made in, before the notice box.
     expect(yours.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
