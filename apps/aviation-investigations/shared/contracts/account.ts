@@ -105,7 +105,8 @@ export const AccountUserSchema = z.strictObject({
  */
 export const AccountResponseSchema = z.discriminatedUnion('signedIn', [
   z.strictObject({ signedIn: z.literal(false) }),
-  z.strictObject({ signedIn: z.literal(true), user: AccountUserSchema, deletionConfirmedUntil: z.iso.datetime().optional() }),
+  // `isAdmin`: the account's verified e-mail is in `AIRCASE_ADMIN_EMAILS` (absent: not an admin).
+  z.strictObject({ signedIn: z.literal(true), user: AccountUserSchema, deletionConfirmedUntil: z.iso.datetime().optional(), isAdmin: z.boolean().optional() }),
 ]);
 export type AccountResponse = z.infer<typeof AccountResponseSchema>;
 

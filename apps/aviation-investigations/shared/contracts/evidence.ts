@@ -222,3 +222,48 @@ export const CreateEvidenceResponseSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('results'), search: EvidencePageSchema }),
 ]);
 export type CreateEvidenceResponse = z.infer<typeof CreateEvidenceResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// The search checklist (progress) and the visitor's rating (Task 25)
+
+/** A stage of the checklist: not reached, under way, finished, not needed for this search, or failed. */
+export const EVIDENCE_STAGE_STATUSES = ['pending', 'running', 'done', 'skipped', 'failed'] as const;
+export const EvidenceStageStatusSchema = z.enum(EVIDENCE_STAGE_STATUSES);
+
+/**
+ * `GET /api/evidence/progress/:key`: how far the visitor's own `POST /api/evidence` with
+ * idempotency key `key` has got while it runs. Kept in server memory for about five minutes;
+ * 404 for an unknown key or another visitor's. Statuses and counts only, never any text.
+ * - `question`: the scope stage (`skipped` for an edited search or a skipped scope).
+ *   `result`: suggestions made, a fixed note chosen, nothing to suggest, or unavailable.
+ * - `search`: retrieval, the embedding included; `cases` once it is done.
+ * - `order`: the reranker (`skipped` when the configuration has none); `result` once done.
+ */
+export const EvidenceProgressSchema = z.strictObject({
+  state: z.enum(['running', 'done', 'failed']),
+  startedAt: z.iso.datetime(),
+  question: z.strictObject({
+    status: EvidenceStageStatusSchema,
+    result: z.enum(['suggestions', 'note', 'nothing_to_suggest', 'unavailable']).nullable(),
+  }),
+  search: z.strictObject({
+    status: EvidenceStageStatusSchema,
+    cases: z.number().int().min(0).max(EVIDENCE_CANDIDATE_CEILING).nullable(),
+  }),
+  order: z.strictObject({
+    status: EvidenceStageStatusSchema,
+    result: z.enum(['ai_relevance', 'match']).nullable(),
+  }),
+});
+export type EvidenceProgress = z.infer<typeof EvidenceProgressSchema>;
+
+export const EVIDENCE_FEEDBACK_RATINGS = ['useful', 'not_useful'] as const;
+export type EvidenceFeedbackRating = (typeof EVIDENCE_FEEDBACK_RATINGS)[number];
+/**
+ * `POST /api/evidence/:id/feedback` → 204: the owner's rating of one of their searches (the
+ * latest rating counts). No quota, no provider call; owner-checked and rate limited. The rating
+ * is kept without the question: on the search while it lasts, in daily totals, and as a score on
+ * the search's trace when tracing is on.
+ */
+export const EvidenceFeedbackRequestSchema = z.strictObject({ rating: z.enum(EVIDENCE_FEEDBACK_RATINGS) });
+export type EvidenceFeedbackRequest = z.infer<typeof EvidenceFeedbackRequestSchema>;
