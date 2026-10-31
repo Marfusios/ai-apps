@@ -31,10 +31,11 @@ export interface AskAiButtonProps {
 /**
  * What an AI control says while its request runs: "Checking…" during the Turnstile check,
  * "Starting…" while the request is on its way (the server answers once the scope stage is
- * done, a few seconds); null when idle.
+ * done, a few seconds), and "Searching…" while an AI search's checklist shows (UI_DESIGN
+ * §4.10; Builder copy); null when idle.
  */
 export function busyLabel(phase: AiPhase): string | null {
-  return phase === 'checking' ? 'Checking…' : phase === 'sending' ? 'Starting…' : null;
+  return phase === 'checking' ? 'Checking…' : phase === 'sending' ? 'Starting…' : phase === 'searching' ? 'Searching…' : null;
 }
 
 /**
@@ -43,9 +44,9 @@ export function busyLabel(phase: AiPhase): string | null {
  * offered: otherwise disabled with the counter's words), or disabled with
  * "AI back tomorrow" / "AI back on {date}" / "AI temporarily unavailable"; an evidence
  * search's free undo says "· free" and stays on while the visitor's own searches are used up. It shows
- * "Checking…" while the Turnstile check runs and "Starting…" while the request is on its
- * way. A disabled button stays focusable (aria-disabled) so its note is read; a click then
- * explains instead of asking.
+ * "Checking…" while the Turnstile check runs, "Starting…" while the request is on its
+ * way and, for an AI search, "Searching…" once its checklist shows. A disabled button stays
+ * focusable (aria-disabled) so its note is read; a click then explains instead of asking.
  */
 export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne = false, free = false, size = 'md', look = 'pill', disabled: off = false, className }: AskAiButtonProps) {
   const status = useQuery(aiStatusQuery());

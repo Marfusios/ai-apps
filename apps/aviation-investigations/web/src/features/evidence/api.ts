@@ -7,7 +7,14 @@
  */
 import { queryOptions } from '@tanstack/react-query';
 import { CaseDetailSchema } from '../../../../shared/contracts/cases';
-import { CreateEvidenceResponseSchema, EvidencePageSchema, type CreateEvidenceRequest, type CreateEvidenceResponse } from '../../../../shared/contracts/evidence';
+import {
+  CreateEvidenceResponseSchema,
+  EvidenceFeedbackRequestSchema,
+  EvidencePageSchema,
+  type CreateEvidenceRequest,
+  type CreateEvidenceResponse,
+  type EvidenceFeedbackRating,
+} from '../../../../shared/contracts/evidence';
 import { READ_TIMEOUT_MS, getJson, postJson, retry } from '../../api';
 import { privateRead } from '../auth/visitor';
 
@@ -46,4 +53,12 @@ export const evidenceCaseQuery = (id: string, ntsbNo: string) =>
  */
 export async function createEvidence(request: CreateEvidenceRequest, visitor: number): Promise<CreateEvidenceResponse> {
   return (await postJson('/api/evidence', request, CreateEvidenceResponseSchema, visitor)) as CreateEvidenceResponse;
+}
+
+/**
+ * `POST /api/evidence/:id/feedback` → 204: the owner's rating of their search (the latest
+ * counts; UI_DESIGN §4.11), never sent once the visitor `visitor` it was given under is gone.
+ */
+export async function rateEvidence(id: string, rating: EvidenceFeedbackRating, visitor: number): Promise<void> {
+  await postJson(`/api/evidence/${encodeURIComponent(id)}/feedback`, EvidenceFeedbackRequestSchema.parse({ rating }), null, visitor);
 }

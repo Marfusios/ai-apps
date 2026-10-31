@@ -7,8 +7,9 @@
  * - **A generation** counts visitor changes (`visitorGeneration`).
  * - **Private queries** are the namespaces in `PRIVATE_QUERY_ROOTS`: the account, the AI
  *   counts, every brief step, every case's AI context (`brief-case`, which never goes
- *   stale by itself), every page of an evidence search (`evidence`, likewise) and the
- *   cases it opens at its own generation (`evidence-case`). `forgetVisitor` cancels what is in flight, shows the account as
+ *   stale by itself), every page of an evidence search (`evidence`, likewise), the
+ *   cases it opens at its own generation (`evidence-case`), a running search's progress
+ *   (`evidence-progress`) and the admin overview (`admin`). `forgetVisitor` cancels what is in flight, shows the account as
  *   signed out at once, and resets every other private query to no data: what a screen
  *   still shows is read again as the new visitor (a brief or its context is then not
  *   found), and nothing cached is shown on the way back to it.
@@ -21,8 +22,9 @@
  *   success or failure, is discarded without restoring a question, a retry key or a
  *   navigation. A Turnstile check still open for them is cancelled (`onVisitorChange`).
  * - **Memory and this tab's storage:** the questions this page asked (for "Ask again"), the
- *   retry keys of AI requests whose answer never came and what this tab knows of evidence
- *   searches' free undos (web/src/features/evidence/undo.ts) are forgotten too.
+ *   retry keys of AI requests whose answer never came, what this tab knows of evidence
+ *   searches' free undos (web/src/features/evidence/undo.ts) and the ratings it sent
+ *   (web/src/features/evidence/ratings.ts) are forgotten too.
  * - **Other tabs.** Each change gets a random name, recorded in local storage
  *   (`VISITOR_STORAGE_KEY`: nothing about the visitor) and announced on a
  *   `BroadcastChannel` (`VISITOR_CHANNEL`). Every other tab of the site that listens
@@ -43,10 +45,11 @@ import type { QueryClient } from '@tanstack/react-query';
 import type { AccountResponse } from '../../../../shared/contracts/account';
 import { forgetAllUnsettled } from '../ai/unsettled';
 import { forgetQuestions } from '../brief/memory';
+import { forgetRatings } from '../evidence/ratings';
 import { forgetUndos } from '../evidence/undo';
 
 /** Query namespaces that hold one visitor's data. */
-export const PRIVATE_QUERY_ROOTS = ['account', 'ai-status', 'brief', 'brief-case', 'evidence', 'evidence-case'] as const;
+export const PRIVATE_QUERY_ROOTS = ['account', 'ai-status', 'brief', 'brief-case', 'evidence', 'evidence-case', 'evidence-progress', 'admin'] as const;
 /** Query namespaces that are the same for every visitor. */
 export const PUBLIC_QUERY_ROOTS = ['config', 'search', 'case', 'dashboard'] as const;
 
@@ -153,6 +156,7 @@ export async function forgetVisitor(queryClient: QueryClient, opts: ForgetOption
   forgetQuestions();
   forgetAllUnsettled();
   forgetUndos();
+  forgetRatings();
   for (const listener of [...listeners]) {
     try {
       listener();
