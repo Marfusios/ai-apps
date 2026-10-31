@@ -1286,7 +1286,7 @@ WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/moc
 pnpm build:web        # production build into dist/web
 pnpm test:web         # component tests (jsdom, offline, MSW)
 pnpm test:e2e         # Playwright against the dev server in mock mode
-pnpm test:e2e:real    # Playwright against the real API server: the fixture index, AI evidence search with offline fakes (and, on E2E_REAL_V3_PORT, the evidence configuration live runs), signing in and out
+pnpm test:e2e:real    # Playwright against the real API server: the fixture index, AI evidence search with offline fakes (and, on E2E_REAL_V3_PORT, the reviewed state policy; on E2E_REAL_LIVE_PORT, what live runs, with sign-in and an admin), signing in and out
 ```
 
 ### API contracts and the mock API
@@ -1630,9 +1630,16 @@ since every browser of the run is 127.0.0.1. `tests/e2e-real/evidence.spec.ts` d
 evidence view through it, with the mock suite's Turnstile stand-in in the browser, and
 replays the known context-loss examples (`tests/support/context-loss.ts`) on the initial
 card, drawer, Compare and print; `E2E_SCREENSHOTS=<dir>` keeps its screenshots. The same process
-serves the evidence configuration live runs (`er-q-v1` with `state-explicit.v1.3`) as a second app
+serves the reviewed state policy (`er-q-v1` with `state-explicit.v1.3`) as a second app
 on `E2E_REAL_V3_PORT` (default `E2E_REAL_PORT` + 3), sharing the database, for
-`tests/e2e-real/evidence-v3.spec.ts`. It also starts a
+`tests/e2e-real/evidence-v3.spec.ts`, and what live runs (`er-q-h50-v1` with `none`, the fake
+reranker) as a third on `E2E_REAL_LIVE_PORT` (default `E2E_REAL_PORT` + 4), with Google sign-in
+through the stand-in below and `AIRCASE_ADMIN_EMAILS` naming its `e2e-admin@example.com`, for the
+search checklist, ratings and the admin page (`tests/e2e-real/search-checklist.spec.ts`,
+`admin.spec.ts`): its fake scope stage and reranker each take about a second and its search
+answers wait a little longer, so the checklist's reads see each stage under way and then the
+finished search. The admin tests run after the rest (project `chromium-real-admin`), since their
+sign-ins add sessions that `sign-in-out.spec.ts` counts. It also starts a
 second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.0.0.1 at
 `E2E_AUTH_PORT`, default 5182) and an offline stand-in for Google on another site
 (localhost at `E2E_GOOGLE_PORT`, default 5183), so that Chromium applies `SameSite` to the
