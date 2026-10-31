@@ -21,6 +21,8 @@ in the env files described below, which are kept outside the repository.
 
 Requirements: Docker Engine with Docker Compose 2.24 or later (`compose.tunnel.yaml`
 uses `!reset`; the wrappers check the version), Node 24 and pnpm for the wrappers.
+With `AVIATION_MAINTENANCE_LOCK` set, also install `flock` from util-linux; unlocked
+invocations do not need it. The offline flock-dependent tests skip when it is absent.
 
 ## Enabling the evidence view
 
@@ -403,8 +405,9 @@ networks, not host loopback addresses. Budget and model variables from
 ## Commands
 
 The pnpm wrappers (`scripts/compose.ts`) choose the project from `APP_ENV`, pass
-the env files, and add `compose.tracing.yaml` when `AVIATION_TRACING_ENABLED` is
-true. They never print values, and they refuse to run when:
+the env files, add `compose.tracing.yaml` when `AVIATION_TRACING_ENABLED` is true, and
+`compose.dev-release.yaml` for a pinned dev release. They print no secrets, and they
+refuse to run when:
 
 - Docker Compose is older than 2.24;
 - `APP_ENV` is not `dev` or `live`, the env files disagree on it, or the shell's
@@ -416,10 +419,24 @@ true. They never print values, and they refuse to run when:
   `options=-c role=<group>` switch;
 - for `app:backup` and `app:restore`: `AVIATION_BACKUP_DIR` is missing, not a directory or
   inside the repository, or the restore does not name one `.dump` file in it;
+- when `AVIATION_MAINTENANCE_LOCK` is set for either: the file is not an absolute,
+  existing regular file owned by the invoking user with mode 0600, or is a symlink;
+  or its parent is not a directory owned by that user, is a symlink, or has any group
+  or other write permission;
 - `ELASTICSEARCH_INDEX_PREFIX` is not `ai-aviation-<APP_ENV>`;
 - on `live`: `APP_VERSION` is missing or `dev` (for `app:up`, `ingest` and
   `app:migrate`), or `TUNNEL_TOKEN` is missing for `app:up`;
+- for an ordinary dev build: the effective `APP_VERSION` (default `dev`) names an
+  existing Git tag, or Git cannot identify the checkout; this protects release images;
+- with `AVIATION_DEV_RELEASE_IMAGE=true`: the environment is not `dev`, `--rebuild`
+  is requested, or extra `app:up` arguments are given; for application-image commands,
+  `APP_VERSION` is missing/`dev`/invalid, its Git tag is absent, or its local image is
+  missing, has a different revision or lacks a valid immutable ID; canary `app:up`
+  also refuses tunnel or tracing mode;
 - in tunnel mode: `EDGE_SUBNET` is missing or not a private, aligned /16 to /29.
+
+A successful locked backup/restore prints its environment banner after completion.
+Release mode prints `release-image sha256:<short ID>` in its banner before running.
 
 `app:up` always runs tunnel mode on `live` (`compose.tunnel.yaml` and the `tunnel`
 profile), so `live` never publishes a port. On `dev` it runs tunnel mode when
@@ -471,7 +488,8 @@ without `TRUSTED_PROXY_CIDRS`.
 
 **Images.** On `dev`, `pnpm app:up`, `pnpm app:migrate` and `pnpm ingest` rebuild
 `ai-aviation/app:dev` from the checkout every time (seconds when nothing changed), so the
-migrations, the worker and the server always come from the same code. On `live` every
+migrations, the worker and the server always come from the same code. The explicit
+[dev canary option](#dev-canary-app) below reuses a release image instead. On `live` every
 release tag (`APP_VERSION`) is also a git tag, on the release's commit. Its image is built
 once, by the first command that needs it, and only from a clean checkout of that commit (no
 changed, staged or untracked file under the app directory that git does not ignore: an
@@ -507,6 +525,72 @@ migration that changes what an earlier release relies on, roll forward instead. 
 release image takes about 350 MB: keep the current and the previous two tags as rollback
 inventory and remove older ones (`docker image rm ai-aviation/app:<tag>`); `docker image
 prune` removes the untagged layers that `dev` rebuilds leave behind.
+
+### Dev canary app
+
+The importer reads an **already running** private dev app for its HTTP canary. It never
+starts, builds or deploys an app. Deploy the dev app separately using the exact immutable
+image the approved live release runs, before enabling the importer. This uses the existing
+`ai-aviation-dev` project, replacing any ordinary development app in that project.
+
+Set `AVIATION_DEV_RELEASE_IMAGE=true` and `APP_VERSION` to that release's existing Git tag.
+The wrapper checks that `ai-aviation/app:<APP_VERSION>` exists locally and its
+`org.opencontainers.image.revision` matches the Git tag. It resolves its `sha256` image ID
+once, then `compose.dev-release.yaml` uses that ID for the app, migrations and ingest,
+removes their build configuration and retains `pull_policy: never`. A missing or mismatched
+image fails; it is never built or pulled, even from a clean tagged checkout. The wrapper
+may run from a newer checkout. `--rebuild` is refused, and `app:up` takes no extra arguments
+in this mode. With the flag unset or false, normal dev builds still rebuild, but refuse
+any image tag that is an existing Git tag.
+Never use the canary settings without `AVIATION_DEV_RELEASE_IMAGE=true`: an ordinary
+dev build must not overwrite a release image name.
+
+Use a dedicated private settings file (0600, outside the repository), with only:
+
+- `APP_ENV=dev`, `AVIATION_DEV_RELEASE_IMAGE=true`, `APP_VERSION=<approved release tag>`,
+  `APP_URL=http://127.0.0.1:3100` and an unused loopback host `PORT` (3100 in this example).
+- `DATABASE_URL`: the **dev app login**, acting as `aviation_app` in `aviation_dev`;
+  `SHARED_POSTGRES_NETWORK`. No live, administrator, migrator or ingest credential is
+  needed to run the app. Apply any necessary dev migrations separately beforehand.
+- `ELASTICSEARCH_URL`, the **dev** `ELASTICSEARCH_READ_API_KEY`,
+  `ELASTICSEARCH_INDEX_PREFIX=ai-aviation-dev`, `SHARED_ELASTICSEARCH_NETWORK` and
+  `ELASTICSEARCH_CA_FILE` when using TLS. Keep certificate verification on.
+- Independently generated `BETTER_AUTH_SECRET`, `IP_HMAC_SECRET` and `IDENTITY_HMAC_SECRET`
+  (at least 32 random characters each, written directly into that private file). Never
+  copy live identity secrets. These are optional for the canary's public reads; generate
+  them anyway so later authentication/AI checks use independent dev identities.
+- `AI_BRIEFS_ENABLED=false`, `AVIATION_TRACING_ENABLED=false`. `compose.yaml` does not
+  pass `AI_PARTIAL_DISPLAY`; the image's default keeps generated partial summaries off.
+  Leave provider keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), Google client settings,
+  Langfuse settings, `TUNNEL_TOKEN` and both Turnstile keys **unset**. The canary's public
+  keyword/config/case reads require no Turnstile or paid call; no test keys are needed.
+
+Do not include the shared provider-key file or a live connection file. Start from a clean
+process environment so exported credentials cannot override the private canary settings:
+
+```sh
+# CANARY_ENV names the private dev settings file, not a secret value.
+env -i PATH="$PATH" HOME="$HOME" AVIATION_ENV_FILES="$CANARY_ENV" pnpm app:up
+```
+
+The wrapper refuses tunnel or tracing mode for this canary; the base Compose file binds
+only `127.0.0.1:${PORT}:3000`, with no tunnel. Do not expose this port through a proxy or
+public tunnel. Verify health, config, keyword search and case reads against loopback, and
+verify the actual image IDs of the running dev and live app containers before installing
+or re-certifying the importer:
+
+```sh
+docker inspect --type container --format '{{.Image}}' ai-aviation-dev-aviation-app-1
+docker inspect --type container --format '{{.Image}}' ai-aviation-live-aviation-app-1
+```
+
+They must be identical; matching version strings alone is insufficient. These commands
+print image IDs only, never container environments. Keep release tags immutable. To update
+the canary, pause importer scheduling, wait for any run to end, set `APP_VERSION` to the
+new approved live tag in the private dev file, and repeat the clean-environment `app:up`
+and image-ID/HTTP checks. Run the required new-image dev certification before resuming
+scheduled imports. The importer continues to use its separate private worker settings;
+the canary app receives neither worker credentials nor provider keys.
 
 ### AI preflight
 
@@ -720,6 +804,17 @@ refuses any other target. Its numbers say nothing about another generation; vali
 again there before relying on them.
 
 ## Ingestion
+
+The automatic snapshot worker is documented in [IMPORTER.md](IMPORTER.md), including
+migrations 0027–0028, the no-change/forced-dev exercises, the fixed $0.50 artifact
+cap and 89-day resumption boundary, concrete-index protection, named approvals,
+rollback/rebaseline, free re-certification and the installation gate. Rebaseline is
+the explicit dry-run-first recovery step after rollback or a manual publication;
+it never clears an accounting or restore hold. The importer is disabled by default. Do not enable its timer before mutual exclusion with AirCase's
+own manual and scheduled database backups, a separately running pinned dev app, and
+actual PG/ES/filesystem headroom have been verified. Langfuse backup I/O belongs in
+the headroom assessment; its mutex is optional. The manual commands below remain useful
+for reviewed operator work; only the PostgreSQL manifest selects the serving pair.
 
 Extraction needs the Docker CLI to start its sandbox containers, so it runs on the
 host, never in the `aviation-ingest` container (which has no Docker socket):
@@ -964,6 +1059,7 @@ derived and need no backup; the source archive is kept wherever you keep it.
 ```sh
 export AVIATION_ENV_FILES=...          # the environment's .docker.env files, as for pnpm app:migrate
 export AVIATION_BACKUP_DIR=<private directory outside the repository>
+export AVIATION_MAINTENANCE_LOCK=<absolute path to the importer's existing maintenance lock>
 pnpm app:backup                        # writes aviation_<env>-<UTC time>.dump, mode 0600
 ```
 
@@ -977,9 +1073,122 @@ the host user that owns the directory (the wrapper sets `AVIATION_UID`/`AVIATION
 and sees only that directory and the scripts. Backup and restore connect through a private
 libpq service file (docker/postgres/libpq-service.sh, mode 0600 on the container's tmpfs,
 removed on exit, also after a failure), so the migrator password never appears in a
-process's arguments, which every local user can read in `ps`. With plain Compose, set those three
-variables and run `docker compose -p ai-aviation-<env> --env-file ... --profile tools run
---rm aviation-backup`.
+process's arguments, which every local user can read in `ps`. Use the wrapper so the
+maintenance lock validation and wait apply; plain Compose does not enforce them.
+
+### Maintenance lock
+
+With an importer installed, **every manual and scheduled AirCase database backup and
+restore, for dev and live, must set `AVIATION_MAINTENANCE_LOCK`** to the exact same host
+file as the importer's `maintenanceLock`. Put it in each maintenance settings file or
+timer's environment, not just an interactive shell. This lock protects AirCase's database
+maintenance; unrelated services' backups do not use it. The optional setting leaves the
+old behavior unchanged on installations without an importer.
+
+Prepare the file once, owned by the user running both the importer and maintenance,
+outside the repository in a dedicated private 0700 directory. `LOCK_DIR` must also be
+outside the importer's managed root. Set `LOCK_DIR` to that directory before running:
+
+```sh
+# Creates the directory, or sets an existing dedicated directory's mode to 0700.
+install -d -m 700 "$LOCK_DIR"
+# Only this step refuses to replace an existing lock file.
+(umask 077; set -C; : > "$LOCK_DIR/aircase-maintenance.lock")
+```
+
+The wrapper refuses a relative or missing path, directory, symlink, wrong owner or any
+mode other than 0600. It also checks that the parent is a directory (not a symlink),
+owned by the invoking user, with no group or other write bit. Keep it private and never
+unlink, replace or rotate the file: `flock` locks its inode, so different files would not
+exclude each other.
+This is a host-local lock; use a local filesystem with working `flock` semantics.
+
+The wrapper runs the Docker command under
+`flock -w <seconds> -E 75 -- <lockfile> docker compose ...`, retaining the exclusive lock
+until the command ends. `AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS` defaults to **1500**;
+it accepts whole seconds from 0 to 86400 (0 means no wait). A busy lock that reaches its
+deadline exits **75** and emits exactly:
+
+```text
+AirCase maintenance lock timed out; backup/restore was not started.
+```
+
+No dump or restore container starts on that path. Once acquired, the Docker command's
+exit status is propagated. Exit 75 means the lock timed out; no shipped script returns
+75, so keep that status reserved for the wrapper's lock conflict. The importer uses a
+nonqueuing exclusive flock on the same file: while maintenance owns it, import reports
+`busy`; while import owns it,
+maintenance waits only its configured interval. The 1500-second default leaves five
+minutes after waiting in a timer with `TimeoutStartSec=30min`; size that timeout for
+**wait plus actual dump time**, and alert on a timeout rather than bypassing the lock.
+Stop with Ctrl-C or by stopping the systemd unit (its whole process group), not
+`kill <pid>`: killing only the Node wrapper can leave a waiting `flock` that starts work
+later. Before retrying, use `pgrep -x flock` (PIDs only) and check the unit's state to
+ensure no earlier flock is waiting, and check that no previous one-shot container is
+still running. Stop importer scheduling and wait for its active run before the wider
+restore procedure (database removal, provisioning, migrations and reconciliation);
+the wrapper's lock covers the restore command itself.
+
+Run the offline contention proof before installation, then have the operator confirm
+the configured importer and every maintenance entry point use the same file:
+
+```sh
+pnpm exec tsx scripts/maintenance-lock-proof.ts
+```
+
+It creates a private scratch file, holds it using the importer's inherited-descriptor
+flock, verifies a waiting stand-in backup exits 75 without running, then holds it with
+the wrapper's command form and verifies the nonqueuing importer fails. It also checks
+release afterward and deletes its scratch files. Only harmless local Node processes
+run: no database, Docker container, dump, shared lock or provider call is touched.
+
+#### Controller proof against the configured host lock
+
+After the importer and ops changes are merged, pause both schedules and wait for all
+existing work to finish. Run as the common non-root owner, outside the importer's backup
+deferral window. Export `IMPORTER_CONFIG` naming the private importer config and
+`AVIATION_MAINTENANCE_LOCK` naming that config's lock file, and load the maintenance environment's normal
+`AVIATION_ENV_FILES`/backup directory. First verify they name the same existing inode
+without displaying either file's contents:
+
+```sh
+python3 - <<'PY'
+import json, os
+with open(os.environ['IMPORTER_CONFIG']) as source:
+    config = json.load(source)
+assert os.path.samefile(config['maintenanceLock'], os.environ['AVIATION_MAINTENANCE_LOCK'])
+print('Maintenance lock identity matches.')
+PY
+# From the app directory; the parent holds fd 9 throughout the real wrapper attempt.
+(
+  set -eu
+  exec 9<>"$AVIATION_MAINTENANCE_LOCK"
+  flock -n 9
+  result=0
+  AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS=1 pnpm app:backup 9>&- || result=$?
+  test "$result" -eq 75
+)
+pnpm app:ps
+```
+
+Require the fixed timeout message and no backup container. Repeat for each maintenance
+environment/entry point using its own settings; do not proceed on a configuration error
+or an unexpected result. The fd closes on subshell exit; never delete the lock file.
+For the reverse direction, use two terminals, with the same explicitly exported lock
+path and importer config:
+
+```sh
+# Terminal A: harmless stand-in for the wrapper's locked command; leave it running.
+flock -n -- "$AVIATION_MAINTENANCE_LOCK" sleep 300
+# Terminal B: from the merged importer app directory, while A still owns the lock.
+pnpm exec tsx worker/importer/host.ts run --config "$IMPORTER_CONFIG" --env dev --cache-only --no-change
+```
+
+Require a nonzero importer result with reason `busy`, before any acquisition or database
+work; another refusal such as `backup_window` is not a passing proof. End the stand-in
+in terminal A with Ctrl-C, confirm no waiter/one-shot remains, then resume scheduling
+only after the remaining importer installation gates pass. This is the backup-exclusion
+proof referred to by the importer's installation guide.
 
 ### Schedule, encryption, expiry and drills
 
@@ -988,7 +1197,8 @@ operator's duty, at least for `live`.
 
 1. **Daily**, a host timer (cron or a systemd timer) runs, as the user that owns the
    backup directory, `cd <checkout>/apps/aviation-investigations && pnpm app:backup` with
-   the environment's `AVIATION_ENV_FILES` and `AVIATION_BACKUP_DIR`.
+   the environment's `AVIATION_ENV_FILES`, `AVIATION_BACKUP_DIR` and the shared
+   `AVIATION_MAINTENANCE_LOCK` ([Maintenance lock](#maintenance-lock)).
 2. **Encrypted, off the host** (DESIGN §11): encrypt each new file to a key that is not on
    the host (for example `age -r <recipient> -o <file>.age <file>`, then remove the plain
    file) and copy the encrypted file to a destination off the host. A backup holds the
@@ -1007,7 +1217,8 @@ operator's duty, at least for `live`.
 ### Restoring
 
 With the app stopped (`pnpm app:down`), and the backup decrypted into
-`AVIATION_BACKUP_DIR`:
+`AVIATION_BACKUP_DIR`, with `AVIATION_MAINTENANCE_LOCK` set as above and importer
+scheduling paused with no active run:
 
 ```sh
 # 1. As the cluster administrator: drop the damaged database if it still exists, then

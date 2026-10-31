@@ -624,6 +624,7 @@ export class CostNotConfirmedError extends Error {
 }
 
 export interface RebuildPassagesOptions {
+  onReady?: (candidate: { index: string; buildId: string; generationId: number }) => Promise<void>;
   generationId: number;
   prefix: string;
   gate: SpendGate;
@@ -1096,6 +1097,7 @@ export async function rebuildPassagesIndex(
         await es.indices.putSettings({ index, settings: { refresh_interval: '1s' } });
         await es.indices.refresh({ index });
         await verifyIndex(es, index, want);
+        await opts.onReady?.({ index, buildId, generationId });
 
         let switched;
         assertLocked();

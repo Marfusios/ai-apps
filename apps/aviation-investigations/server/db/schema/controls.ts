@@ -12,6 +12,7 @@
  * 0013 adds the trial cookie hash, Turnstile redemptions and the anonymous switch.
  */
 import { sql } from 'drizzle-orm';
+import { importArtifacts } from './imports.js';
 import {
   bigint,
   boolean,
@@ -223,6 +224,7 @@ export const usageBuckets = pgTable(
 export const reservations = pgTable(
   'reservations',
   {
+    importArtifactId: uuid('import_artifact_id').references(() => importArtifacts.id),
     id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
     category: text('category', { enum: SPEND_CATEGORIES }).notNull(),
     principalKind: text('principal_kind', { enum: PRINCIPAL_KINDS }).notNull(),

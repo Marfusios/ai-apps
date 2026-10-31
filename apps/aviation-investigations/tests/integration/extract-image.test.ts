@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Writable } from 'node:stream';
 import yazl from 'yazl';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -24,6 +25,7 @@ import {
   runContainer,
   runMdbExport,
   setDockerCommand,
+  prepareMdbMount,
 } from '../../worker/ingest/extract.js';
 
 // Needs Docker. mdbtools cannot create MDB files, so no synthetic database is
@@ -39,6 +41,41 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('extract image', () => {
+  it('isolates the host workspace while nobody reads the file bind, with no Docker log', async () => {
+    const privateDir = join(dir, 'private-mdb');
+    mkdirSync(privateDir, { mode: 0o700 });
+    const mdb = join(privateDir, 'avall.mdb');
+    writeFileSync(mdb, 'synthetic MDB bytes', { mode: 0o600 });
+    await prepareMdbMount(mdb);
+    const image = await resolveImageId();
+    // Same host inode and DAC permissions, reached through its private directory by another UID.
+    const denied = spawnSync('docker', ['run', '--rm', '--network', 'none', '--read-only',
+      '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--user', '65534:65534',
+      '--log-driver=none', '-v', `${privateDir}:/private:ro`, image, 'cat', '/private/avall.mdb']);
+    expect(denied.status).not.toBe(0);
+    expect(denied.stdout.toString()).toBe('');
+    const inspect = join(dir, 'created-config.json');
+    const wrapper = join(dir, 'inspect-docker');
+    writeFileSync(wrapper, '#!/bin/sh\nif [ "$1" = start ]; then\n'
+      + '  docker inspect --format \'{{json .}}\' "$3" > "$INSPECT_CREATED"\nfi\nexec docker "$@"\n', { mode: 0o700 });
+    const chunks: Buffer[] = [];
+    const sink = new Writable({ write(chunk: Buffer, _encoding, done) { chunks.push(chunk); done(); } });
+    process.env.INSPECT_CREATED = inspect;
+    setDockerCommand(wrapper);
+    try {
+      await runContainer({ image, mounts: ['-v', `${mdb}:/in/avall.mdb:ro`], command: ['cat', '/in/avall.mdb'],
+        sink, timeoutMs: 60_000 });
+    } finally {
+      setDockerCommand('docker');
+      delete process.env.INSPECT_CREATED;
+    }
+    expect(Buffer.concat(chunks).toString()).toBe('synthetic MDB bytes');
+    const created = JSON.parse(readFileSync(inspect, 'utf8'));
+    expect(created.Config.User).toBe('65534:65534');
+    expect(created.HostConfig.LogConfig.Type).toBe('none');
+    expect(created.LogPath).toBe('');
+  });
+
   it('runs the pinned mdbtools inside the sandbox', async () => {
     const fake = join(dir, 'avall.mdb');
     writeFileSync(fake, 'not a database');

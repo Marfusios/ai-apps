@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, rmSync } from 'node:fs';
-import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { constants, existsSync, rmSync } from 'node:fs';
+import { lstat, mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -30,17 +30,26 @@ export const MDB_EXPORT_FLAGS = [
 
 /** Sandbox for every container (removal is explicit, never `--rm`). The root is read-only and nothing is writable. */
 export const SANDBOX_FLAGS = [
+  '--log-driver=none',
   '--network', 'none',
   '--read-only',
   '--cap-drop', 'ALL',
   '--security-opt', 'no-new-privileges',
-  '--user', '65534:65534',
   '--memory', '1g',
   // Without it the container could use as much swap again.
   '--memory-swap', '1g',
   '--cpus', '2',
   '--pids-limit', '64',
 ] as const;
+
+/** MDBTools never inherits the operator's identity, even for a private file bind mount. */
+export function sandboxFlags(uid = process.getuid?.(), gid = process.getgid?.()): readonly string[] {
+  if (typeof uid !== 'number' || typeof gid !== 'number' || !Number.isSafeInteger(uid)
+    || !Number.isSafeInteger(gid) || uid <= 0 || gid <= 0) {
+    throw new Error('extraction requires an unprivileged host user and group');
+  }
+  return [...SANDBOX_FLAGS, '--user', '65534:65534'];
+}
 
 /**
  * Stderr lines from mdb-export that were investigated and are known to be harmless.
@@ -77,7 +86,7 @@ export function composeProject(): string {
  */
 export function containerLabels(run: Pick<ContainerRun, 'image' | 'mounts' | 'command'>): string[] {
   const configHash = createHash('sha256')
-    .update(JSON.stringify([SANDBOX_FLAGS, run.mounts, run.image, run.command]))
+    .update(JSON.stringify([sandboxFlags(), run.mounts, run.image, run.command]))
     .digest('hex');
   return [
     `com.docker.compose.project=${composeProject()}`,
@@ -255,6 +264,8 @@ export async function removeAllContainers(): Promise<string[]> {
 }
 
 export interface ContainerRun {
+  beforeWrite?: (bytes: number) => Promise<void>;
+  container?: (name: string, present: boolean) => Promise<void>;
   image: string;
   mounts: readonly string[];
   command: readonly string[];
@@ -282,7 +293,8 @@ function startAttached(
       transform(chunk: Buffer, _e, cb) {
         total += chunk.length;
         if (total > maxBytes) return cb(new Error(`container output exceeds ${maxBytes} bytes`));
-        cb(null, chunk);
+        if (run.beforeWrite) void run.beforeWrite(chunk.length).then(() => cb(null, chunk), cb);
+        else cb(null, chunk);
       },
     });
     const done = run.sink ? pipeline(child.stdout, cap, run.sink) : (child.stdout.resume(), Promise.resolve());
@@ -306,9 +318,12 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
     sink?.destroy();
     throw new Error('cancelled by signal');
   }
+  let flags: readonly string[];
+  try { flags = sandboxFlags(); } catch (error) { sink?.destroy(); throw error; }
   const name = `${composeProject()}-extract-${randomBytes(6).toString('hex')}`;
   const entry: Live = { name, id: null, child: null, creating: null, cleanup: null, cancelled: false };
   live.set(name, entry);
+  try { await run.container?.(name, true); } catch (err) { live.delete(name); sink?.destroy(); throw err; }
   let failure: Error | null = null;
   const abort = (e: Error): void => {
     if (failure) return;
@@ -320,7 +335,7 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
   // instead of becoming an unhandled 'error' event. It stays attached for late errors.
   sink?.on('error', (e: Error) => abort(e));
   entry.creating = dockerCall(
-    ['create', '--name', name, ...containerLabels(run), ...SANDBOX_FLAGS, ...run.mounts, run.image, ...run.command],
+    ['create', '--name', name, ...containerLabels(run), ...flags, ...run.mounts, run.image, ...run.command],
     DOCKER_CALL_TIMEOUT_MS,
   );
   const timer = setTimeout(() => abort(new Error(`container timed out after ${run.timeoutMs} ms`)), run.timeoutMs);
@@ -344,6 +359,7 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
   let cleanupError = '';
   try {
     await ensureCleanup(entry);
+    await run.container?.(name, false);
     live.delete(name);
   } catch (e) {
     cleanupError = `; cleanup failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -362,6 +378,26 @@ function mdbMount(mdbPath: string): string[] {
   return ['-v', `${resolve(mdbPath)}:/in/avall.mdb:ro`];
 }
 
+/** The file bind bypasses host directory traversal; the host workspace remains owner-only. */
+export async function prepareMdbMount(mdbPath: string): Promise<void> {
+  sandboxFlags(); // Refuse a privileged operator before changing permissions.
+  const parent = await lstat(dirname(mdbPath));
+  if (!parent.isDirectory() || parent.isSymbolicLink() || parent.uid !== process.getuid?.()
+    || (parent.mode & 0o777) !== 0o700) {
+    throw new Error('MDB mount requires an owner-only workspace');
+  }
+  const handle = await open(mdbPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const file = await handle.stat();
+    if (!file.isFile() || file.uid !== process.getuid?.() || file.nlink !== 1) {
+      throw new Error('MDB mount requires an owned regular file');
+    }
+    await handle.chmod(0o644);
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Resolve the local image once; every container then runs against this immutable ID. */
 export async function resolveImageId(image = EXTRACT_IMAGE): Promise<string> {
   const r = await dockerCall(['image', 'inspect', '--format', '{{.Id}}', image]);
@@ -372,7 +408,7 @@ export async function resolveImageId(image = EXTRACT_IMAGE): Promise<string> {
   return id;
 }
 
-export async function mdbtoolsVersion(mdbPath: string, imageId?: string): Promise<string> {
+export async function mdbtoolsVersion(mdbPath: string, imageId?: string, guard?: ExtractGuard): Promise<string> {
   const image = imageId ?? (await resolveImageId());
   const chunks: Buffer[] = [];
   const sink = new Writable({
@@ -387,6 +423,8 @@ export async function mdbtoolsVersion(mdbPath: string, imageId?: string): Promis
     command: ['mdb-export', '--version'],
     sink,
     timeoutMs: 60_000,
+    maxBytes: 65536,
+    container: guard?.container,
   });
   const m = /(\d+\.\d+\.\d+\S*)/.exec(Buffer.concat(chunks).toString('utf8'));
   if (!m?.[1]) throw new Error('cannot determine mdbtools version');
@@ -420,6 +458,7 @@ export async function runMdbExport(
   mdbPath: string,
   outDir: string,
   imageId?: string,
+  guard?: ExtractGuard,
 ): Promise<Record<TableName, string>> {
   const image = imageId ?? (await resolveImageId());
   const result = {} as Record<TableName, string>;
@@ -435,6 +474,8 @@ export async function runMdbExport(
       sink: handle.createWriteStream(),
       timeoutMs: EXPORT_TIMEOUT_MS,
       maxBytes: MAX_TABLE_BYTES,
+      beforeWrite: guard ? n => guard.beforeWrite('raw', n) : undefined,
+      container: guard?.container,
     });
     const problems = summarizeStderr(stderr);
     if (problems) throw new Error(`mdb-export reported diagnostics for table ${table} (${problems})`);
@@ -455,9 +496,14 @@ export interface ExtractManifest {
 }
 
 export interface ExtractOptions {
+  guard?: ExtractGuard;
   archive: string;
   sha256: string;
   out: string;
+}
+export interface ExtractGuard {
+  beforeWrite(kind: 'expanded' | 'raw' | 'projected', bytes: number): Promise<void>;
+  container(name: string, present: boolean): Promise<void>;
 }
 
 /**
@@ -497,12 +543,16 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
   }
   let published = false;
   let stagingCreated = false;
-  const cleanup = (): void => cleanupExtraction({ dest, staging }, { stagingCreated, published });
+  // The destination is only an empty reservation until the atomic rename. It is
+  // safe to release even when a container still needs its mounted staging files.
+  const cleanup = (containersGone = true): void => cleanupExtraction(
+    { dest, staging }, { stagingCreated: stagingCreated && containersGone, published },
+  );
   const onSignal = (sig: NodeJS.Signals): void => {
     beginShutdown();
     void removeAllContainers().then((failures) => {
-      cleanup();
-      for (const f of failures) console.error(f);
+      cleanup(failures.length === 0);
+      for (const f of failures) console.error(opts.guard ? 'import cleanup unresolved' : f);
       process.exit(sig === 'SIGINT' ? 130 : 143);
     });
   };
@@ -515,13 +565,16 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
     await mkdir(raw, { mode: 0o700 });
     const archive = await verifyArchive(opts.archive, opts.sha256);
     const imageId = await resolveImageId();
-    const mdb = await extractMember(opts.archive, 'avall.mdb', raw, DEFAULT_LIMITS);
-    const version = await mdbtoolsVersion(mdb, imageId);
-    const rawCsv = await runMdbExport(mdb, raw, imageId);
+    const mdb = await extractMember(opts.archive, 'avall.mdb', raw, { ...DEFAULT_LIMITS,
+      beforeWrite: opts.guard ? n => opts.guard!.beforeWrite('expanded', n) : undefined });
+    await prepareMdbMount(mdb);
+    const version = await mdbtoolsVersion(mdb, imageId, opts.guard);
+    const rawCsv = await runMdbExport(mdb, raw, imageId, opts.guard);
     const tables: ExtractManifest['tables'] = {};
     for (const table of TABLE_NAMES) {
       const target = join(staging, `${table}.csv`);
-      const rows = await projectFile(table, rawCsv[table], target);
+      const rows = await projectFile(table, rawCsv[table], target,
+        opts.guard ? n => opts.guard!.beforeWrite('projected', n) : undefined);
       tables[table] = {
         rows,
         columns: TABLE_SPECS[table].columns.length,
@@ -547,7 +600,7 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
     return manifest;
   } catch (err) {
     const failures = await removeAllContainers();
-    cleanup();
+    cleanup(failures.length === 0);
     if (failures.length) {
       throw new Error(`${err instanceof Error ? err.message : String(err)}; ${failures.join('; ')}`);
     }

@@ -47,7 +47,8 @@
     "mock:build": "tsx scripts/build-mock-api.ts",
     "brand:build": "tsx scripts/build-brand-assets.ts",
     "test:e2e": "playwright test",
-    "test:e2e:real": "playwright test -c playwright.real.config.ts"
+    "test:e2e:real": "playwright test -c playwright.real.config.ts",
+    "importer": "tsx worker/importer/host.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.137.0",

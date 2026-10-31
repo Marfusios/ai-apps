@@ -479,7 +479,7 @@ function System({ system, now }: { system: AdminOverview['system']; now: number 
       </dl>
       <SectionHead>Automatic import</SectionHead>
       <dl>
-        <Fact label="Next import">{system.nextAutomaticImport === null ? ADMIN_COPY.notSetUp : when(system.nextAutomaticImport)}</Fact>
+        <Fact label="Next snapshot check">{system.imports.schedule?.nextCheckAt ? when(system.imports.schedule.nextCheckAt) : ADMIN_COPY.notSetUp}</Fact>
       </dl>
     </Panel>
   );

@@ -1,18 +1,26 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   checkDatabaseUrl,
   checkEdgeSubnet,
   checkoutDirty,
+  devReleaseImage,
   liveImagePlan,
+  maintenanceInvocation,
+  maintenanceLock,
+  MAINTENANCE_BUSY_EXIT,
+  MAINTENANCE_BUSY_MESSAGE,
   planCompose,
   versionAtLeast,
   type LiveImageFacts,
   type Values,
 } from '../../scripts/compose.js';
+import { proveMaintenanceLock, proofFailureMessage } from '../../scripts/maintenance-lock-proof.js';
+
+const hasFlock = spawnSync('flock', ['--version'], { stdio: 'ignore' }).status === 0;
 
 // Private (RFC 1918) example subnets are built from octets: the repository check
 // rejects private address literals in committed files.
@@ -315,5 +323,246 @@ describe('a live build only from a clean checkout (re-check N9)', () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+});
+
+describe('maintenance lock for backup and restore', () => {
+  const scratch = (run: (path: string, dir: string) => void) => {
+    const dir = mkdtempSync(join(tmpdir(), 'aircase-compose-lock-'));
+    const path = join(dir, 'maintenance.lock');
+    writeFileSync(path, '', { mode: 0o600 });
+    try { run(path, dir); } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+
+  it('defaults to a bounded 1500-second wait and wraps only backups and restores', () => scratch((path) => {
+    const settings = env('dev', { AVIATION_BACKUP_DIR: '/srv/backups', AVIATION_MAINTENANCE_LOCK: path });
+    const expected = { path, waitSeconds: 1500 };
+    expect(maintenanceLock(settings)).toEqual(expected);
+    for (const command of ['backup', 'restore'] as const) {
+      const plan = planCompose(command, command === 'restore' ? ['a.dump'] : [], {}, [settings]);
+      expect(plan.maintenanceLock).toEqual(expected);
+      expect(maintenanceInvocation('docker', ['compose', ...plan.tail], plan.maintenanceLock)).toEqual({
+        command: 'flock', args: ['-w', '1500', '-E', '75', '--', path, 'docker', 'compose', ...plan.tail],
+      });
+    }
+    for (const command of ['app-up', 'migrate', 'ingest', 'app-down', 'app-ps', 'extract-image'] as const) {
+      expect(planCompose(command, [], {}, [settings]).maintenanceLock).toBeUndefined();
+    }
+  }));
+
+  it('preserves the direct invocation when unset and nonempty process values win', () => scratch((path) => {
+    expect(maintenanceLock({ AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS: 'invalid-but-unused' })).toBeUndefined();
+    expect(maintenanceInvocation('docker', ['compose', 'run'])).toEqual({ command: 'docker', args: ['compose', 'run'] });
+    const settings = env('live', { AVIATION_BACKUP_DIR: '/srv/backups', AVIATION_MAINTENANCE_LOCK: path, AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS: '12' });
+    expect(planCompose('backup', [], { AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS: '0' }, [settings]).maintenanceLock).toEqual({ path, waitSeconds: 0 });
+    expect(planCompose('backup', [], { AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS: '' }, [settings]).maintenanceLock?.waitSeconds).toBe(12);
+  }));
+
+  it('refuses relative, absent, directory and symlink paths and another owner, without echoing paths', () => scratch((path, dir) => {
+    const link = join(dir, 'alias');
+    symlinkSync(path, link);
+    for (const candidate of ['relative.lock', join(dir, 'SENTINEL_MISSING'), dir, link, `${path}\0`]) {
+      const message = error(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: candidate }));
+      expect(message).toMatch(/absolute.*existing regular file.*0600.*not a symlink/);
+      expect(message).not.toContain(candidate);
+    }
+    expect(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: path }, process.getuid!() + 1)).toThrow(/owned by this user/);
+  }));
+
+  it('requires exact 0600 including special bits; rejects malformed or unbounded waits', () => scratch((path) => {
+    for (const mode of [0o400, 0o640, 0o660, 0o700, 0o1600]) {
+      chmodSync(path, mode);
+      expect(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: path })).toThrow(/mode 0600/);
+    }
+    chmodSync(path, 0o600);
+    for (const wait of ['-1', '1.5', 'NaN', 'Infinity', '1e3', ' 1', '86401', '9999999999999999', 'SENTINEL']) {
+      const message = error(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: path, AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS: wait }));
+      expect(message).toMatch(/integer from 0 to 86400/);
+      expect(message).not.toContain('SENTINEL');
+    }
+    expect(maintenanceLock({ AVIATION_MAINTENANCE_LOCK: path, AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS: '86400' })?.waitSeconds).toBe(86400);
+  }));
+
+  it('refuses writable or symlink parents but allows owner-controlled read/traverse access', () => scratch((path, dir) => {
+    try {
+      for (const mode of [0o720, 0o702, 0o777]) {
+        chmodSync(dir, mode);
+        const message = error(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: path }));
+        expect(message).toMatch(/parent.*owned by this user.*no group or other write permission/);
+        expect(message).not.toContain(dir);
+      }
+      for (const mode of [0o700, 0o750, 0o755]) {
+        chmodSync(dir, mode);
+        expect(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: path })).not.toThrow();
+      }
+      const link = join(dir, 'parent-link');
+      symlinkSync(dir, link);
+      expect(() => maintenanceLock({ AVIATION_MAINTENANCE_LOCK: join(link, 'maintenance.lock') })).toThrow(/parent.*not a symlink/);
+    } finally { chmodSync(dir, 0o700); }
+  }));
+
+  it.skipIf(!hasFlock)('uses the importer flock in both directions with a scratch file and harmless commands', async () => {
+    await proveMaintenanceLock();
+  });
+
+  it.skipIf(!hasFlock)('the proof works with a restrictive umask', () => {
+    const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e',
+      'process.umask(0o277); const { proveMaintenanceLock } = await import("./scripts/maintenance-lock-proof.ts"); await proveMaintenanceLock();',
+    ], { cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8', timeout: 15000 });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  it('the proof CLI reports a static failing step without subprocess or filesystem text', () => scratch((_path, dir) => {
+    writeFileSync(join(dir, 'flock'), `#!${process.execPath}\nprocess.stderr.write('SENTINEL'); process.exit(1);\n`, { mode: 0o700 });
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/maintenance-lock-proof.ts'], {
+      cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8', timeout: 10000, env: { PATH: dir },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr.trim()).toBe('Maintenance lock proof failed: scratch importer lock failed.');
+    expect(proofFailureMessage(new Error('SENTINEL /private/path'))).toBe('Maintenance lock proof failed: scratch file setup or cleanup failed.');
+  }));
+
+  it.skipIf(!hasFlock)('the real wrapper times out with one fixed message, never calls the dump, and succeeds after release', () => scratch((path, dir) => {
+    const log = join(dir, 'docker-calls.jsonl');
+    const docker = join(dir, 'docker');
+    writeFileSync(docker, `#!${process.execPath}\nconst fs = require('node:fs'); const a = process.argv.slice(2);\n` +
+      `if(a.join(' ') === 'compose version --short') console.log('2.24.0');\n` +
+      `else fs.appendFileSync(process.env.OPS_TEST_LOG, JSON.stringify(a)+'\\n');\n`, { mode: 0o700 });
+    const settings = env('dev', { AVIATION_BACKUP_DIR: dir, AVIATION_MAINTENANCE_LOCK: path, AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS: '0' });
+    const fd = openSync(path, 'r+');
+    try {
+      expect(spawnSync('flock', ['--nonblock', '3'], { stdio: ['ignore', 'ignore', 'ignore', fd] }).status).toBe(0);
+      const run = (command: string, args: string[] = [], extra: Values = {}) => spawnSync(process.execPath, ['--import', 'tsx', 'scripts/compose.ts', command, ...args], {
+        cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8', timeout: 10000,
+        env: { PATH: `${dir}:${process.env.PATH}`, ...settings, ...extra, OPS_TEST_LOG: log },
+      });
+      for (const command of ['backup', 'restore']) {
+        writeFileSync(join(dir, 'a.dump'), 'stand-in, never read');
+        const r = run(command, command === 'restore' ? ['a.dump'] : []);
+        expect(r.status, r.stderr).toBe(MAINTENANCE_BUSY_EXIT);
+        expect(r.stderr.trim()).toBe(MAINTENANCE_BUSY_MESSAGE);
+        expect(r.stdout).toBe('');
+        expect(() => readFileSync(log)).toThrow();
+      }
+      expect(spawnSync('flock', ['--unlock', '3'], { stdio: ['ignore', 'ignore', 'ignore', fd] }).status).toBe(0);
+      const backup = run('backup');
+      const restore = run('restore', ['a.dump']);
+      expect(backup.status).toBe(0);
+      expect(backup.stderr.trim()).toBe('ai-aviation-dev: backup');
+      expect(restore.status).toBe(0);
+      expect(restore.stderr.trim()).toBe('ai-aviation-dev: restore');
+      const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[]);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toContain('aviation-backup');
+      expect(calls[1]!.slice(-2)).toEqual(['aviation-restore', 'a.dump']);
+      rmSync(log);
+      expect(run('backup', [], { AVIATION_MAINTENANCE_LOCK: join(dir, 'missing') }).status).toBe(2);
+      expect(() => readFileSync(log)).toThrow();
+    } finally { closeSync(fd); }
+  }));
+});
+
+describe('explicit private dev release image', () => {
+  const revision = 'a'.repeat(40);
+  const id = `sha256:${'b'.repeat(64)}`;
+  const facts: LiveImageFacts = { tagCommit: revision, head: 'c'.repeat(40), dirty: true, image: { revision, id } };
+  const dev = env('dev', { AVIATION_DEV_RELEASE_IMAGE: 'true', APP_VERSION: 'v1.2.0' });
+
+  it('pins an existing release ID even from a different checkout, removing builds and keeping loopback', () => {
+    expect(devReleaseImage(facts)).toBe(id);
+    for (const command of ['app-up', 'migrate', 'ingest'] as const) {
+      const plan = planCompose(command, [], {}, [dev], facts);
+      expect(plan.pinnedImageId).toBe(id);
+      expect(plan.files).toEqual(['compose.yaml', 'compose.dev-release.yaml']);
+      expect(plan.tunnel).toBe(false);
+      expect(plan.tail).not.toContain('--build');
+    }
+    expect(planCompose('app-up', [], {}, [dev], facts).tail).toContain('--no-build');
+    const override = readFileSync(resolve(import.meta.dirname, '../../compose.dev-release.yaml'), 'utf8');
+    expect(override.match(/build: !reset null/g)).toHaveLength(3);
+    expect(override.match(/image: \$\{AVIATION_DEV_RELEASE_IMAGE_ID:/g)).toHaveLength(3);
+    const base = readFileSync(resolve(import.meta.dirname, '../../compose.yaml'), 'utf8');
+    const imageAnchor = /^x-app-image:[^\n]*\n(?:[ \t]+[^\n]*\n|\n)*/m.exec(base)?.[0];
+    expect(imageAnchor, 'shared app image anchor must forbid pulls').toContain('pull_policy: never');
+    expect(base).toContain('127.0.0.1:${PORT:-3000}:3000');
+    expect(override).not.toMatch(/ports:|networks:|environment:/);
+  });
+
+  it('refuses absent, unlabelled or mismatched images, even on a clean tagged checkout', () => {
+    expect(() => planCompose('app-up', [], {}, [dev])).toThrow(/existing git tag/);
+    expect(() => planCompose('app-up', [], {}, [dev], { ...facts, tagCommit: null })).toThrow(/git tag/);
+    expect(() => planCompose('app-up', [], {}, [dev], { ...facts, image: null, head: revision, dirty: false })).toThrow(/no image will be built or pulled/);
+    for (const image of [{ revision: null, id }, { revision: 'd'.repeat(40), id }, { revision, id: 'not-an-id' }, { revision }]) {
+      expect(() => planCompose('app-up', [], {}, [dev], { ...facts, image })).toThrow(/dev release image/);
+    }
+  });
+
+  it('requires explicit dev-only opt-in and a valid tag; refuses build, tunnel and tracing overrides', () => {
+    for (const APP_VERSION of [undefined, 'dev', 'tag with spaces', 'v'.repeat(81)]) {
+      expect(() => planCompose('app-up', [], {}, [{ ...dev, APP_VERSION }], facts)).toThrow(/APP_VERSION/);
+    }
+    for (const args of [['--rebuild'], ['--build'], ['--pull', 'always']]) {
+      expect(() => planCompose('app-up', args, {}, [dev], facts)).toThrow(/refuses|no extra arguments/);
+    }
+    expect(() => planCompose('app-up', [], {}, [{ ...dev, APP_ENV: 'live' }], facts)).toThrow(/only to APP_ENV=dev/);
+    expect(() => planCompose('app-up', [], {}, [{ ...dev, AVIATION_DEV_RELEASE_IMAGE: 'typo' }], facts)).toThrow(/true or false/);
+    expect(() => planCompose('app-up', [], {}, [{ ...dev, TUNNEL_TOKEN: 't', EDGE_SUBNET: EDGE }], facts)).toThrow(/loopback/);
+    expect(() => planCompose('app-up', [], {}, [{ ...dev, AVIATION_TRACING_ENABLED: 'true' }], facts)).toThrow(/tracing off/);
+    expect(planCompose('app-up', [], { AVIATION_DEV_RELEASE_IMAGE: 'false' }, [dev]).tail).toContain('--build');
+    expect(planCompose('app-up', [], {}, [env('dev')]).files).toEqual(['compose.yaml']);
+  });
+
+  it('refuses ordinary dev builds under existing git tags, including --rebuild and a shell override of release mode', () => {
+    for (const command of ['app-up', 'migrate', 'ingest'] as const) {
+      for (const args of [[], ['--rebuild']]) {
+        expect(() => planCompose(command, args, { AVIATION_DEV_RELEASE_IMAGE: 'false' }, [dev], undefined, true)).toThrow(/cannot overwrite an existing git tag/);
+      }
+      expect(planCompose(command, [], {}, [dev], facts, true).tail).not.toContain('--build');
+      expect(planCompose(command, [], {}, [env('dev', { APP_VERSION: 'local-work' })], undefined, false).tail).toContain('--build');
+    }
+    expect(planCompose('app-ps', [], { AVIATION_DEV_RELEASE_IMAGE: 'false' }, [dev], undefined, true).tail).toEqual(['ps', '-a']);
+  });
+
+  it('the real wrapper supplies the inspected ID to Compose, not an exported override or the release tag', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aircase-compose-release-'));
+    const log = join(dir, 'calls.jsonl');
+    try {
+      writeFileSync(join(dir, 'docker'), `#!${process.execPath}\nconst fs = require('node:fs'); const a = process.argv.slice(2);\n` +
+        `if(a.join(' ') === 'compose version --short') console.log('2.24.0');\n` +
+        `else if(a[0] === 'image') { if(process.env.OPS_TEST_MISSING) process.exit(1); console.log('${id} ${revision}'); }\n` +
+        `else fs.appendFileSync(process.env.OPS_TEST_LOG, JSON.stringify({args:a, image:process.env.AVIATION_DEV_RELEASE_IMAGE_ID, version:process.env.APP_VERSION})+'\\n');\n`,
+        { mode: 0o700 });
+      writeFileSync(join(dir, 'git'), `#!${process.execPath}\nconst a = process.argv.slice(2);\n` +
+        `if(a.includes('rev-parse')) { const tag = a.find(x=>x.startsWith('refs/tags/'));\n` +
+        `if(tag && !tag.startsWith('refs/tags/v1.2.0')) process.exit(1); console.log(tag ? '${revision}' : '${'c'.repeat(40)}'); }\n`, { mode: 0o700 });
+      const run = (extra: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, ['--import', 'tsx', 'scripts/compose.ts', 'app-up'], {
+        cwd: resolve(import.meta.dirname, '../..'), encoding: 'utf8', timeout: 10000,
+        env: { PATH: `${dir}:${process.env.PATH}`, ...dev, AVIATION_DEV_RELEASE_IMAGE_ID: 'untrusted-override', OPS_TEST_LOG: log, ...extra },
+      });
+      const success = run();
+      expect(success.status, success.stderr).toBe(0);
+      expect(success.stderr.trim()).toBe(`ai-aviation-dev: app-up (release-image ${id.slice(0, 19)})`);
+      const call = JSON.parse(readFileSync(log, 'utf8')) as { args: string[]; image: string; version: string };
+      expect(call.image).toBe(id);
+      expect(call.version).toBe('v1.2.0');
+      expect(call.args).toContain('compose.dev-release.yaml');
+      expect(call.args).toContain('--no-build');
+      expect(call.args).not.toContain('--build');
+      expect(call.args).not.toContain('compose.tunnel.yaml');
+      rmSync(log);
+      const missing = run({ OPS_TEST_MISSING: 'true' });
+      expect(missing.status).toBe(2);
+      expect(missing.stderr).toContain('no image will be built or pulled');
+      expect(() => readFileSync(log)).toThrow();
+      const overwrite = run({ AVIATION_DEV_RELEASE_IMAGE: 'false' });
+      expect(overwrite.status).toBe(2);
+      expect(overwrite.stderr).toContain('cannot overwrite an existing git tag');
+      expect(() => readFileSync(log)).toThrow();
+      const normal = run({ AVIATION_DEV_RELEASE_IMAGE: 'false', APP_VERSION: 'dev' });
+      expect(normal.status, normal.stderr).toBe(0);
+      const normalCall = JSON.parse(readFileSync(log, 'utf8')) as { args: string[] };
+      expect(normalCall.args).toContain('--build');
+      expect(normalCall.args).not.toContain('compose.dev-release.yaml');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

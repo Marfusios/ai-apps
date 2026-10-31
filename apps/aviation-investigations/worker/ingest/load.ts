@@ -593,6 +593,10 @@ export interface LoadReport {
 }
 
 export interface LoadOptions {
+  /** Importer status must never retain SQL/source diagnostics. */
+  privateErrors?: boolean;
+  /** Durable import linkage on this exact load transaction, before it can commit. */
+  onGeneration?: (tx: DbOrTx, generationId: number) => Promise<void>;
   mapping?: CompletionMapping;
   /** Cases per transaction step (each table then inserts at most BATCH_ROWS rows per statement). */
   casesPerStep?: number;
@@ -651,6 +655,7 @@ async function withRun(
   archiveSha256: string | null,
   mapping: CompletionMapping,
   fn: (runId: number) => Promise<Omit<LoadReport, 'runId' | 'durationMs' | 'analyzed'>>,
+  privateErrors = false,
 ): Promise<LoadReport> {
   const started = Date.now();
   const runId = await startRun(db, archiveSha256, mapping);
@@ -661,7 +666,7 @@ async function withRun(
     try {
       await db
         .update(ingestionRuns)
-        .set({ status: 'failed', finishedAt: new Date(), error: describeLoadError(err) })
+        .set({ status: 'failed', finishedAt: new Date(), error: privateErrors ? 'import load failed' : describeLoadError(err) })
         .where(and(eq(ingestionRuns.id, runId), eq(ingestionRuns.status, 'running')));
     } catch {
       // The run stays 'running'; `worker fail-stale-runs` closes it later.
@@ -777,6 +782,7 @@ async function writeGeneration(
       .returning({ id: datasetGenerations.id });
     if (!gen) throw new Error('could not create dataset generation');
     const id = gen.id;
+    await opts.onGeneration?.(tx, id);
     const inserted = emptyCounts();
     for (let i = 0; i < normalized.cases.length; i += step) {
       const sets = normalized.cases.slice(i, i + step).map((c) => caseRows(id, c));
@@ -826,7 +832,7 @@ async function writeGeneration(
 /** Load already-normalized input as a new generation under a new ingestion run. */
 export async function loadCorpus(db: Db, input: LoadInput, opts: LoadOptions = {}): Promise<LoadReport> {
   return withRun(db, input.manifest.archive.sha256, input.normalized.completionMapping, (runId) =>
-    writeGeneration(db, runId, input, opts),
+    writeGeneration(db, runId, input, opts), opts.privateErrors,
   );
 }
 
@@ -846,5 +852,5 @@ export async function loadFromExtract(db: Db, dir: string, opts: LoadOptions = {
     const normalized = normalizeCorpus(tables, { mapping });
     if (normalized.citationTextVersion !== CITATION_TEXT_VERSION) throw new Error('citation text version mismatch');
     return writeGeneration(db, runId, { normalized, dictionary: dictionaryDrafts(tables), manifest }, opts);
-  });
+  }, opts.privateErrors);
 }

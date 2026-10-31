@@ -9,6 +9,105 @@ import { z } from 'zod';
 const Iso = z.iso.datetime();
 const Count = z.number().int().min(0);
 const Usd = z.number().min(0);
+const Sha256 = z.string().regex(/^[0-9a-f]{64}$/);
+/** The source's advertised date/time, without a timezone (NTSB supplies none). */
+const LocalDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+
+export const IMPORT_STEPS = [
+  'check',
+  'acquire',
+  'extract',
+  'load',
+  'verify',
+  'plan',
+  'index_cases',
+  'index_passages',
+  'validate',
+  'publish',
+  'canary',
+  'cleanup',
+  'complete',
+] as const;
+export const IMPORT_RESULTS = [
+  'running',
+  'unchanged',
+  'published',
+  'needs_review',
+  'deferred',
+  'failed',
+  'skipped_dev_failed',
+  'cancelled',
+  'rolled_back',
+] as const;
+export const IMPORT_REASONS = [
+  'metadata_unchanged',
+  'same_archive',
+  'same_content',
+  'source_listing_changed',
+  'source_reissued',
+  'source_changed_during_download',
+  'source_unavailable',
+  'source_retired',
+  'baseline_required',
+  'baseline_changed',
+  'schema',
+  'integrity',
+  'verification',
+  'cohort_bounds',
+  'mapping',
+  'probe',
+  'import_cap',
+  'monthly_budget',
+  'cache_miss',
+  'restore_hold',
+  'accounting',
+  'storage',
+  'alias_unknown',
+  'busy',
+  'backup_window',
+  'lock_lost',
+  'timeout',
+  'interrupted',
+  'dev_failed',
+  'configuration',
+  'cleanup',
+] as const;
+
+export const AdminImportRunSchema = z.strictObject({
+  checkedAt: Iso,
+  finishedAt: Iso.nullable(),
+  mode: z.enum(['automatic', 'forced_dev']),
+  source: z.strictObject({ advertisedAtLocal: LocalDateTime, bytes: Count }).nullable(),
+  archiveSha256: Sha256.nullable(),
+  generationId: Count.nullable(),
+  step: z.enum(IMPORT_STEPS),
+  result: z.enum(IMPORT_RESULTS),
+  reason: z.enum(IMPORT_REASONS).nullable(),
+  /** This artifact/environment's settled, uncertain and outstanding charges, all attempts. */
+  costUsd: Usd,
+});
+export type AdminImportRun = z.infer<typeof AdminImportRunSchema>;
+
+export const AdminImportsSchema = z.strictObject({
+  /** Configured schedule intent, not a systemd probe. */
+  enabled: z.boolean(),
+  schedule: z
+    .strictObject({
+      localTime: z.string().regex(/^\d{2}:\d{2}$/),
+      timeZone: z.string().min(1).max(64),
+      nextCheckAt: Iso.nullable(),
+    })
+    .nullable(),
+  /** Newest completed successful source check; failures and skips do not refresh it. */
+  lastCheck: AdminImportRunSchema.nullable(),
+  /** Newest publication whose canary passed and was not rolled back. */
+  lastSuccessfulImport: AdminImportRunSchema.nullable(),
+  attentionRequired: z.boolean(),
+  /** No successful source check within 36 hours while enabled. */
+  overdue: z.boolean(),
+  recentRuns: z.array(AdminImportRunSchema).max(20),
+});
+export type AdminImports = z.infer<typeof AdminImportsSchema>;
 
 export const AdminUserSchema = z.strictObject({
   name: z.string().max(200),
@@ -19,7 +118,12 @@ export const AdminUserSchema = z.strictObject({
   /** The latest AI search the account was charged a search for. */
   lastAiSearchAt: Iso.nullable(),
   /** Charged AI searches; usage records are kept 90 days, so the longest window is 90 days. */
-  aiSearches: z.strictObject({ today: Count, last7Days: Count, last30Days: Count, last90Days: Count }),
+  aiSearches: z.strictObject({
+    today: Count,
+    last7Days: Count,
+    last30Days: Count,
+    last90Days: Count,
+  }),
   isAdmin: z.boolean(),
 });
 export type AdminUser = z.infer<typeof AdminUserSchema>;
@@ -84,7 +188,12 @@ export const AdminOverviewSchema = z.strictObject({
     perSearch: z.strictObject({ searches: Count, meanUsd: Usd.nullable() }),
     /** Charges kept at their reserved worst case because the provider's bill was uncertain, this month. */
     uncertainUsd: Usd,
-    budgets: z.strictObject({ monthly: Usd, interactiveMonthly: Usd, interactiveDaily: Usd, ingestionMonthly: Usd }),
+    budgets: z.strictObject({
+      monthly: Usd,
+      interactiveMonthly: Usd,
+      interactiveDaily: Usd,
+      ingestionMonthly: Usd,
+    }),
   }),
   system: z.strictObject({
     appVersion: z.string().max(80).nullable(),
@@ -92,8 +201,16 @@ export const AdminOverviewSchema = z.strictObject({
     startedAt: Iso,
     ranking: z.string().max(40),
     automaticFilters: z.string().max(40),
-    ai: z.strictObject({ enabled: z.boolean(), anonymousEnabled: z.boolean(), accountCheck: z.enum(['suspicious', 'always']) }),
-    tracing: z.strictObject({ enabled: z.boolean(), lastExportOkAt: Iso.nullable(), failedExports: Count }),
+    ai: z.strictObject({
+      enabled: z.boolean(),
+      anonymousEnabled: z.boolean(),
+      accountCheck: z.enum(['suspicious', 'always']),
+    }),
+    tracing: z.strictObject({
+      enabled: z.boolean(),
+      lastExportOkAt: Iso.nullable(),
+      failedExports: Count,
+    }),
     /** The dataset AirCase serves: its generation, the NTSB snapshot date, when it was loaded and published. */
     dataset: z
       .strictObject({
@@ -105,8 +222,7 @@ export const AdminOverviewSchema = z.strictObject({
         eligibleCases: Count,
       })
       .nullable(),
-    /** When the next automatic import of a new NTSB snapshot runs; null while none is set up. */
-    nextAutomaticImport: Iso.nullable(),
+    imports: AdminImportsSchema,
   }),
 });
 export type AdminOverview = z.infer<typeof AdminOverviewSchema>;

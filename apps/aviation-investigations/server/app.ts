@@ -101,7 +101,7 @@ declare module 'fastify' {
 
 export interface AppDeps {
   /** `appEnv` (default `dev`): only `live` lets search engines index the site. */
-  config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'> & Partial<Pick<AppConfig, 'appEnv' | 'ai' | 'auth' | 'adminEmails' | 'appVersion' | 'tracing' | 'nodeEnv'>>;
+  config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'> & Partial<Pick<AppConfig, 'appEnv' | 'ai' | 'auth' | 'adminEmails' | 'appVersion' | 'tracing' | 'nodeEnv' | 'imports'>>;
   /** The configured embedding model and dimensions: a published passages index must match them. */
   embedding?: { model: string; dims: number };
   /** PostgreSQL as `aviation_app`. */
@@ -517,7 +517,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     budgets: deps.config.ai?.budgets, appEnv: deps.config.appEnv ?? 'dev', appVersion: deps.config.appVersion,
     startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
     ranking: deps.config.ai?.evidenceRanking ?? DEFAULT_EVIDENCE_RANKING,
-    automaticFilters: deps.config.ai?.evidenceAutoFilters ?? DEFAULT_EVIDENCE_AUTO_FILTERS });
+    automaticFilters: deps.config.ai?.evidenceAutoFilters ?? DEFAULT_EVIDENCE_AUTO_FILTERS,
+    imports: deps.config.imports });
   accountRoutes(app, ctx, { appUrl: deps.config.appUrl });
   for (const problem of deps.ai?.problems ?? ['AI is not configured']) app.log.warn({ problem }, 'AI feature off');
   if (deps.ai?.gate?.testKeys) app.log.warn('Turnstile test keys in use: every challenge passes (development only)');

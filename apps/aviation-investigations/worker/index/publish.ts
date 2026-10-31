@@ -30,7 +30,7 @@
  */
 import type { Client } from '@elastic/elasticsearch';
 import { and, eq, sql } from 'drizzle-orm';
-import type { Db } from '../../server/db/client.js';
+import type { Db, DbOrTx } from '../../server/db/client.js';
 import { deletedOrDeleting, publishManifest, withLifecycleLock, type ActiveManifest } from '../../server/db/generations.js';
 import { countCaseRecords } from '../../server/db/queries/case-records.js';
 import { passages as passagesTable } from '../../server/db/schema/index.js';
@@ -39,6 +39,8 @@ import { PASSAGES_CONTRACTS, matchPassagesContract, type PassagesContracts } fro
 import { SERVABLE_CASES_VERSIONS, isServableCasesIndex } from './cases-index.js';
 
 export interface PublishOptions {
+  /** Importer-only guarded activation; validated and recorded in the publication transaction. */
+  importGuard?: { lockKey: number; validate(tx: DbOrTx): Promise<void>; record(tx: DbOrTx): Promise<void> };
   generationId: number;
   casesIndex: string;
   /** Null: keyword-only manifest. */
@@ -71,6 +73,7 @@ async function documents(es: Client, index: string): Promise<number> {
 
 export async function publishGeneration(es: Client, db: Db, opts: PublishOptions): Promise<PublishReport> {
   const { generationId, casesIndex, passagesIndex } = opts;
+  if (opts.importGuard && !passagesIndex) throw new PublishRefusedError('import publication requires both indexes');
   const refuse = (why: string): never => {
     throw new PublishRefusedError(`not published: ${why}`);
   };
@@ -118,7 +121,12 @@ export async function publishGeneration(es: Client, db: Db, opts: PublishOptions
 
     await opts.afterValidate?.();
     // On the lock's connection: publish_manifest takes the same lock, which this session holds.
-    const manifest = await publishManifest(q, generationId, casesIndex, passagesIndex);
+    const manifest = opts.importGuard ? await q.transaction(async tx => {
+      await opts.importGuard!.validate(tx);
+      const active = await publishManifest(tx, generationId, casesIndex, passagesIndex);
+      await opts.importGuard!.record(tx);
+      return active;
+    }) : await publishManifest(q, generationId, casesIndex, passagesIndex);
     return { manifest, casesDocuments, passagesDocuments };
-  });
+  }, { outerLockKey: opts.importGuard?.lockKey });
 }
