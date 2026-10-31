@@ -33,6 +33,12 @@ export const COPY = {
    * admitted: either way no search is used; Builder copy).
    */
   unfinished: ["AirCase couldn't finish this AI search.", "It didn't use one of your searches. Try again in a moment."],
+  /**
+   * …when it was sent as a search's free undo, which the server may have used up before it failed,
+   * until the search's page, read again, says the undo is still there (Try again says "· free"
+   * then, and the box the line above; Builder copy).
+   */
+  unfinishedUndo: 'The free undo may be used up now, so trying again can use one of your AI searches.',
   notSpent: "This didn't use one of your searches.",
   spent: 'This counted as a search, because the AI work was already under way.',
   /** No answer came back, so whether it counted is unknown (Builder copy). */
@@ -146,8 +152,10 @@ export interface AiNoticeBoxProps {
   notice: AiNotice | null;
   /** Where "Search by keyword instead" goes (Explore with the question). */
   keywordHref: string;
-  /** "Try again" after a failure; it runs the AI again, so it shows "· uses 1". */
+  /** "Try again" after a failure; it runs the AI again, so it says what that uses (`retryCounter`). */
   onRetry?: () => void;
+  /** What Try again says it uses: "uses 1" (default), or "free" for an evidence search's one free undo. */
+  retryCounter?: 'uses 1' | 'free';
   className?: string;
 }
 
@@ -157,7 +165,7 @@ export interface AiNoticeBoxProps {
  * a notice when it appears. While Google sign-in is not offered, the trial-used and
  * free-searches-paused messages leave out their sign-in lines (Task 22 review W-10).
  */
-export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNoticeBoxProps) {
+export function AiNoticeBox({ notice, keywordHref, onRetry, retryCounter = 'uses 1', className }: AiNoticeBoxProps) {
   const live = useQuery(aiStatusQuery());
   const limits = useQuery(configQuery()).data?.aiLimits;
   const signIn = useSignIn();
@@ -232,7 +240,7 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
             <p>{COPY.failure[1]}</p>
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {onRetry && (
-                <Button variant="ai" counter="uses 1" onClick={onRetry}>
+                <Button variant="ai" counter={retryCounter} onClick={onRetry}>
                   Try again
                 </Button>
               )}
@@ -246,10 +254,10 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
       case 'unfinished':
         return (
           <Box title={COPY.unfinished[0]}>
-            <p>{COPY.unfinished[1]}</p>
+            <p>{notice.undo && retryCounter !== 'free' ? COPY.unfinishedUndo : COPY.unfinished[1]}</p>
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {onRetry && (
-                <Button variant="ai" counter="uses 1" onClick={onRetry}>
+                <Button variant="ai" counter={retryCounter} onClick={onRetry}>
                   Try again
                 </Button>
               )}
@@ -265,7 +273,7 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
             <p>{notice.reason === 'failed' ? 'Ask again to take a new check.' : COPY.everythingElse}</p>
             {onRetry && (
               <div className="mt-2.5">
-                <Button variant="ai" counter="uses 1" onClick={onRetry}>
+                <Button variant="ai" counter={retryCounter} onClick={onRetry}>
                   Try again
                 </Button>
               </div>

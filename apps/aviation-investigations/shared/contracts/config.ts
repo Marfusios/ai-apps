@@ -1,6 +1,6 @@
 /**
  * `GET /api/config`: public client configuration and the coverage facts the home
- * page and footer print. Publicly cacheable; changes with the dataset revision.
+ * page and footer print. Publicly cacheable; changes with the dataset or public settings.
  */
 import { z } from 'zod';
 import { IsoDateSchema } from './common.js';
@@ -22,6 +22,8 @@ export const ConfigResponseSchema = z.strictObject({
   /** Cloudflare Turnstile site key; null when AI requests are not offered. */
   turnstileSiteKey: z.string().max(200).nullable(),
   googleEnabled: z.boolean(),
+  /** Fields the active policy may apply; empty when disabled, absent in older cached configs. */
+  aiAutomaticFilters: z.array(z.literal('state')).max(1).optional(),
   /** Evidence search allowances; amounts are private. Optional for older clients/fixtures. */
   aiLimits: z.strictObject({ anonymousDaily: z.number().int().nonnegative(), accountDaily: z.number().int().nonnegative(),
     newAccountDaily: z.number().int().nonnegative(), newAccountDays: z.number().int().nonnegative(),

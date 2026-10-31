@@ -31,6 +31,12 @@ describe('planRecorded', () => {
     expect(planRecorded(FILES, local, file('0020_restore_hold').folderMillis).reapply.map((f) => f.tag)).toEqual(['0020_restore_hold']);
   });
 
+  it.each(REAPPLIED_MIGRATIONS['0025_evidence_v3']!)('reapplies known local-test-only 0025 %s without losing its existing claims', previous => {
+    const plan = planRecorded(FILES, withHash(recordedUpTo(LAST), '0025_evidence_v3', previous));
+    expect(plan.problems).toEqual([]); expect(plan.reapply.map(f => f.tag)).toEqual(['0025_evidence_v3']);
+    expect(file('0025_evidence_v3').sql.join(' ')).toContain('ADD COLUMN IF NOT EXISTS');
+  });
+
   it('refuses other content, a skipped migration, and a re-run below a migration it does not run again', () => {
     expect(planRecorded(FILES, withHash(recordedUpTo(LAST), '0019_lock_order', 'a'.repeat(64))).problems).toEqual([
       "0019_lock_order is recorded with other content than this checkout's (aaaaaaaaaaaa)",

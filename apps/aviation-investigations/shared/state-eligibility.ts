@@ -1,25 +1,27 @@
 /** Conservative, deterministic permission to use a model-emitted event-state filter.
  * Does not extract new filters, geocode cities, or modify the input. Uncertainty abstains.
- * Version is frozen by the Task 24 field study before provider calls.
+ * Rule versions and retrospective field-study replays are recorded separately.
  */
-import { US_STATE } from './vocab.js';
+import { US_STATE, US_STATE_CODES } from './vocab.js';
 
-export const STATE_GUARD_VERSION = 'state-explicit.v1';
-export const AUTOMATIC_STATE_CODES = Object.freeze([
-  'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 'GA', 'HI', 'IA', 'ID', 'IL', 'IN',
-  'KS', 'KY', 'LA', 'MA', 'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ',
-  'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA',
-  'WI', 'WV', 'WY',
-] as const);
+export const STATE_GUARD_VERSION = 'state-explicit.v1.3';
+export const AUTOMATIC_STATE_CODES = US_STATE_CODES;
 const allowed = new Set<string>(AUTOMATIC_STATE_CODES);
 const ambiguous = new Set(['GA', 'NY', 'WA']);
 const names = [...AUTOMATIC_STATE_CODES].sort((a, b) => US_STATE[b]!.length - US_STATE[a]!.length);
 const unsafe = /\b(?:not|no|without|except|exclude\w*|excluding|outside|avoid\w*|rather\s+than|instead\s+of|other\s+than|neither|nor|anywhere|ignore\w*|disregard\w*|override\w*|instructions?|system|assistant|prompt|pretend\w*|hypothetic\w*|imagine\w*|example\w*|quoted?|quotations?|reference|titled?|named|departure|departed|departing|destination|resident\w*|residence|lives?|living|resides?|registered|registration|manufactured|built|factory|headquarters|mailing|address|born|operator|company|airlines?|based)\b|\b(?:set|add|apply|output|return)\s+(?:the\s+)?(?:state|filter|json)\b/i;
+const otherEvent = /\b(?:another|other|previous|prior|earlier|later|similar|same|second|related)\s+(?:[\w-]+\s+){0,2}?(?:accidents?|crash(?:es)?|events?|incidents?|occurrences?|mishaps?|investigations?|cases?)\b|\b(?:titles|headlines?)\b/i;
+const referencedEvent = /\b(?:cit(?:e|es|ed|ing|ations?)|discuss\w*|mention\w*|referenc\w*|refer(?:s|red|ring)?|quot\w*|compar\w*|resembl\w*|similar|unlike|another|other|others|previous|prior|earlier|later|same|second|related|follow(?:s|ed|ing)?|preced\w*|after|before|lessons?)\b|\blike\s+(?:the|that|this|those|these|a|an|one|what|it)\b/i;
+const titleText = /\b(?:titles?|titled|headings?|headlines?|captions?|words?|phrases?|text|wording|named|called|label(?:s|led|ed)?)\b/i;
+const movementLocation = /\b(?:heading|headed|bound|flying|flew|en\s+route|destined|diverted|diverting|returning|returned|ferried|ferrying)\s+(?:to|for|toward|towards)\b(?:\s+[\w'-]+){0,5}?\s+(?:(?:in|at|near)\s+)?(?:the\s+state\s+of\s+)?$/i;
+const departureLocation = /\b(?:took\s+off|takes?\s+off|departed|departing|depart|originat\w*|started|launched)\b(?:\s+[\w'-]+){0,5}?\s+(?:in|from|at|near)\s+(?:the\s+state\s+of\s+)?$/i;
+const attributeLocation = /\b(?:trained|learned\s+to\s+fly|maintained|overhauled|serviced|repaired|inspected|licensed|certified|certificated|registered|sold|bought|purchased|stored|hangared|based|built|manufactured|assembled|headquartered)\b(?:\s+[\w'-]+){0,5}?\s+(?:in|at|near|from)\s+(?:the\s+state\s+of\s+)?$/i;
+const definiteEvent = /\b(?:the|that|this)\s+(?:[\w-]+\s+){0,2}?(?:crash|accident|incident|mishap|event|occurrence)\s+(?:in|near|at)\s+(?:the\s+state\s+of\s+)?$/i;
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-interface Mention { code: string; start: number; end: number; eligible: boolean }
+interface Mention { code: string; start: number; end: number; eligible: boolean; attributionStart: number }
 export interface StateEligibility {
   states: string[];
-  reason: 'applied' | 'empty' | 'unsupported_state' | 'unsafe_context' | 'not_explicit' | 'ambiguous_context' | 'set_mismatch';
+  reason: 'applied' | 'empty' | 'unsupported_state' | 'unsafe_context' | 'other_event' | 'referenced_event' | 'title_text' | 'attributed_elsewhere' | 'not_explicit' | 'ambiguous_context' | 'set_mismatch';
 }
 
 export function eligibleEmittedStates(question: string, emitted: readonly string[]): StateEligibility {
@@ -30,6 +32,14 @@ export function eligibleEmittedStates(question: string, emitted: readonly string
   if (question.length > 600 || /[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u.test(question)) return reject('unsafe_context');
   const text = question.normalize('NFKC');
   if (unsafe.test(text) || /["“”«»`<>]|(?:^|\W)'[^']+'(?:\W|$)/u.test(text)) return reject('unsafe_context');
+  // Another event's state or title wording does not establish this event's state.
+  // This adds only a rejection to v1.1; accepted sets cannot expand.
+  if (otherEvent.test(text)) return reject('other_event');
+  // Reject state-named places even when the state would otherwise be eligible.
+  // This only removes applications from the evaluated v1 guard.
+  for (const code of names) {
+    if (new RegExp(`\\b${escape(US_STATE[code]!)}\\s+(?:city|county|river|bay|lake|sound|valley|canyon|islands?|panhandle|keys|gulf|strait|peninsula|range|mountains?)\\b`, 'i').test(text)) return reject('ambiguous_context');
+  }
   const mentions: Mention[] = [];
   for (const code of names) {
     const regex = new RegExp(`\\b${escape(US_STATE[code]!)}\\b`, 'gi');
@@ -43,7 +53,7 @@ export function eligibleEmittedStates(question: string, emitted: readonly string
       const location = /\b(?:in|within|across|state\s+of)\s+(?:(?:either|the)\s+)?$/i.test(before)
         || /^\s*(?:investigations?|accidents?|events?|cases?|records?)\b/i.test(after) && start === 0
         || qualified;
-      mentions.push({ code, start, end, eligible: location && (!ambiguous.has(code) || qualified) });
+      mentions.push({ code, start, end, eligible: location && (!ambiguous.has(code) || qualified), attributionStart: start });
     }
   }
   // A postal code must have a location qualifier and a spelled-out city; bare IN/OR/ME never qualify.
@@ -53,7 +63,10 @@ export function eligibleEmittedStates(question: string, emitted: readonly string
     if (!allowed.has(code)) continue;
     const end = m.index! + m[0].length;
     const start = end - code.length;
-    if (!mentions.some(v => start < v.end && end > v.start)) mentions.push({ code, start, end, eligible: true });
+    // Attribute the whole qualified place (Anchorage, AK), starting at the city.
+    // The existing code offsets still govern complete sets, ORs and overlaps.
+    const attributionStart = m.index! + m[0].indexOf(m[1]!);
+    if (!mentions.some(v => start < v.end && end > v.start)) mentions.push({ code, start, end, eligible: true, attributionStart });
   }
   mentions.sort((a, b) => a.start - b.start);
   // Additional members of one explicit same-field OR/list inherit its location qualifier.
@@ -78,5 +91,16 @@ export function eligibleEmittedStates(question: string, emitted: readonly string
   const explicit = [...new Set(mentions.map(m => m.code))].sort();
   if (explicit.length > 1 && /\band\b/i.test(text.slice(mentions[0]!.end, mentions.at(-1)!.start))) return reject('ambiguous_context');
   if (JSON.stringify(explicit) !== JSON.stringify(states)) return reject('set_mismatch');
+  // v1.3 is v1.1 plus conservative rejections. Reference words after the first
+  // location may describe the requested events, but title wording is global.
+  if (titleText.test(text)) return reject('title_text');
+  const starts = mentions.map(m => m.attributionStart);
+  const first = starts.length ? Math.min(...starts) : text.length;
+  if (referencedEvent.test(text.slice(0, first))) return reject('referenced_event');
+  for (const start of starts) {
+    const before = text.slice(0, start);
+    if (movementLocation.test(before) || departureLocation.test(before) || attributeLocation.test(before)) return reject('attributed_elsewhere');
+    if (definiteEvent.test(before)) return reject('referenced_event');
+  }
   return { states, reason: 'applied' };
 }

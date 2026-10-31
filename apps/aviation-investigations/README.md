@@ -1171,27 +1171,33 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   it. The server's Content-Security-Policy allows `https://challenges.cloudflare.com` as
   a script and frame source whenever anonymous AI is configured (see "Security headers"
   under API server).
-- **The evidence view** (`/ai/:id`, UI_DESIGN §4.9; contract `evidence.v2`, the advisory-only
-  design): Ask AI on Home or Explore sends `POST /api/evidence` (`kind: "question"`). Nothing
+- **The evidence view** (`/ai/:id`, UI_DESIGN §4.9; contract `evidence.v3`): Ask AI on Home or
+  Explore sends `POST /api/evidence` (`kind: "question"`). Nothing
   blocks a search: the answer is always results, which open the search's page, seeded from the
   answer; a question about something else, or asking for operational advice, gets the contract's
-  fixed capability note (`EVIDENCE_NOTE_TEXT`) calmly above its results. Results always come from the question as asked, or
-  from the reader's own words and filters. The page shows the question, then "Your search" (the
-  question as asked or the reader's words, and the applied filters from `appliedFilters`, each a
-  removable chip), then the AI's suggestion, magenta and dashed under the contract's label
-  "Suggested filters and terms — not applied": "Apply these filters · uses 1" sends an edited
-  search with exactly those filters and no `terms`, so the question stays the query, and only "Apply
-  filters and terms · uses 1" sends the suggested terms. A search whose scope stage failed has no
-  suggestion and nothing else changes. An explicit counting or comparison request adds a hint
+  fixed capability note (`EVIDENCE_NOTE_TEXT`) calmly above its results. Results come from the
+  question as asked (with what the server's policies added to it, said as such), or from the
+  reader's own words and filters. The page shows the question, then "Your search" (the question as
+  asked or the reader's words; the terms the AI added to keyword search, `query.keywords`, under
+  "Also searched" or "Keywords searched" with a magenta "AI" tag; and the applied filters from
+  `appliedFilters`, each a removable chip, a state applied because the question names it,
+  `automaticFilters`, tagged "from your question"), then what is left of the AI's suggestion,
+  magenta and dashed under the contract's label "Suggested filters and terms — not applied" (its
+  terms only while keyword search has not read them): "Apply these filters · uses 1" sends an
+  edited search with the search's filters plus those and no `terms`, so the query stays, and only
+  "Apply filters and terms · uses 1" sends the suggested terms. A search whose scope stage failed
+  has no suggestion and nothing else changes. An explicit counting or comparison request adds a hint
   above the results (the dashboard; the cases found and Compare). Then the contract's heading and
-  notice, the count ("21 retrieved · highest-ranked first · not every matching investigation") and the cards:
+  notice, the count ("21 retrieved · highest-ranked first · not every matching investigation", or
+  "leading results ordered by AI for relevance" when a reranker ordered them, `order`) and the cards:
   Explore's case facts, every aircraft of a multi-aircraft event, every probable-cause
   variant with its scope, and up to three whole paragraphs with their section and scope; a
   probable-cause paragraph among them is marked inside its statement instead of shown twice
   (`web/src/features/evidence/fold.ts`; the drawer and Compare do the same).
   Literal matches are marked with a solid underline and fill, synonyms with a dotted
   underline, with a legend and words for screen readers, never colour alone; the legend and
-  the relevance line say whose terms are marked (the suggestion's, else the reader's words).
+  the relevance line say whose terms are marked, from the server's `marks` (the suggested terms,
+  the reader's words, or "the words searched" when AirCase added terms).
   The relevance line gives only the applied filters met, the marked terms' occurrences in the
   shown paragraphs ("Suggested terms in these excerpts: “icing” appears 3 times") and the
   retrieval channels ("found by keyword and similarity search"). "Show the full analysis
@@ -1201,14 +1207,22 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   more" reads the next saved page for free (`?pages=n` keeps them on a reload) under the
   total. Typing words, removing a chip or adding a filter is free until "Search again · uses
   1" sends `kind: "edited"`, a new 24-hour search that keeps the question, with exactly the
-  filters left and `terms` only when the reader typed new words; "Show keyword results" opens
-  Explore with the draft's words (or the question) and filters, free. An empty or tiny result
-  shows its filters and a free keyword search without them; a gone search (a 404) says so
+  filters left, `terms` only when the reader typed new words and `keywords: "question"` when they
+  removed the added terms. While the page says the search's one free undo is there (`undo:
+  "available"`), a draft that only removes what AirCase added (the whole automatic state, the
+  added terms, or both) reads "Search again · free", by the server's rule
+  (`web/src/features/evidence/undo.ts`, held to `server/evidence/undo.ts` by
+  `tests/unit/evidence-undo.test.ts`); it runs with the visitor's own searches used up and through
+  the usual check, and the searches it came from then say `used`. The created page's `freeUndo`
+  decides: a page that says it was not free says "This search used one of your AI searches.". "Show keyword
+  results" opens Explore with the draft's words (or the question) and filters, free. An empty or
+  tiny result shows its filters (an automatic state tagged, the added terms said) and a free
+  keyword search without them; a gone search (a 404) says so
   and offers to ask again. The drawer, Compare (`?evidence=:id&pages=n`) and print show
   the same projection under the heading and notice. Nothing on these surfaces is written
   by AI: only NTSB text, coded data, the contract's fixed copy, the reader's own question and
-  edits, and the suggested terms only as labelled counts and marks (a component test checks
-  every text node). Model text is always rendered as text, never markup.
+  edits, and the AI's terms only quoted under their label and as labelled counts and marks (a
+  component test checks every text node). Model text is always rendered as text, never markup.
 - **Briefs that exist**: the interface starts none. While the server has briefs off
   (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
   failed step offers New search, not Try again.
@@ -1249,7 +1263,7 @@ WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/moc
 pnpm build:web        # production build into dist/web
 pnpm test:web         # component tests (jsdom, offline, MSW)
 pnpm test:e2e         # Playwright against the dev server in mock mode
-pnpm test:e2e:real    # Playwright against the real API server: the fixture index, AI evidence search with offline fakes, signing in and out
+pnpm test:e2e:real    # Playwright against the real API server: the fixture index, AI evidence search with offline fakes (and, on E2E_REAL_V3_PORT, the evidence configuration live runs), signing in and out
 ```
 
 ### API contracts and the mock API
@@ -1286,10 +1300,20 @@ of scope, operational, counting, comparison, clarification, no results) or, the 
 a question is asked, a failure: "unavailable" (503, its key then a 409), "lost before
 start" (no answer, its key then a 409) and "lost response" (no answer, its key then
 replays the started brief).
-The evidence routes are answered by `web/mock/evidence.ts` (`evidence.v2`): retrieval over the
-fixture index from the question's own words alone (an edit: exactly the filters sent, with the
-real filter rules, and the reader's words when sent, else the earlier query), a stand-in scope
-stage that only suggests filters and terms (rules for a few words, phases and states), hints for
+The evidence routes are answered by `web/mock/evidence.ts` (`evidence.v3`), standing in for one
+ranking configuration and automatic-filter policy, like a server (`createHandlers({ evidence })`;
+in the dev mock mode and the end-to-end tests, session storage `casebook-mock-evidence` as JSON
+`{"ranking": "er-qt-h50-v1", "autoFilters": "state-explicit.v1.3"}`; the server's defaults,
+`er-q-v1` and `none`, otherwise; `MOCK_EVIDENCE_RELEASE` is what live runs, `er-q-v1` with
+`state-explicit.v1.3`):
+retrieval over the fixture index from the question's own words, plus or instead of the suggested
+terms as the configuration says, with a state the question names applied through the server's own
+guard and the leading cases put in order by a fixed stand-in for a reranker's grades (an edit:
+exactly the filters sent, with the real filter rules, and the reader's words when sent, the
+question's when it restores them, else the earlier query), the one free undo by the server's rule
+(it uses none of the visitor's searches and passes a used-up quota; every page says whether it is
+still there, `undo`, as the server computes it from its claim), a stand-in scope
+stage that suggests filters and terms (rules for a few words, phases and states), hints for
 explicit counting and comparison requests, capability notes for questions about something else or
 asking for operational advice (results still come), whole paragraphs located
 in the fixture texts and chosen by the query (a probable-cause paragraph among them, as the server's
@@ -1299,13 +1323,19 @@ ownership handed over on sign-in, and idempotency keys (a replay answers the sam
 body under the same key is a 409). `MOCK_EVIDENCE_QUESTIONS` names the questions the tests ask:
 21 results, suggested filters that leave 2 and none once applied, a midair, multi-byte text, a
 failed scope stage ("scope failure"), the hints and both notes; a question with "nothing"
-retrieves none, one with "expire" makes a search that is gone at once, and the brief's failure
-keywords work here too. Every answer is checked against the contract in
-`tests/unit/evidence-mock.test.ts`, which also checks that the suggestion changes no ranking,
-filter or excerpt.
+retrieves none, one with "expire" makes a search that is gone at once, one with "undo fails" makes
+a search whose first free undo is admitted, takes the undo's one-use claim and then fails (a 503,
+the claim kept, as the server keeps it), and the brief's failure keywords work here too; "Carb icing
+on approach in Texas", "Carb icing on approach in Missouri" (whose cases hold the suggested terms)
+and "Engine power loss in California or Nevada" name states. Every answer, in each configuration, is checked against the contract in
+`tests/unit/evidence-mock.test.ts`, which also checks that an unapplied suggestion changes no
+ranking, filter or excerpt, what each configuration discloses, and the free-undo rule.
 `/api/config` reports `aiLimits` (`MOCK_AI_LIMITS` in `web/mock/ai-status.ts`: 10 a day
 anonymous, 50 per account, 20 in an account's first 3 days, 600 a month; briefs on, so the
-brief pages stay testable; `createHandlers({ aiLimits })` changes them).
+brief pages stay testable; `createHandlers({ aiLimits })` changes them) and `aiAutomaticFilters`
+(`["state"]` when the mock's evidence policy applies states, else `[]`; `createHandlers({
+aiAutomaticFilters })` sets it, and `null` leaves it out as a server without the field would), which
+words Explore's AI nudge and the About page's AI line (a missing field reads as nothing applied).
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
@@ -1389,7 +1419,7 @@ publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 | Endpoint | Response | Caching |
 | --- | --- | --- |
 | `GET /api/health` | `{status, database, search}` states only; 200, or 503 when either check fails; one probe shared for 2 s | `no-store`; rate limited except over loopback |
-| `GET /api/config` | `ConfigResponse`: snapshot date, dataset revision, coverage, the Turnstile site key once the anonymous gate is configured | `public, max-age=300`, ETag |
+| `GET /api/config` | `ConfigResponse`: snapshot date, dataset revision, coverage, enabled `aiAutomaticFilters`, the Turnstile site key once the anonymous gate is configured | `public, max-age=300`, ETag |
 | `GET /api/search` | `SearchResponse` | `public, max-age=60`, keyed by the full URL |
 | `GET /api/cases/:ntsbNo` | `CaseDetail` from PostgreSQL; 404 for unknown numbers | `public, max-age=300`, ETag |
 | `GET /api/dashboard?cohort=default\|all` | `DashboardResponse`, computed once per dataset revision and cohort | `public, max-age=300`, ETag |
@@ -1507,7 +1537,11 @@ stalled connections are checked every 5 s.
   files) and the not-found handler (the 404 page or a plain 404), which need no client
   address and are not limited, and `GET /api/health` over loopback (the container's health
   check). A case page (`/cases/:ntsbNo`) and the sitemaps read the database, so they are
-  limited like the API. Whether a 404 is JSON or the page also follows the decoded path
+  limited too, each by a limit of its own apart from the API's 60 a minute, so a crawler cannot
+  use up a visitor's API allowance: the sitemaps, served from memory, a burst of 600 then 10 a
+  second (`SITEMAP_ROUTES`; under the API's limit a sitemap was one a search engine "couldn't
+  fetch"); a case page, one database read, a burst of 120 then 5 a second per network identity.
+  Whether a 404 is JSON or the page also follows the decoded path
   (`/%61pi/nope` is a JSON 404).
 - **Network identity** (`server/http/network-identity.ts`). Without trusted proxies
   the bucket key is the socket address. With `TRUSTED_PROXY_CIDRS` (tunnel mode) only
@@ -1554,7 +1588,10 @@ tables when it starts and raises only the per-minute, per-network and in-flight 
 since every browser of the run is 127.0.0.1. `tests/e2e-real/evidence.spec.ts` drives the
 evidence view through it, with the mock suite's Turnstile stand-in in the browser, and
 replays the known context-loss examples (`tests/support/context-loss.ts`) on the initial
-card, drawer, Compare and print; `E2E_SCREENSHOTS=<dir>` keeps its screenshots. It also starts a
+card, drawer, Compare and print; `E2E_SCREENSHOTS=<dir>` keeps its screenshots. The same process
+serves the evidence configuration live runs (`er-q-v1` with `state-explicit.v1.3`) as a second app
+on `E2E_REAL_V3_PORT` (default `E2E_REAL_PORT` + 3), sharing the database, for
+`tests/e2e-real/evidence-v3.spec.ts`. It also starts a
 second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.0.0.1 at
 `E2E_AUTH_PORT`, default 5182) and an offline stand-in for Google on another site
 (localhost at `E2E_GOOGLE_PORT`, default 5183), so that Chromium applies `SameSite` to the
@@ -1593,8 +1630,8 @@ string: a served case number not in canonical form (`/cases/dfw08ta066`), a page
 trailing slash, a page path in the wrong letter case (`/About` to `/about`) and `/index.html`
 (to `/`). The page goes to GET and HEAD requests whose `Accept` is absent or takes `text/html`
 or `*/*`; other requests, and a path with a file extension that no route serves, get a
-plain-text 404. A case page reads the database: it counts against the API's rate limit and
-needs a network identity. A page request that is refused (429) or fails (500, 503) gets the
+plain-text 404. A case page reads the database: it counts against the case pages' own rate limit
+(a burst of 120, then 5 a second per network identity, apart from the API's) and needs a network identity. A page request that is refused (429) or fails (500, 503) gets the
 page with that status, noindex, without a canonical URL, and with the `Retry-After` the API
 would send; the API keeps its `ErrorResponse`. Explore's and Compare's titles read the query
 string with bounded work (`shared/page-params.ts`), as those pages are not rate limited.
@@ -1823,22 +1860,29 @@ log what keeps any part off (setting names only). The tables are in migration 00
 
 ### AI evidence view
 
-The backend contract is `evidence.v2` (`shared/contracts/evidence.ts`). Original-question
-retrieval runs independently of the advisory `scope.e3` generator. Its suggested filters
-and terms are **not applied**. Render them as text under `EVIDENCE_SUGGESTION_LABEL`;
-never render model text as HTML. All surfaces keep `EVIDENCE_NOTICE`. This beta has no
+The backend contract is `evidence.v3` (`shared/contracts/evidence.ts`): it discloses
+executed keywords, automatic state filters, ordering and mark source, plus `freeUndo`
+for the created search and the current `undo: available | used | none` hint.
+The hint is read from the claim column on every page read or replay, never stored
+in the immutable result; admission remains authoritative if another tab uses it.
+With the default question-only ranking and no automatic filters, `scope.e3` filters
+and terms remain unapplied suggestions. Render remaining suggestions as text under
+`EVIDENCE_SUGGESTION_LABEL`; never render model text as HTML. All surfaces keep `EVIDENCE_NOTICE`. This beta has no
 specific unchecked readings or generated factual prose.
 
 `POST /api/evidence` accepts either:
 
-- `{kind: "question", question, idempotencyKey, turnstileToken?}`: one optional-suggestion
-  scope attempt, then one query embedding and retrieval over the default cohort with
-  **no model-applied filters**. Scope error, timeout, invalid or over-cap output returns
+- `{kind: "question", question, idempotencyKey, turnstileToken?}`: at most one scope attempt,
+  then one query embedding and retrieval using the configured ranking and automatic
+  filter policy (defaults: question words and no automatic filters). Scope error,
+  timeout, invalid or over-cap output returns
   ordinary results with `suggestion: null`, `note: null` and settles any scope spend.
-- `{kind: "edited", from, filters, terms?, idempotencyKey, turnstileToken?}`: an owned,
+- `{kind: "edited", from, filters, terms?, keywords?: "question", idempotencyKey, turnstileToken?}`: an owned,
   unexpired search's original question, with exactly the user-supplied filters. Omitted
   `terms` retains the parent's executed query; present `terms` explicitly accepts or
-  types a replacement. Applying suggested filters alone never accepts suggested terms.
+  types a replacement; `keywords: "question"` instead restores the original question's
+  words and cannot be combined with `terms`. Applying suggested filters alone never
+  accepts suggested terms.
   A removed filter stays removed. Edits skip scope, have `note: null`, and use the
   current publication.
 
@@ -1846,8 +1890,10 @@ Questions and edited terms containing NUL or lone UTF-16 surrogates are rejected
 400 before identity, admission or provider calls; valid astral characters are accepted.
 
 A synchronous 201 returns `{kind: "results", search: EvidencePage}`. The page records
-`query: {source: "question"} | {source: "edited", terms}`, `appliedFilters`, nullable
-`suggestion: {filters, terms}`, nullable `hint` and nullable `note`. It has no
+`query: {source: "question", keywords} | {source: "edited", terms}`; `keywords` identifies
+`question`, `question+terms` or `terms`, with the added terms when used. It also reports
+`appliedFilters`, nullable `suggestion: {filters, terms}`, nullable `hint` and nullable
+`note`. It has no
 `interpretation` or `edited` response field. A filter-only edit may still have
 `query.source: "question"`. A validated scope intent selects only a fixed capability note:
 `out_of_scope` → `note: "scope"`; `operational_advice` → `note: "operational_advice"`;
@@ -1868,11 +1914,12 @@ normal validation, identity, quota and budget checks remain enforced.
 
 `retrieval.v2` fuses passage BM25, passage similarity and cases narrative BM25, 200
 candidates per channel with the existing fusion and tie ordering. All three channels,
-cohort, ranking, excerpts and pagination use only the executed query and user filters.
+cohort, ranking, excerpts and pagination use the executed query and applied filters,
+including any disclosed state accepted by the configured automatic policy.
 The baseline keeps Task 23 highlights and occurrence labels: suggested terms when
 a suggestion is retained, otherwise executed query words. Non-baseline configurations
 use executed lexical words. These occurrences do not establish question satisfaction.
-`evidence.v2` maps at most 100 cases with eight concurrent requests inside the shared deadline.
+`evidence.v3` maps at most 100 cases with eight concurrent requests inside the shared deadline.
 It stores that ranking, concrete
 indices, canonical generation, retrieval seed spans, channels and result projection.
 It has 10 cases/page and at most 10 pages; `total` is the saved candidate count, not
@@ -2353,12 +2400,27 @@ local-services mode.
 
 
 Task 24 adds a separate `AVIATION_EVIDENCE_RANKING` setting for evidence searches.
-The default/live allowlist remains `er-q-v1` (question-only retrieval, no rerank).
+The default is `er-q-v1` (question-only retrieval, no rerank); live also allows
+`er-q-h50-v1`, the Haiku rerank of the top 50 (owner's decision, 31 October 2026).
 Dev alternatives use validated scope terms in BM25 and/or a bounded Haiku/Sonnet
 reranker. See [Evidence ranking](docs/RUNBOOK.md#evidence-ranking) for configurations,
 reservations, evaluation entry points and rollback. The server records executed
-lexical/vector texts and the configuration hash privately; `evidence.v2` is unchanged.
+lexical/vector texts and the configuration hash privately; `evidence.v3` exposes the
+corresponding keyword and ordering disclosures.
 The hashed highlight policy preserves Task 23 suggestion highlights for the baseline;
-every alternative uses executed lexical words. The existing mock/UI descriptions above
-describe Task 23; the controller's planned `evidence.v3` must disclose applied terms
-and AI ordering before any alternative is allowed on live.
+every alternative uses executed lexical words. The web client discloses applied terms and
+AI ordering (`evidence.v3`, "Web client" above and UI_DESIGN §4.9); independent clearance is
+still required before any alternative is allowed on live.
+
+
+Evidence.v3 adds server-owned disclosures for executed keywords, automatically applied
+state, ordering, mark source and a one-use quota-free undo. The page's `undo` is
+`available` for an unexpired original v3 question with automatic additions and no
+claim, `used` after its claim is consumed, and `none` for edits, v2 rows or questions
+without additions; expired searches return 404. Automatic filtering is
+independent of ranking: `AVIATION_EVIDENCE_AUTO_FILTERS=none` is the default;
+`state-explicit.v1.3` is an explicit opt-in on dev or live. No other scope field
+is applied automatically. See
+[the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migration
+0025, the matching client, rollback and accounting. Existing v2 records upgrade on
+read; the original scope.e3 wire schema and all evaluated ranking hashes are unchanged.

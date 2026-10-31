@@ -55,7 +55,10 @@ scope skipped by admission's daily uncertain-charge rule have no note. Notes nev
 block search or affect retrieval, pagination, admission or accounting; they are stored
 with the private page, not exported as question-derived trace attributes. Server-only
 `evidence-hints.v3` supplies filter-free statistics and captured-ID comparison hints.
-Counts are literal/synonym occurrences of executed lexical words, never evidence of question satisfaction.
+The baseline counts literal/synonym occurrences of retained suggested terms, or executed
+words when no suggestion is retained. Other ranking versions count executed lexical
+words. The v3 `marks` field states which policy actually produced the marks/counts;
+none establishes satisfaction of the question.
 
 Before paid evaluation, freeze prompts, models, separate evidence caps, routing guards,
 `paragraphs.v2`, `evidence.v2`, labels, thresholds and the ledger allocation. Require
@@ -547,3 +550,41 @@ log around the gate. Cache identity includes the ranking hash, exact inputs and 
 dataset/index identity. Free `ai-preflight` checks rerank depths 50/100 and Sonnet/50
 as well as scope. Generation quality/latency and the planned public disclosure require
 separate evaluation and gate review; sizing is not an approval to spend or deploy.
+
+
+### Evidence.v3 disclosures and automatic state
+
+Automatic filtering has its own frozen identity, separate from every evaluated ranking
+configuration. Saved searches record `autoFilterPolicy` (version/sha256),
+`automaticFilters` and `autoFilterReason`; only the applied state set is public.
+The fitted `addedTerms` suffix is saved once and drives disclosure. Failed attempts
+retain actual automatic state/filters in private diagnostics, never logs or traces.
+The automatic policy binds `state-probes.v5` outputs as well as the guard version.
+Cache identities for an automatic-filter experiment must include both policy identities,
+the question, explicit edit and pinned corpus. The scope.e3 wire schema is unchanged.
+`none` remains the default and rollback. The reviewed `state-explicit.v1.3` is also
+allowed on live; the operator enables it explicitly. The live ranking allowlist
+is `er-q-v1` and `er-q-h50-v1`, and ranking hashes are unchanged. v1.3 is v1.1 plus five
+rejection rules (DESIGN), including reference position and attribution at every
+location mention. v1.1/v1.2 were never deployed and are no longer accepted settings.
+The offline fixture of 1,040 recorded C answers reproduces the controller's
+365 TP / 0 FP / 35 FN for the guard, two fewer applications than v1.1. After the
+pipeline's separate case-search intent requirement it gives 363 TP / 0 FP / 37 FN.
+Do not present either retrospective replay as fresh confirmation on unseen wording.
+The 499 probes in `state-probes.v5` include the review's 31 abstentions and 11
+positives, deliberate abstentions and witnesses for every new regex alternative.
+Mutation tests isolate overlapping rejection rules; a frozen v1.1 fixture checks
+that v1.3 only removes applications.
+
+After enabling state, monitor private `autoFilterReason` counts and free-undo claims
+relative to state-applied original searches. Removals provide a precision signal,
+not a labelled precision estimate: a claim can remove keywords too, or precede a
+failed search. Keep questions, state sets and those private diagnostics out of logs
+and traces. Missing `aiAutomaticFilters` on a cached config means unknown capability;
+the client uses cautious suggestion wording until it refreshes.
+
+A page discloses actual lexical keywords, `order` (AI grades applied versus match order),
+`marks`, automatic state and `freeUndo`. These are server-derived facts, never scope prose.
+Quota-free undo still reserves and settles real provider spend, counts rate-limit attempts,
+and appears in the cost ledger. Its original parent's write-once reservation claim prevents
+reuse with another idempotency key or after sign-in. It is not a paid-call exemption.

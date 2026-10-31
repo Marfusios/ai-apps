@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SITE_DESCRIPTION } from '../../shared/brand';
 import { pageTitle, type TitledPage } from '../../shared/page-titles';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
+import { MOCK_EVIDENCE_RELEASE } from '../../web/mock/evidence';
 import { createHandlers } from '../../web/src/mocks/handlers';
 import indexHtml from '../../web/index.html?raw';
 import { Footer } from '../../web/src/components/Footer';
@@ -171,7 +172,8 @@ describe('the About page (UI_DESIGN §4.8)', () => {
     expect(text).toContain('compare up to four of them on one page');
     expect(text).not.toContain('side by side');
     expect(text).toContain('dashboard');
-    // The AI line follows the AI status (Task 23): the mock's visitor has AI searches.
+    // The AI line follows the AI status (Task 23): the mock's visitor has AI searches, and the
+    // server's evidence policy applies nothing on its own (`aiAutomaticFilters: []`).
     await waitFor(() =>
       expect(screen.getByRole('main').textContent).toContain(
         'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words, and AI suggests filters you can choose to apply.',
@@ -182,6 +184,43 @@ describe('the About page (UI_DESIGN §4.8)', () => {
     expect(text).toContain('NTSB aviation investigation database (avall.mdb)');
     expect(text).toContain('It is not an NTSB service');
     expect(text).not.toMatch(/coming soon|will soon|we plan|roadmap/i);
+  });
+});
+
+describe('the About page words its AI line for what the evidence policy applies on its own (Task 24)', () => {
+  it('a US state the question names, when the configuration says the policy applies states', async () => {
+    server.use(...createHandlers({ aiAutomaticFilters: ['state'] }));
+    renderApp('/about');
+    const main = await screen.findByRole('main');
+    await waitFor(() =>
+      expect(main.textContent).toContain(
+        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state your question names explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.',
+      ),
+    );
+    expect(main.textContent).not.toContain('AI suggests filters you can choose to apply');
+  });
+
+  it('a server that does not report the policy: the configuration still reads, and the line claims nothing applied', async () => {
+    server.use(...createHandlers({ evidence: MOCK_EVIDENCE_RELEASE, aiAutomaticFilters: null }));
+    renderApp('/about');
+    const main = await screen.findByRole('main');
+    // The line waits for the configuration, so it shows only once the configuration has been read.
+    await waitFor(() =>
+      expect(main.textContent).toContain(
+        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words, and AI suggests filters you can choose to apply.',
+      ),
+    );
+    expect(main.textContent).not.toContain('can be applied automatically');
+  });
+
+  it('nothing about AI searches while the configuration is unknown, though the status is known', async () => {
+    server.use(http.get('*/api/config', () => new Promise<Response>(() => {})));
+    renderApp('/about');
+    const main = await screen.findByRole('main');
+    // The AI status is read (the header counter shows it); the configuration never answers.
+    await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 10 of 10'));
+    expect(main.textContent).not.toContain('Ask in plain English');
+    expect(main.textContent).not.toContain('AI features are not available yet.');
   });
 });
 

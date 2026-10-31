@@ -7,7 +7,8 @@ const list = 'list-disc space-y-1 pl-5';
 const cookie = 'font-mono text-[0.85em]';
 
 /**
- * The privacy notice (UI_DESIGN §4.8, DESIGN §7), approved by the owner on 24 October 2026.
+ * The privacy notice (UI_DESIGN §4.8, DESIGN §7), approved by the owner on 24 October 2026 and
+ * amended on 31 October 2026 to say that Claude also orders the investigations found.
  * Publishing it (`PRIVACY_NOTICE.final`, shared/privacy.ts) is what lets live turn Google sign-in
  * on. Every statement was checked against the code: change the text, and its date, in the same
  * commit as any change to what the site keeps or who receives it. It keeps the Turnstile
@@ -93,7 +94,7 @@ export function Privacy() {
       <h2>AI searches</h2>
       <p>
         Our server sends the text of your AI search to Anthropic, whose Claude model turns it into search filters and
-        terms, and to OpenAI, which turns it into numbers (an “embedding”) for finding passages of similar meaning.
+        terms and puts the investigations found in order of relevance, and to OpenAI, which turns it into numbers (an “embedding”) for finding passages of similar meaning.
         Neither gets anything else about you, but please keep personal details out of your questions. Results are NTSB
         text and data, not AI-written summaries. Your question, filters and results are kept 24 hours, then deleted;
         only your browser or account can open them.
@@ -162,7 +163,7 @@ export function Privacy() {
 
       <h2>Changes</h2>
       <p>We’ll update this page and its date if anything here changes.</p>
-      <p className="font-sans text-meta text-muted">Last updated: 24 October 2026</p>
+      <p className="font-sans text-meta text-muted">Last updated: 31 October 2026</p>
 
       {!PRIVACY_NOTICE.final && (
         <p className="font-sans text-meta text-muted">

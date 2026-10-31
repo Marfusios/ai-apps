@@ -2,7 +2,7 @@ import hashesFixture from '../support/evidence-ranking-hashes.json' with { type:
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { loadConfig } from '../../shared/config.js';
-import { EVIDENCE_RANKING_VERSIONS } from '../../shared/evidence-ranking.js';
+import { EVIDENCE_RANKING_VERSIONS, LIVE_EVIDENCE_RANKINGS } from '../../shared/evidence-ranking.js';
 import { createFakeProvider, type FakeScript } from '../../server/ai/fake.js';
 import { createAnthropicProvider, type AnthropicMessagesClient } from '../../server/ai/anthropic.js';
 import { stageWorstCaseUsd } from '../../server/ai/pricing.js';
@@ -18,12 +18,12 @@ import { runRerankPreflight, rerankPreflightRequests } from '../../worker/rerank
 import type { EvidenceRetriever, EvidenceRetrievalResult } from '../../server/evidence/retrieve.js';
 import type { PinnedDataset } from '../../server/dataset.js';
 import type { Admission } from '../../server/quota/admit.js';
-import { evidenceCases } from '../../web/mock/evidence.js';
+import { syntheticEvidenceCases } from '../support/evidence-cases.js';
 
 const question = 'Find engine  failures\n after maintenance';
 const scope = { intent: 'case_search' as const, terms: 'mechanical failure', filters: { state: ['CA'] } };
 function result(n = 3): EvidenceRetrievalResult {
-  const base = evidenceCases({}, 'engine')[0]!;
+  const base = syntheticEvidenceCases(1)[0]!;
   const cases = Array.from({ length: n }, (_, i) => ({ ...structuredClone(base), rank: i + 1, case: { ...base.case, ntsbNo: `CEN19LA${String(i).padStart(3, '0')}` } }));
   return { cases, ranking: cases.map(c => ({ ntsbNo: c.case.ntsbNo, seeds: [], channels: ['keyword'] })) };
 }
@@ -40,11 +40,12 @@ function setup(version: Parameters<typeof evidenceRankingConfig>[0] = 'er-q-h50-
 }
 
 describe('frozen evidence ranking grid', () => {
-  it('only the baseline may run on live; unknown names fail in either environment', () => {
+  it('only the baseline and the Haiku top-50 rerank may run on live; unknown names fail in either environment', () => {
+    expect(LIVE_EVIDENCE_RANKINGS).toEqual(['er-q-v1', 'er-q-h50-v1']);
     for (const version of EVIDENCE_RANKING_VERSIONS) {
       expect(loadConfig({ files: [], env: { APP_ENV: 'dev', AVIATION_EVIDENCE_RANKING: version } }).ai.evidenceRanking).toBe(version);
       const live = () => loadConfig({ files: [], env: { APP_ENV: 'live', AVIATION_EVIDENCE_RANKING: version } });
-      if (version === 'er-q-v1') expect(live().ai.evidenceRanking).toBe(version); else expect(live).toThrow('not cleared for live');
+      if (LIVE_EVIDENCE_RANKINGS.includes(version)) expect(live().ai.evidenceRanking).toBe(version); else expect(live).toThrow('not cleared for live');
     }
     expect(() => loadConfig({ files: [], env: { AVIATION_EVIDENCE_RANKING: 'invented' } })).toThrow();
     expect(loadConfig({ files: [], env: {} }).ai.evidenceRanking).toBe('er-q-v1');

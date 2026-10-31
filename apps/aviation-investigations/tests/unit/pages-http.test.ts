@@ -179,12 +179,14 @@ describe('a page request that is refused or fails gets the page with that status
     expect((await page(app, '/cases/DFW08TA066', 'application/json')).body).toBe('Not found');
   });
 
-  it('429: refused by the rate limit it shares with the API, with Retry-After', async () => {
-    const app = makeApp({ rateLimit: { limit: 1, windowMs: 60_000 } });
+  it('429: refused by the pages’ own limit, with Retry-After; the API keeps its allowance', async () => {
+    const app = makeApp({ rateLimit: { limit: 1, windowMs: 60_000 }, pageRateLimit: { limit: 1, windowMs: 60_000 } });
     expect((await page(app, '/cases/DFW08TA066')).statusCode).toBe(500);
     const refused = await page(app, '/cases/DFW08TA066');
     expectFailedPage(refused, 429, 'Too many requests. Wait a moment and try again.');
     expect(Number(refused.headers['retry-after'])).toBeGreaterThanOrEqual(1);
+    // The API's own bucket was not used by the case pages: its first request reaches the handler.
+    expect((await page(app, '/api/cases/DFW08TA066', 'application/json')).statusCode).not.toBe(429);
     const api = await page(app, '/api/cases/DFW08TA066', 'application/json');
     expect(api.statusCode).toBe(429);
     expect(ErrorResponseSchema.parse(api.json()).retryAfter).toBe(Number(api.headers['retry-after']));

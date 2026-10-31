@@ -5,14 +5,19 @@
  * a production bundle.
  *
  * AI evidence searches (`/api/evidence*`) are answered by an in-memory `MockEvidence` per
- * handler set (web/mock/evidence.ts), and AI briefs (`/api/briefs*`), which the interface
- * no longer starts but still shows, by a `MockBriefs` (web/mock/briefs.ts): request bodies
- * are validated with the real contracts, and a running brief step moves one checklist row
- * per poll. The AI status is kept per handler set too, like the server's gate: an anonymous
- * request needs a Turnstile token, a search that returns results (or a started brief) uses
- * one of the visitor's searches, a static scope reply uses none, and the trial is `started`
- * after the first accepted request. `/api/config` offers Cloudflare's documented test site
- * key and the AI limits (`MOCK_AI_LIMITS`).
+ * handler set (web/mock/evidence.ts), standing in for one ranking configuration and
+ * automatic-filter policy (`evidence`; by default the one this tab's session storage names
+ * under `MOCK_EVIDENCE_CONFIG_KEY`, else the server's defaults), and AI briefs (`/api/briefs*`),
+ * which the interface no longer starts but still shows, by a `MockBriefs` (web/mock/briefs.ts):
+ * request bodies are validated with the real contracts, and a running brief step moves one
+ * checklist row per poll. The AI status is kept per handler set too, like the server's gate: an
+ * anonymous request needs a Turnstile token, a search that returns results (or a started brief)
+ * uses one of the visitor's searches, a static scope reply uses none, and the trial is `started`
+ * after the first accepted request. An evidence search's one free undo uses none either, and is
+ * let through when the visitor's own searches are used up (a trial's, or an account's day or
+ * month), as a replay is; every other pause still refuses it. `/api/config` offers Cloudflare's
+ * documented test site key, the AI limits (`MOCK_AI_LIMITS`) and the fields the evidence policy
+ * applies on its own (`aiAutomaticFilters`: `['state']` when the mock applies states, else none).
  */
 import { delay, http, HttpResponse } from 'msw';
 import type { AiStatusResponse } from '../../../shared/contracts/ai';
@@ -37,7 +42,7 @@ import dashboardDefault from '../../mock/dashboard-default.json';
 import index from '../../mock/search-index.json';
 import { AI_STATUS_SAMPLES, MOCK_AI_LIMITS } from '../../mock/ai-status';
 import { MockBriefs, type MockReader, type MockReply } from '../../mock/briefs';
-import { MockEvidence } from '../../mock/evidence';
+import { MOCK_EVIDENCE_CONFIG_KEY, MockEvidence, parseMockEvidenceConfig, type MockEvidenceConfig, type MockEvidenceReply } from '../../mock/evidence';
 import { searchCorpus, type MockCorpus } from '../../mock/engine';
 
 export const mockCorpus: MockCorpus = {
@@ -70,6 +75,17 @@ export interface HandlerOptions {
   deletionNeedsReauth?: boolean;
   /** Signed in, the server asks for a Turnstile check before every AI request (the step-up, DESIGN §8). */
   accountCheck?: boolean;
+  /**
+   * The evidence ranking configuration and automatic-filter policy the mock stands in for
+   * (default: the one this tab's session storage names, else the server's defaults).
+   */
+  evidence?: MockEvidenceConfig;
+  /**
+   * What `/api/config` reports as `aiAutomaticFilters` (default: as the evidence policy says,
+   * `['state']` with `state-explicit.v1.3`, else none); `null` leaves the field out, as a server
+   * that does not report it.
+   */
+  aiAutomaticFilters?: ConfigResponse['aiAutomaticFilters'] | null;
 }
 
 /** The mock's Google account: synthetic. */
@@ -107,6 +123,15 @@ function deletionReauthFlag(): boolean {
     return window.sessionStorage.getItem(MOCK_DELETION_REAUTH_KEY) === '1';
   } catch {
     return false;
+  }
+}
+
+/** The evidence configuration this tab's session storage names (end-to-end tests, the dev mock mode), else the baseline. */
+function evidenceConfigFlag(): MockEvidenceConfig {
+  try {
+    return parseMockEvidenceConfig(window.sessionStorage.getItem(MOCK_EVIDENCE_CONFIG_KEY));
+  } catch {
+    return parseMockEvidenceConfig(null);
   }
 }
 
@@ -151,6 +176,8 @@ export function createHandlers({
   aiLimits = MOCK_AI_LIMITS,
   deletionNeedsReauth = deletionReauthFlag(),
   accountCheck = false,
+  evidence: evidenceConfig = evidenceConfigFlag(),
+  aiAutomaticFilters = evidenceConfig.autoFilters === 'state-explicit.v1.3' ? ['state'] : [],
 }: HandlerOptions = {}) {
   const wait = async (): Promise<void> => {
     if (latencyMs > 0) await delay(latencyMs);
@@ -167,7 +194,7 @@ export function createHandlers({
   const reader = (): MockReader => (signIn.signedIn ? 'account' : 'trial');
   const briefs = new MockBriefs({ ...(briefPolls === undefined ? {} : { pollsToFinish: briefPolls }), visitor: reader });
   // Evidence searches are read by their owner, like briefs.
-  const evidence = new MockEvidence({ visitor: reader });
+  const evidence = new MockEvidence({ visitor: reader, config: evidenceConfig });
   const accountStatus = (): AiStatusResponse => (accountCheck ? AI_STATUS_SAMPLES.checkedAccount : AI_STATUS_SAMPLES.newAccount);
   let status: AiStatusResponse = signIn.signedIn ? accountStatus() : aiStatus;
   const notFound = () => HttpResponse.json({ error: 'not_found', message: 'Not found.' } satisfies ErrorResponse, { status: 404, headers: NO_STORE });
@@ -176,15 +203,20 @@ export function createHandlers({
     saveAccountState(next);
   }
 
-  /** The anonymous gate and admission, before any work (server/identity/gate.ts, DESIGN §8). */
-  const refuse = (token: string | null | undefined): Response | null => {
+  /**
+   * The anonymous gate and admission, before any work (server/identity/gate.ts, DESIGN §8).
+   * `exempt`: an evidence search's one free undo (or a replay), which the visitor's own used-up
+   * searches do not stop; a pause for everyone, sign-in-only modes and Turnstile still do.
+   */
+  const refuse = (token: string | null | undefined, exempt = false): Response | null => {
     const deny = (code: number, err: ErrorResponse['error'], message: string) =>
       HttpResponse.json({ error: err, message } satisfies ErrorResponse, { status: code, headers: NO_STORE });
-    if (status.state === 'paused') return deny(503, 'ai_paused', 'AI search is paused.');
+    const ownCap = status.state === 'paused' && (status.reason === 'daily_cap' || status.reason === 'monthly_cap');
+    if (status.state === 'paused' && !(exempt && ownCap)) return deny(503, 'ai_paused', 'AI search is paused.');
     if (status.state === 'signed_in_only' && status.remaining?.kind !== 'account') {
-      if (status.reason === 'trial_used') return deny(429, 'trial_used', 'Your free AI searches are used up.');
+      if (status.reason === 'trial_used' && !exempt) return deny(429, 'trial_used', 'Your free AI searches are used up.');
       if (status.reason === 'login_required') return deny(403, 'sign_in_required', 'Sign in to use the AI.');
-      return deny(429, 'free_searches_paused', "Today's free AI searches are used up.");
+      if (status.reason !== 'trial_used') return deny(429, 'free_searches_paused', "Today's free AI searches are used up.");
     }
     if (status.remaining?.kind === 'trial' && !token) return deny(403, 'challenge_required', 'Take the check, then try again.');
     // A signed-in request the server flags takes a check too (the step-up).
@@ -201,12 +233,22 @@ export function createHandlers({
       const retryAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
       status = remaining.left === 0 ? { state: 'signed_in_only', reason: 'trial_used', retryAt, remaining } : { state: 'available', remaining };
     } else if (r?.kind === 'account' && started) {
-      status = { state: 'available', remaining: { ...r, leftToday: Math.max(0, r.leftToday - 1), leftThisMonth: Math.max(0, r.leftThisMonth - 1) } };
+      const remaining = { ...r, leftToday: Math.max(0, r.leftToday - 1), leftThisMonth: Math.max(0, r.leftThisMonth - 1) };
+      // An account's own searches used up: paused for it until they return, as the server says.
+      const now = new Date();
+      if (remaining.leftThisMonth === 0) {
+        status = { state: 'paused', reason: 'monthly_cap', retryAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString(), remaining };
+      } else if (remaining.leftToday === 0) {
+        status = { state: 'paused', reason: 'daily_cap', retryAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString(), remaining };
+      } else {
+        status = { state: 'available', remaining };
+      }
     }
   };
-  const admit = <T,>(reply: MockReply<T>): Response => {
-    // A started brief (202) or an evidence search (201: always results) uses one; a brief's static reply (200) does not.
-    if (reply.status < 300 && !reply.replayed) admitted(reply.status === 202 || reply.status === 201);
+  const admit = <T,>(reply: MockReply<T> & Pick<MockEvidenceReply, 'quotaExempt'>): Response => {
+    // A started brief (202) or an evidence search (201: always results) uses one, unless it is a
+    // search's one free undo; a brief's static reply (200) does not.
+    if (reply.status < 300 && !reply.replayed) admitted(reply.status === 202 || (reply.status === 201 && reply.quotaExempt !== true));
     // The server may have acted, but the answer never arrives.
     if (reply.lost) return HttpResponse.error();
     return briefReply(reply);
@@ -214,7 +256,8 @@ export function createHandlers({
   return [
     http.get('*/api/config', async () => {
       await wait();
-      return HttpResponse.json({ ...config, turnstileSiteKey, googleEnabled, ...(aiLimits ? { aiLimits } : {}) });
+      const { aiAutomaticFilters: _generated, ...generated } = config;
+      return HttpResponse.json({ ...generated, turnstileSiteKey, googleEnabled, ...(aiAutomaticFilters ? { aiAutomaticFilters } : {}), ...(aiLimits ? { aiLimits } : {}) });
     }),
     http.get('*/api/account', async () => {
       await wait();
@@ -308,7 +351,7 @@ export function createHandlers({
       await wait();
       const parsed = CreateEvidenceRequestSchema.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return badRequest(parsed.error.issues);
-      return refuse(parsed.data.turnstileToken) ?? admit(evidence.create(parsed.data));
+      return refuse(parsed.data.turnstileToken, evidence.quotaExempt(parsed.data)) ?? admit(evidence.create(parsed.data));
     }),
     http.get('*/api/evidence/:id/cases/:ntsbNo', async ({ params }) => {
       await wait();

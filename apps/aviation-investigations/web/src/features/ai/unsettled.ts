@@ -13,7 +13,7 @@
  *   (server/briefs/intent.ts `createRequestHash` and `refineRequestHash`): a create's
  *   question and canonical filters, or a refinement's brief and change; for an evidence
  *   search (Task 23), its question, or the search it edits with the canonical filters and
- *   the words.
+ *   the words, or the question's own keywords restored (`keywords`, Task 24).
  * - **Storage** is `sessionStorage` (this tab only, gone when it closes), under a hash of
  *   that normalised request, so no question text is stored. Every access is wrapped:
  *   when storage is unavailable or refuses a write, the entry lives in memory instead.
@@ -27,14 +27,10 @@
  *   was first remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or
  *   deleting the account clears them all (`forgetAllUnsettled`).
  */
-import type { BriefFilterFacet, BriefFilters, RefinementChange } from '../../../../shared/contracts/briefs';
-import { FACET_VALUES } from '../../../../shared/contracts/search';
+import type { BriefFilters, RefinementChange } from '../../../../shared/contracts/briefs';
+import { canonicalFilters } from './canonical-filters';
 
-/**
- * `BRIEF_FILTER_FACETS`, in its order. Listed here so the home page does not load the brief
- * contracts (they arrive with the first AI request); a test holds the two lists together.
- */
-export const FILTER_FACETS = ['phase', 'injury', 'conditions', 'light', 'category', 'engine', 'far_part', 'purpose', 'state'] as const satisfies readonly BriefFilterFacet[];
+export { FILTER_FACETS, canonicalFilters } from './canonical-filters';
 
 /** The server keeps an idempotency record this long (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). */
 export const UNSETTLED_TTL_MS = 24 * 60 * 60_000;
@@ -47,30 +43,25 @@ export type AiRequestShape =
   | { kind: 'refine'; briefId: string; change: RefinementChange }
   /** An evidence search for a question (`POST /api/evidence`, `kind: 'question'`). */
   | { kind: 'evidence'; question: string }
-  /** An edited evidence search: the search it changes, its filters, and words when it sends them (`kind: 'edited'`). */
-  | { kind: 'evidence-edited'; from: string; filters: BriefFilters; terms?: string | undefined };
-
-/**
- * Filters as the server hashes them (server/briefs/intent.ts `canonicalFilters`): facets in
- * a fixed order, values in vocabulary order, empty facets dropped, years kept.
- */
-export function canonicalFilters(f: BriefFilters): BriefFilters {
-  const out: Record<string, unknown> = {};
-  for (const facet of FILTER_FACETS) {
-    const values = f[facet] as readonly string[] | undefined;
-    if (!values || values.length === 0) continue;
-    out[facet] = (FACET_VALUES[facet] as readonly string[]).filter((v) => values.includes(v));
-  }
-  if (f.yearFrom !== undefined) out.yearFrom = f.yearFrom;
-  if (f.yearTo !== undefined) out.yearTo = f.yearTo;
-  return out as BriefFilters;
-}
+  /**
+   * An edited evidence search: the search it changes, its filters, and words when it sends them,
+   * or `keywords: 'question'` when it takes out the terms AirCase added (`kind: 'edited'`).
+   */
+  | { kind: 'evidence-edited'; from: string; filters: BriefFilters; terms?: string | undefined; keywords?: 'question' | undefined };
 
 /** What makes two requests the same for the server's idempotency check. */
 export function normalisedRequest(r: AiRequestShape): unknown {
   if (r.kind === 'create') return { op: 'brief.create', question: r.question, filters: canonicalFilters(r.filters ?? {}) };
   if (r.kind === 'evidence') return { op: 'evidence.question', question: r.question };
-  if (r.kind === 'evidence-edited') return { op: 'evidence.edited', from: r.from, filters: canonicalFilters(r.filters), ...(r.terms !== undefined ? { terms: r.terms } : {}) };
+  if (r.kind === 'evidence-edited') {
+    return {
+      op: 'evidence.edited',
+      from: r.from,
+      filters: canonicalFilters(r.filters),
+      ...(r.terms !== undefined ? { terms: r.terms } : {}),
+      ...(r.keywords !== undefined ? { keywords: r.keywords } : {}),
+    };
+  }
   const change = r.change.kind === 'filters' ? { ...r.change, filters: canonicalFilters(r.change.filters) } : r.change;
   return { op: 'brief.refine', briefId: r.briefId, change };
 }

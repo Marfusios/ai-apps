@@ -25,7 +25,7 @@ export function EvidenceNotice({ className }: { className?: string }) {
 }
 
 /**
- * A capability note (contract `evidence.v2`, gate answer 2 of 2026-10-25): one of the contract's
+ * A capability note (contract `evidence.v3`, gate answer 2 of 2026-10-25): one of the contract's
  * fixed reminders of what AirCase is (`EVIDENCE_NOTE_TEXT`), which the validated scope intent may
  * select, shown above the results. Calm and non-blocking: not an error or a warning, never a
  * statement about the question, never model text, and never instead of `EVIDENCE_NOTICE`.

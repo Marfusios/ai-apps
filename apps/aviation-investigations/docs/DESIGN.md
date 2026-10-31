@@ -383,7 +383,7 @@ copy of source evidence or the store for users/quotas.
 
 ## 5. Hybrid retrieval and bounded RAG
 
-### Evidence-view MVP (`evidence.v2`)
+### Evidence-view MVP (v2 baseline; v3 disclosures below)
 
 This is the initial AI product; the composed-answer pipeline below is disabled.
 `POST /api/evidence` tries the advisory `scope.e3` stage then embeds the original
@@ -391,7 +391,8 @@ question; edits skip scope. Scope is revision1 with unchecked readings removed,
 advisory wording and a strict `{result: ...}` envelope around its discriminated union.
 In the live/default baseline, suggestions are labelled **not applied**, escaped/rendered
 as text, and never control routing or retrieval. Dev-only ranking experiments below
-may use the validated terms in lexical search; suggested filters remain unapplied. The result carries the executed `query`, `appliedFilters`,
+may use validated terms in lexical search; the separate v3 policy may apply guarded
+state filters. All remaining suggestions are unapplied. The result carries the executed `query`, `appliedFilters`,
 nullable `suggestion`, nullable `hint` and nullable `note`; no specific unchecked readings
 are shown. The research-only boundary and fixed `EVIDENCE_NOTICE` remain mandatory on
 every surface. A validated `out_of_scope` intent selects the fixed `scope` capability
@@ -927,7 +928,7 @@ the HTTP admission adapter or `ledgerRankingSpendGate` (the production evaluatio
 ledger, restore hold and allowance). Callers must keep any experiment allocation
 wrapper around that gate. It returns configuration version/sha256, executed lexical
 and vector texts, lexical source, stage outcomes/usage, and ranked cases.
-Those execution facts stay in private saved-search data; `evidence.v2` is unchanged.
+The full execution record stays private; evidence.v3 exposes the bounded facts below.
 Evaluation caches must include this identity, dataset/indices and the exact inputs.
 Every configuration includes the rerank user-turn template and `rerank-input.v1`
 identity, including the hash of a fixed synthetic input rendered through production
@@ -953,10 +954,113 @@ is possible. Deletion/shutdown checks precede each paid stage. A successful sear
 counts once, independent of order or fallback; saved pages never call a provider.
 The `evidence.rerank` span contains only model, depth, usage, cost, duration and outcome.
 
-Public use of any non-baseline configuration needs evaluation, gate clearance, and
-the controller's `evidence.v3` UI disclosure for added terms and AI ordering.
+Public use of a non-baseline configuration needs a reviewed live-allowlist change and
+the `evidence.v3` UI disclosure for added terms and AI ordering. Live allows `er-q-v1`
+and, by the owner's decision of 31 October 2026, `er-q-h50-v1` (the Haiku rerank of
+the top 50), whose confirmation was inconclusive rather than cleared.
 Changing the environment setting cannot bypass the live allowlist.
 The evaluated scope.e3 prompt/schema/settings are unchanged.
+
+### Evidence.v3: applied state, disclosures and undo
+
+The public response is `evidence.v3`. The ranking configurations and their hashes
+remain those evaluated for Task 24; automatic filters are an independent, frozen
+policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
+identity includes the outputs of a fixed, versioned guard-probe set; a changed response
+to any probe changes the hash even without a guard version bump. Live accepts
+`none` and the reviewed `state-explicit.v1.3`; the default stays `none` and an operator
+must explicitly enable state in the environment settings. The independent live
+ranking allowlist is `er-q-v1` and `er-q-h50-v1`. `state-explicit.v1.3` uses
+only a valid scope.e3 case-search result's state set, on original question searches.
+It requires agreement with the complete explicitly named state set. Its finite
+rules reject recognized ambiguous places, negation, unsafe wording and attribution
+patterns; they cannot establish event attribution for arbitrary natural language.
+After NFKC, a full state name followed by city/county/river or another guarded place
+suffix abstains. v1.3 preserves every v1.1 rule and adds five case-insensitive rejections:
+
+- Another/other/previous/prior/earlier/later/similar/same/second/related followed by
+  an event noun, with up to two intervening word or hyphenated-word tokens, or
+  `titles`/`headline(s)` anywhere (`other_event`).
+- Reference or comparison wording before the first state mention, including
+  cite/discuss/mention, before/after, and `like` followed by a demonstrative or
+  article (`referenced_event`). A qualified postal mention starts at its city.
+- Title, heading, caption, word/phrase/text or naming language anywhere (`title_text`).
+- Destination, departure, maintenance, credential or other listed attribute wording
+  immediately before any state mention, with up to five intervening words
+  (`attributed_elsewhere`).
+- The/that/this followed by a singular event noun, with up to two intervening words,
+  immediately before a location qualifier and state mention (`referenced_event`).
+
+The exact patterns are versioned in `shared/state-eligibility.ts`. For example,
+"I'd like to see accidents in Alaska" and "accidents in Alaska related to icing"
+remain eligible. "Accidents after takeoff in Alaska", "accidents like this in Alaska"
+and "Show me related accidents in Alaska" deliberately remain suggestions.
+v1.3 is a strict subset of v1.1, which is a subset of v1; it is not based on v1.2's
+overbroad `like` alternative. The offline replay of 1,040 recorded C answers gives
+365 TP / 0 FP / 35 FN for the guard, two fewer applications than v1.1. The pipeline's
+separate `case_search` intent requirement gives 363 TP / 0 FP / 37 FN. These are
+retrospective results on recorded answers, not semantic safety or future recall
+guarantees. v1.1 and v1.2 were never deployed and are no longer accepted settings.
+Other fields stay advisory.
+Edits never apply automatic filters. Accepted state values become retrieval filters
+before all three channels run and are removed from the remaining suggestion.
+
+The page reports server-derived facts:
+
+- Question `query.keywords` is `question`, `terms` or `question+terms`; the latter
+  two include only the recorded added terms (300 characters maximum), captured when the
+  lexical query is fitted. Disclosure reads that record, never re-normalizes the question
+  or hides terms when execution records disagree. Fallbacks
+  report `question`. Edited queries still carry explicit terms; filter-only edits
+  retain their parent's query and both executed texts.
+- `automaticFilters` contains the applied state set, or null. It is always null
+  on edits. `order` is `ai_relevance` only when valid rerank grades were applied;
+  every other outcome is `match`.
+- `marks` is `suggested_terms` only when the baseline actually retained suggestion
+  marks; otherwise `search_words`. Suggestion terms are null if those terms were
+  already searched; no remaining terms or filters means the suggestion is null.
+- An edit may send `keywords: 'question'` to restore the original question in both
+  lexical and vector channels. It cannot also send explicit `terms`.
+- `freeUndo` confirms whether this search consumed no visitor quota unit.
+- `undo` is the current `available | used | none` hint, computed from the parent's
+  claim on each read. It is never stored in the immutable result. Edits, legacy v2
+  rows and questions without automatic additions report `none`; admission remains
+  authoritative if another tab consumes the claim.
+
+A quota-free undo requires an owned, unexpired, completed original v3 question search,
+no explicit edited terms, and no changes except removal of automatic additions.
+Filters must equal the parent's filters or remove its entire automatic state field;
+removing one member of a multi-state OR is a narrowing edit and costs a unit. Setting
+`keywords: 'question'` is an undo only if the parent used added terms. At least one
+addition must be removed. All other edits cost one unit.
+
+One atomic, write-once claim on the **parent** binds the exemption to its admission's
+reservation. The claim survives failure of the later search and handover. Once a search
+row exists, an idempotent retry replays that result or failure. If admission is abandoned
+before a search row exists (shutdown, failed dataset/index claim, write error or missing
+source), cleanup expires its idempotency slot but keeps the undo claim consumed. Even a
+same-key retry is then an ordinary quota-counted admission, if all gates permit it.
+A different key cannot get another free undo, and an
+edited child cannot be an undo source. A refusal before reservation consumes no claim.
+The exemption remains available at the visitor's daily/monthly quota limit. Turnstile,
+network/principal attempt limits, concurrency, restore hold, kill switches, all budgets,
+the full reservation and actual/uncertain settlement still apply. No quota increment
+or later decrement occurs for this admission (`quota_counted=false`). Thus each paid
+question can allow at most one additional quota-free attempt, still money-gated.
+
+Migration 0025 adds the parent's private claim and permits an original v3 question's
+final storage to record actual keywords and only its automatic state change. Questions,
+explicit edits, policy identity, accounting facts and completed results remain immutable.
+The claim trigger independently requires an unexpired parent, a quota-free open
+reservation belonging to its current read owner, and an original reservation matching
+its immutable billing principal/kind. A signed-in undo of a still-owned trial parent
+hands it over in the same claim transaction before binding the account reservation.
+Failed rows retain the actual attempted automatic state/filters in private diagnostics,
+separate from their immutable public admission facts.
+Parent ownership is rechecked under its row lock in admission, after the account lifecycle
+lock and before shared bucket/spend locks; the child write rechecks it again. Old v2 rows
+are read as v3 using their actual recorded metadata, with no invented automatic state or
+free undo. Existing expiry, authorization and backup exclusions remain unchanged.
 
 ### Evidence pricing (initial AI feature)
 

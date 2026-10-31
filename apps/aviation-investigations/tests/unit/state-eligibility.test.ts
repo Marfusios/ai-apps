@@ -3,6 +3,19 @@ import { eligibleEmittedStates, AUTOMATIC_STATE_CODES } from '../../shared/state
 import { US_STATE } from '../../shared/vocab.js';
 
 describe('explicit event-state eligibility', () => {
+  it.each([
+    ['Find cases in Kansas City.', ['KS']],
+    ['Find events in Michigan City.', ['MI']],
+    ['Find investigations in the Mississippi River.', ['MS']],
+    ['Find events in Iowa City.', ['IA']],
+    ['Find events in Ｋａｎｓａｓ Ｃｉｔｙ.', ['KS']],
+    ['Find events in Alaska or California Bay.', ['AK', 'CA']],
+  ] as const)('v1.1 abstains on a state-named place: %s', (question, states) => {
+    expect(eligibleEmittedStates(question, states)).toEqual({ states: [], reason: 'ambiguous_context' });
+  });
+  it.each(['city', 'county', 'river', 'bay', 'lake', 'sound', 'valley', 'canyon', 'island', 'islands', 'panhandle', 'keys', 'gulf', 'strait', 'peninsula', 'range', 'mountain', 'mountains'])('rejects the full place-suffix vocabulary: %s', suffix => {
+    expect(eligibleEmittedStates(`Find events in California ${suffix.toUpperCase()}.`, ['CA']).states).toEqual([]);
+  });
   it.each(AUTOMATIC_STATE_CODES)('allows an explicitly qualified %s without geocoding', code => {
     expect(eligibleEmittedStates(`Find accident records in the state of ${US_STATE[code]}.`, [code]).states).toEqual([code]);
   });
@@ -50,5 +63,31 @@ describe('explicit event-state eligibility', () => {
     const states = Object.freeze(['CA', 'AK', 'AK']);
     expect(eligibleEmittedStates('Find events in Alaska or California.', states).states).toEqual(['AK', 'CA']);
     expect(states).toEqual(['CA', 'AK', 'AK']);
+  });
+});
+
+describe('bounded other-event and title attribution retained in v1.3', () => {
+  it.each([
+    ['Find investigations that discuss another accident in Alaska.', ['AK']],
+    ['Find investigations similar to the crash in Alaska.', ['AK']],
+    ['Find investigations whose titles include accidents in Alaska.', ['AK']],
+    ['Find investigations about a previous fatal accident in Texas.', ['TX']],
+    ['Find investigations about a prior well-documented fatal crash in Alaska.', ['AK']],
+    ['Find investigations with a headline about accidents in Alaska.', ['AK']],
+    ['Find investigations with headlines about accidents in Alaska.', ['AK']],
+    ['FIND INVESTIGATIONS ABOUT ANOTHER ACCIDENT IN ALASKA.', ['AK']],
+    ['Find investigations about ａｎｏｔｈｅｒ ａｃｃｉｄｅｎｔ in Alaska.', ['AK']],
+    ['Find investigations whose ｔｉｔｌｅｓ include accidents in Alaska.', ['AK']],
+  ] as const)('abstains with other_event: %s', (question, states) => {
+    expect(eligibleEmittedStates(question, states)).toEqual({ states: [], reason: 'other_event' });
+  });
+  it.each([
+    ['Find accidents in Alaska related to icing.', ['AK']],
+    ['Find cases in Texas involving other aircraft.', ['TX']],
+    ['Tell me about accidents in Alaska.', ['AK']],
+    ['Find accidents in Alaska. Discuss another very old fatal accident.', ['AK']],
+    ['Find accidents in Alaska. The headlinesman was interviewed.', ['AK']],
+  ] as const)('keeps eligible event states outside the bounded rule: %s', (question, states) => {
+    expect(eligibleEmittedStates(question, states)).toEqual({ states: [...states], reason: 'applied' });
   });
 });

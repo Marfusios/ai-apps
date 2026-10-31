@@ -54,6 +54,9 @@ const STATIC_PAGES: ReadonlyMap<string, (request: FastifyRequest) => PageRoute> 
 
 /** Read from the database: rate limited like the API. */
 export const CASE_PAGE_ROUTE = '/cases/:ntsbNo';
+/** The sitemap index and its files (server/seo/sitemaps.ts). */
+export const SITEMAP_INDEX_ROUTE = '/sitemap.xml';
+export const SITEMAP_FILE_ROUTE = '/sitemaps/:name';
 /** The template file is never served as it is (it has no style nonce): it redirects to `/`. */
 export const INDEX_FILE_ROUTE = '/index.html';
 export const ROBOTS_ROUTE = '/robots.txt';
@@ -201,8 +204,8 @@ export function pageRoutes(app: FastifyInstance, ctx: ApiContext, opts: PageOpti
   };
   const sendXml = (reply: FastifyReply, xml: string): FastifyReply =>
     reply.header('cache-control', CRAWL_CACHE).type('application/xml; charset=utf-8').send(xml);
-  app.get('/sitemap.xml', async (_request, reply) => sendXml(reply, (await currentSitemaps()).index));
-  app.get<{ Params: { name: string } }>('/sitemaps/:name', async (request, reply) => {
+  app.get(SITEMAP_INDEX_ROUTE, async (_request, reply) => sendXml(reply, (await currentSitemaps()).index));
+  app.get<{ Params: { name: string } }>(SITEMAP_FILE_ROUTE, async (request, reply) => {
     const xml = sitemapFile(await currentSitemaps(), String(request.params.name ?? ''));
     return xml === null ? notFoundText(reply) : sendXml(reply, xml);
   });

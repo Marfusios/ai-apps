@@ -2,7 +2,8 @@
  * A local stand-in for Cloudflare's Turnstile, installed before the app loads (the app then
  * never fetches Cloudflare's script, and the mock's service worker would hide that request from
  * routing anyway), so the AI tests make no network requests. It records each widget's
- * parameters (`window.__turnstile`) and every fetch the page makes (`window.__reads`), and
+ * parameters (`window.__turnstile`) and every fetch the page makes (`window.__reads`, with the
+ * body of each one that sends text), and
  * answers with the dummy token of Cloudflare's always-passing test keys after
  * `window.__checkDelay` ms (700 by default).
  */
@@ -13,7 +14,7 @@ const realFetch = window.fetch.bind(window);
 window.fetch = (input, init) => {
   try {
     const url = new URL(input instanceof Request ? input.url : String(input), location.origin);
-    window.__reads.push({ method: (init && init.method) || (input instanceof Request ? input.method : 'GET'), path: url.pathname, search: url.search });
+    window.__reads.push({ method: (init && init.method) || (input instanceof Request ? input.method : 'GET'), path: url.pathname, search: url.search, body: init && typeof init.body === 'string' ? init.body : null });
   } catch {}
   return realFetch(input, init);
 };

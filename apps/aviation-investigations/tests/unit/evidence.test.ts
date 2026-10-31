@@ -201,7 +201,7 @@ it('optional suggestions cannot push an otherwise valid result over its byte bud
   }
   expect(remaining).toBe(0);
   expect(Buffer.byteLength(JSON.stringify(data, null, 1))).toBe(EVIDENCE_DATA_MAX_BYTES - 100);
-  const decorated = withSuggestion(data, { filters: { state: ['CA'] }, terms: 'engine '.repeat(42).trim() });
+  const decorated = withSuggestion(data, { filters: { state: ['CA'] }, terms: 'engine '.repeat(42).trim() }, evidenceRankingConfig().query.highlights);
   expect(decorated).toBe(data); expect(decorated.suggestion).toBeNull();
   expect(decorated.cases).toBe(data.cases);
   const normal = { ...data, cases: [result] };

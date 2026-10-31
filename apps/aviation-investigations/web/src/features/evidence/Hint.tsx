@@ -8,7 +8,7 @@ const pill = 'inline-flex items-center rounded-full border-[1.5px] border-blue p
 const link = 'text-ui text-blue hover:underline pointer-coarse:min-h-11';
 
 /**
- * The hint of an explicit counting or comparison request (contract `evidence.v2`; the server
+ * The hint of an explicit counting or comparison request (contract `evidence.v3`; the server
  * reads it from the question, never the scope stage): fixed copy and free links above the
  * results, which still follow. Counting points to the dashboard; comparing names the cases found,
  * with their pages and Compare, and the numbers no case has.
