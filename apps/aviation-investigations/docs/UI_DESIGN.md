@@ -1218,7 +1218,9 @@ The checklist of §4.4, adapted to the evidence view. While `POST /api/evidence`
 (Ask AI on Home, Explore or the gone page) and for an edit (Search again, Apply) alike, a checklist
 card shows where the visitor waits: under the box or the nudge Ask AI was pressed in, or, for an
 edit, under "Your search" and the suggestion. It goes once the POST settles: the results open, or
-the notice box under the control says what happened.
+the notice box under the control says what happened. It also goes, and reads nothing more, as soon
+as the visitor changes (a sign-out, a deletion, another account, Task 25b): the search is the
+previous visitor's, and its answer opens nothing. Leaving the page takes it too.
 
 - **Header bar:** ink background, paper text (the engraved placard at night, as §4.4), the title
   "SEARCH CHECKLIST", and on the right the time since the request left ("0:04"), not announced.
@@ -1226,9 +1228,9 @@ the notice box under the control says what happened.
 
   | Row | Result |
   | --- | --- |
-  | Question | READ · SUGGESTIONS READY, READ · NOTHING TO SUGGEST, NOTE ADDED (a capability note), NOT AVAILABLE (the stage failed: no suggestion); SKIPPED when the server did not read the question; SKIPPED · YOUR EDIT for an edit, from the start |
-  | Search 24,291 investigations (the default cohort from `/api/config`) | 21 CASES (1 CASE); DIDN'T FINISH |
-  | Order the leading results | ORDERED BY AI, MATCH ORDER; NOT USED without an AI reranker |
+  | Question | READ · SUGGESTIONS READY, READ · NOTHING TO SUGGEST, NOTE ADDED (a capability note), NOT AVAILABLE (the stage failed: no suggestion); READ when the stage ended without saying what came of it; SKIPPED when the server did not read the question; SKIPPED · YOUR EDIT for an edit, from the start |
+  | Search 24,291 investigations (the default cohort from `/api/config`) | 21 CASES (1 CASE); DONE without a count; DIDN'T FINISH |
+  | Order the leading results | ORDERED BY AI, MATCH ORDER; DONE when the stage ended without its kind of order; NOT USED without an AI reranker |
 
 - Each row fills in its real result as its stage ends, with a magenta ✓ (a stage with nothing to
   give, or not run, gets none and stays muted). The row under way has the faint magenta wash and a
@@ -1243,14 +1245,18 @@ the notice box under the control says what happened.
   for the whole wait, once a second after ten in a row (a network identity that changed mid-search
   leaves 404s throughout). A 429 is waited out in full, its whole `Retry-After`, never less; one over
   30 s ends the reading, and the card stays as it is until the POST settles. Nothing reads sooner: no
-  read on focus or reconnect, and a read asked for within the wait (a reset when the visitor changes)
-  sends nothing. Until the first answer the card is unticked: no row under way. Statuses and counts
-  only, never model text.
+  read on focus or reconnect, and a read asked for within the wait (a reset, a replay of the same key)
+  sends nothing; once the server's own deadline has passed, a replay of the key reads again. Until the
+  first answer the card is unticked: no row under way. Statuses and counts only, never model text.
 - **Announcements:** each completion once, through a polite live region ("Question read: suggestions
-  ready.", "Search done: 21 cases.", "Leading results ordered by AI."). Skipped rows are not announced.
+  ready.", "Search done: 21 cases.", "Leading results ordered by AI."; "Question read." and "Leading
+  results in order." for a stage that ended without its result). Stages that end between two reads are
+  announced together, in order. Skipped rows are not announced.
 - It works at phone width (a result that does not fit wraps under its row's leader) and in both themes,
   and it does not print. The control that sent the request says "Searching…" (busy and off) while the
-  card shows, and "Starting…" only in the moment before it appears.
+  card shows, and "Starting…" only in the moment before it appears. The card's code starts loading as
+  the search starts, before its Turnstile check, so it is there by the time the request leaves; if it
+  cannot load, the search goes on without a card and the control stays "Starting…", busy.
 
 ### 4.11 Rating a search (Task 25, Proposed)
 
@@ -1716,3 +1722,7 @@ counting rules.
   daily rating totals; "Trace backups are kept 7 days. A backup can keep data for those days after it
   is deleted from the site."); and "Running and securing the site, and measuring search quality (…
   traces, ratings, backups), relies on our legitimate interest…".
+- Builder calls (Task 25b), for the owner's review: the checklist's neutral results for a stage that
+  ended without its result, READ (the question) and DONE (the order), said "Question read." and
+  "Leading results in order."; stages that end between two reads announced together; and the admin
+  page's "This page didn't load." when who is signed in cannot be read (§4.10, §4.12).

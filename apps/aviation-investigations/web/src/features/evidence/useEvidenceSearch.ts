@@ -1,17 +1,17 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import type { BriefFilters } from '../../../../shared/contracts/briefs';
 import type { CreateEvidenceRequest, EvidencePage } from '../../../../shared/contracts/evidence';
 import { forgetUnsettled, rememberUnsettled, settleOnArrival, unsettledId, unsettledKey, type AiRequestShape } from '../ai/unsettled';
 import { newIdempotencyKey, useAiRequest, type AiPhase } from '../ai/useAiRequest';
-import { VisitorChangedError, visitorGeneration } from '../auth/visitor';
+import { VisitorChangedError, onVisitorChange, visitorGeneration } from '../auth/visitor';
 import { rememberQuestion } from '../brief/memory';
 import { ApiError, isNotFound } from '../../api';
 import { CASES_PARAM } from '../explore/url-state';
 import { expectArrival } from './arrival';
 import { EXPIRED_TITLE, evidencePageKey, evidencePath } from './keys';
-import { preloadSearchChecklist } from './SearchWait';
+import { preloadSearchChecklist, useSearchChecklistReady } from './SearchWait';
 import { UNDO_USED_NOTICE, rememberCharged } from './undo';
 
 type EvidenceShape = Extract<AiRequestShape, { kind: 'evidence' | 'evidence-edited' }>;
@@ -27,6 +27,8 @@ export interface PendingSearch {
   kind: 'question' | 'edited';
   /** When it left, in milliseconds since the epoch (the checklist's timer). */
   startedAt: number;
+  /** The visitor generation it was sent under: its progress is read for that visitor only. */
+  visitor: number;
 }
 
 /** What an edit changes besides its filters. */
@@ -55,10 +57,13 @@ export interface EvidenceEdit {
  * blocks a search (gate answer 2): the answer is always results, which open the search's page with
  * page 1 already in the cache (the POST answers with it).
  *
- * While a search's POST runs, `pending` names it (its key, its kind and when it left), its
- * checklist reads its progress under that key (web/src/features/evidence/SearchWait.tsx, UI_DESIGN
- * §4.10) and `phase` is `searching` (the control says "Searching…"); a request refused before it
- * leaves, or a Turnstile check, shows none.
+ * While a search's POST runs, `pending` names it (its key, its kind, when it left and for which
+ * visitor), its checklist reads its progress under that key (web/src/features/evidence/SearchWait.tsx,
+ * UI_DESIGN §4.10) and, once the checklist has loaded, `phase` is `searching` (the control says
+ * "Searching…"); a request refused before it leaves, or a Turnstile check, shows none. The
+ * checklist goes when the POST settles, when the send ends however it ends, and as soon as the
+ * visitor changes (sign-out, deletion, another account): nothing more is read for the previous
+ * visitor's search.
  *
  * The idempotency key is kept for the tab right before the request leaves (write-ahead,
  * web/src/features/ai/unsettled.ts), so a reload or Back while it is on its way loses nothing,
@@ -83,101 +88,118 @@ export function useEvidenceSearch() {
   const [staleHint, setStaleHint] = useState<EvidencePage | null>(null);
   // The search on its way, while its POST runs (the checklist shows it).
   const [pending, setPending] = useState<PendingSearch | null>(null);
+  const checklistReady = useSearchChecklistReady();
+  // The visitor changed: the previous visitor's search shows no checklist, which reads nothing more.
+  useEffect(() => onVisitorChange(() => setPending(null)), []);
 
   const send = useCallback(
     async (shape: EvidenceShape, body: (idempotencyKey: string, turnstileToken: string | null) => CreateEvidenceRequest, keepCompare: boolean, free = false): Promise<boolean> => {
+      // The evidence client (with its contracts) and the checklist start loading now, with the first
+      // AI request rather than the home page, and before the Turnstile check, so that both are there
+      // when the request leaves. The client is awaited, and the visitor checked again, before anything
+      // is sent; a request refused before then leaves the load to finish unused.
+      const client = import('./api');
+      client.catch(() => undefined);
+      preloadSearchChecklist();
       // The visitor this search is for, read before anything asynchronous.
       const visitor = visitorGeneration();
       const gone = (): boolean => visitorGeneration() !== visitor;
-      const id = await unsettledId(shape);
-      if (gone()) return false;
-      const earlier = unsettledKey(id);
-      let idempotencyKey = earlier ?? newIdempotencyKey();
-      // The key on its way is an earlier send's, whose outcome is unknown: a known refusal of it settles nothing.
-      let replayingEarlier = earlier !== null;
-      // The search being edited turned out to be gone: its page says so, not a notice.
-      let parentGone = false;
-      // The server could not finish it (503 `unavailable`): no search was used, and the box says so.
-      let unfinished = false;
-      const result = await run(
-        async (turnstileToken) => {
-          // The evidence client and its contracts load with the first AI request, not with the home page;
-          // its checklist with it, while the request is on its way.
-          const { createEvidence } = await import('./api');
-          preloadSearchChecklist();
-          if (gone()) throw new VisitorChangedError('the visitor changed before this was sent');
-          // Write-ahead: kept for the tab before it leaves (createEvidence sends in this same turn).
-          rememberUnsettled(id, idempotencyKey);
-          // Its checklist shows while it runs, read under this key.
-          setPending({ key: idempotencyKey, kind: shape.kind === 'evidence' ? 'question' : 'edited', startedAt: Date.now() });
-          return createEvidence(body(idempotencyKey, turnstileToken), visitor)
-            .catch((err: unknown) => {
-              // The search being edited is gone (expired, or not this visitor's): its page reads it
-              // again, finds it gone and says so, instead of a generic failure under it.
-              if (shape.kind === 'evidence-edited' && isNotFound(err)) {
-                parentGone = true;
-                void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
+      // The checklists this send shows (a send again under a new key shows another): each goes when
+      // its POST settles, and any still shown when the send ends, however it ends.
+      const shown: PendingSearch[] = [];
+      const hide = (one: PendingSearch): void => setPending((current) => (current === one ? null : current));
+      try {
+        const id = await unsettledId(shape);
+        if (gone()) return false;
+        const earlier = unsettledKey(id);
+        let idempotencyKey = earlier ?? newIdempotencyKey();
+        // The key on its way is an earlier send's, whose outcome is unknown: a known refusal of it settles nothing.
+        let replayingEarlier = earlier !== null;
+        // The search being edited turned out to be gone: its page says so, not a notice.
+        let parentGone = false;
+        // The server could not finish it (503 `unavailable`): no search was used, and the box says so.
+        let unfinished = false;
+        const result = await run(
+          async (turnstileToken) => {
+            const { createEvidence } = await client;
+            if (gone()) throw new VisitorChangedError('the visitor changed before this was sent');
+            // Write-ahead: kept for the tab before it leaves (createEvidence sends in this same turn).
+            rememberUnsettled(id, idempotencyKey);
+            // Its checklist shows while it runs, read under this key for this visitor.
+            const mine: PendingSearch = { key: idempotencyKey, kind: shape.kind === 'evidence' ? 'question' : 'edited', startedAt: Date.now(), visitor };
+            shown.push(mine);
+            setPending(mine);
+            return createEvidence(body(idempotencyKey, turnstileToken), visitor)
+              .catch((err: unknown) => {
+                // The search being edited is gone (expired, or not this visitor's): its page reads it
+                // again, finds it gone and says so, instead of a generic failure under it.
+                if (shape.kind === 'evidence-edited' && isNotFound(err)) {
+                  parentGone = true;
+                  void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
+                }
+                unfinished = err instanceof ApiError && err.status === 503 && err.body?.error === 'unavailable';
+                throw err;
+              })
+              .finally(() => hide(mine));
+          },
+          earlier
+            ? {
+                visitor,
+                quotaExempt: free,
+                replaying: true,
+                // A replay answered 409: the earlier attempt never completed, so send it under a new key.
+                onConflict: () => {
+                  forgetUnsettled(id, idempotencyKey);
+                  idempotencyKey = newIdempotencyKey();
+                  replayingEarlier = false;
+                },
               }
-              unfinished = err instanceof ApiError && err.status === 503 && err.body?.error === 'unavailable';
-              throw err;
-            })
-            .finally(() => setPending(null));
-        },
-        earlier
-          ? {
-              visitor,
-              quotaExempt: free,
-              replaying: true,
-              // A replay answered 409: the earlier attempt never completed, so send it under a new key.
-              onConflict: () => {
-                forgetUnsettled(id, idempotencyKey);
-                idempotencyKey = newIdempotencyKey();
-                replayingEarlier = false;
-              },
-            }
-          : { visitor, quotaExempt: free },
-      );
-      if (gone() || (!result.ok && result.discarded)) return false;
-      if (!result.ok && parentGone) {
-        // A 404 settles the key: nothing was made. Its page is read again and turns to the gone
-        // state; until it does (or if a read still answers), the box says so in the same words.
-        forgetUnsettled(id, idempotencyKey);
-        setNotice({ kind: 'message', text: EXPIRED_TITLE });
-        return false;
-      }
-      if (!result.ok) {
-        if (result.outcomeUnknown) rememberUnsettled(id, idempotencyKey);
-        else if (!replayingEarlier) forgetUnsettled(id, idempotencyKey);
-        // A free undo that failed may have used the search's one claim (the server keeps it once
-        // admission took it): its cached pages stop offering it at once, and they are read again,
-        // so it is offered free again only when a read says it is still there.
-        if (free && shape.kind === 'evidence-edited' && !result.busy) {
-          setStaleHint(queryClient.getQueryData<EvidencePage>(evidencePageKey(shape.from, 1)) ?? null);
-          queryClient.setQueriesData<EvidencePage>({ queryKey: ['evidence', shape.from] }, (page) => (page && page.undo === 'available' ? { ...page, undo: 'used' } : page));
+            : { visitor, quotaExempt: free },
+        );
+        if (gone() || (!result.ok && result.discarded)) return false;
+        if (!result.ok && parentGone) {
+          // A 404 settles the key: nothing was made. Its page is read again and turns to the gone
+          // state; until it does (or if a read still answers), the box says so in the same words.
+          forgetUnsettled(id, idempotencyKey);
+          setNotice({ kind: 'message', text: EXPIRED_TITLE });
+          return false;
+        }
+        if (!result.ok) {
+          if (result.outcomeUnknown) rememberUnsettled(id, idempotencyKey);
+          else if (!replayingEarlier) forgetUnsettled(id, idempotencyKey);
+          // A free undo that failed may have used the search's one claim (the server keeps it once
+          // admission took it): its cached pages stop offering it at once, and they are read again,
+          // so it is offered free again only when a read says it is still there.
+          if (free && shape.kind === 'evidence-edited' && !result.busy) {
+            setStaleHint(queryClient.getQueryData<EvidencePage>(evidencePageKey(shape.from, 1)) ?? null);
+            queryClient.setQueriesData<EvidencePage>({ queryKey: ['evidence', shape.from] }, (page) => (page && page.undo === 'available' ? { ...page, undo: 'used' } : page));
+            void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
+          }
+          if (unfinished && !result.busy) setNotice(free ? { kind: 'unfinished', undo: true } : { kind: 'unfinished' });
+          return false;
+        }
+        const search = result.value.search;
+        queryClient.setQueryData(evidencePageKey(search.id, 1), search);
+        rememberQuestion(search.id, search.question);
+        if (shape.kind === 'evidence-edited' && (free || search.freeUndo)) {
+          // The server's word: an undo shown as free that it counted says so on its page.
+          if (free && !search.freeUndo) rememberCharged(search.id);
+          // The edited search's undo hint is read from its claim at every page read: once used, its
+          // cached pages say so at once, and every one is read again.
+          if (search.freeUndo) queryClient.setQueriesData<EvidencePage>({ queryKey: ['evidence', shape.from] }, (page) => (page ? { ...page, undo: 'used' } : page));
           void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
         }
-        if (unfinished && !result.busy) setNotice(free ? { kind: 'unfinished', undo: true } : { kind: 'unfinished' });
-        return false;
+        // Settled once the search's page is on screen; until then a reload or a second ask replays the key.
+        settleOnArrival(search.id, 'page', id, idempotencyKey);
+        const next = new URLSearchParams();
+        if (keepCompare && cases) next.set(CASES_PARAM, cases);
+        // Its page announces the results and takes focus if it was lost on the way.
+        expectArrival(search.id);
+        navigate(`${evidencePath(search.id)}${next.size > 0 ? `?${next.toString()}` : ''}`);
+        return true;
+      } finally {
+        for (const one of shown) hide(one);
       }
-      const search = result.value.search;
-      queryClient.setQueryData(evidencePageKey(search.id, 1), search);
-      rememberQuestion(search.id, search.question);
-      if (shape.kind === 'evidence-edited' && (free || search.freeUndo)) {
-        // The server's word: an undo shown as free that it counted says so on its page.
-        if (free && !search.freeUndo) rememberCharged(search.id);
-        // The edited search's undo hint is read from its claim at every page read: once used, its
-        // cached pages say so at once, and every one is read again.
-        if (search.freeUndo) queryClient.setQueriesData<EvidencePage>({ queryKey: ['evidence', shape.from] }, (page) => (page ? { ...page, undo: 'used' } : page));
-        void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
-      }
-      // Settled once the search's page is on screen; until then a reload or a second ask replays the key.
-      settleOnArrival(search.id, 'page', id, idempotencyKey);
-      const next = new URLSearchParams();
-      if (keepCompare && cases) next.set(CASES_PARAM, cases);
-      // Its page announces the results and takes focus if it was lost on the way.
-      expectArrival(search.id);
-      navigate(`${evidencePath(search.id)}${next.size > 0 ? `?${next.toString()}` : ''}`);
-      return true;
     },
     [cases, navigate, queryClient, run],
   );
@@ -245,7 +267,8 @@ export function useEvidenceSearch() {
     [queryClient, send, setNotice],
   );
 
-  // Once its checklist shows, the control that asked says "Searching…" (before that, "Starting…").
-  const phase: AiPhase = verifying ? 'checking' : pending !== null ? 'searching' : request.phase;
+  // Once its checklist shows, the control that asked says "Searching…" (before that, or without a
+  // checklist that could load, "Starting…").
+  const phase: AiPhase = verifying ? 'checking' : pending !== null && checklistReady ? 'searching' : request.phase;
   return { ...request, phase, staleHint, pending, ask, edit };
 }

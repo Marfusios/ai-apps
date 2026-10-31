@@ -8,6 +8,7 @@
 import type { EvidenceProgress } from '../../../../shared/contracts/evidence';
 import { ApiError } from '../../api';
 import { formatCount } from '../../lib/format';
+import { VisitorChangedError } from '../auth/visitor';
 
 // ---------------------------------------------------------------------------
 // Builder copy (Task 25), for the owner's review.
@@ -25,6 +26,8 @@ export const CHALLENGES = {
 /** The rows' results, in the checklist's capitals. */
 export const RESULTS = {
   suggestions: 'READ · SUGGESTIONS READY',
+  /** The question row when the stage ended without saying what came of it. */
+  read: 'READ',
   nothingToSuggest: 'READ · NOTHING TO SUGGEST',
   note: 'NOTE ADDED',
   unavailable: 'NOT AVAILABLE',
@@ -32,7 +35,7 @@ export const RESULTS = {
   yourEdit: 'SKIPPED · YOUR EDIT',
   /** The question row when the server skipped the question stage of a question search. */
   skipped: 'SKIPPED',
-  /** The search row when the server gave no count. */
+  /** A stage that ended without its result: the search row without a count, the order row without its order. */
   done: 'DONE',
   aiOrder: 'ORDERED BY AI',
   matchOrder: 'MATCH ORDER',
@@ -47,11 +50,13 @@ export const RESULTS = {
 export const SPOKEN = {
   suggestions: 'Question read: suggestions ready.',
   nothingToSuggest: 'Question read: nothing to suggest.',
+  read: 'Question read.',
   note: 'Question read: note added.',
   unavailable: 'Question: suggestions not available.',
   searched: (cases: number): string => `Search done: ${formatCount(cases)} ${cases === 1 ? 'case' : 'cases'}.`,
   aiOrder: 'Leading results ordered by AI.',
   matchOrder: 'Leading results kept in match order.',
+  ordered: 'Leading results in order.',
   failed: 'The search didn’t finish.',
 } as const;
 
@@ -112,13 +117,11 @@ function consecutiveFailures(query: ProgressPollState): number {
 
 /**
  * How long a 429 asks the progress to wait, in milliseconds: its whole `Retry-After` (without one,
- * the longest backoff), or `Infinity` when that is longer than `PROGRESS_LONGEST_RETRY_AFTER_MS`:
- * the checklist then reads no more.
+ * the longest backoff). Longer than `PROGRESS_LONGEST_RETRY_AFTER_MS`, the checklist reads no more
+ * for that wait (`progressPollDelay`); the deadline itself holds every read until it has passed.
  */
 export function progressRetryAfterMs(refusal: ApiError): number {
-  if (refusal.retryAfter === null) return PROGRESS_MAX_BACKOFF_MS;
-  const wait = refusal.retryAfter * 1000;
-  return wait > PROGRESS_LONGEST_RETRY_AFTER_MS ? Infinity : wait;
+  return refusal.retryAfter === null ? PROGRESS_MAX_BACKOFF_MS : refusal.retryAfter * 1000;
 }
 
 /**
@@ -126,7 +129,8 @@ export function progressRetryAfterMs(refusal: ApiError): number {
  * has ended; after a 404, again (more slowly after `PROGRESS_NOT_FOUND_BEFORE_SLOWING` in a row);
  * after a 429, once its whole `Retry-After` has passed, or never when that is longer than
  * `PROGRESS_LONGEST_RETRY_AFTER_MS` (without one, after the longest backoff); after another
- * refusal, never; after a network or server failure, a little later each time. The checklist goes,
+ * refusal, never; once the visitor has changed, never (it is the previous visitor's search); after
+ * a network or server failure, a little later each time. The checklist goes,
  * and with it the reading, as soon as the search's POST settles; its query re-reads nothing else
  * by itself (no focus, reconnect or retry re-read), and a read started any other way within a
  * 429's wait (a reset when the visitor changes) gets the same refusal without a request
@@ -138,12 +142,13 @@ export function progressPollDelay(query: ProgressPollState): number | false {
   const failures = consecutiveFailures(query);
   if (data && data.state !== 'running') return false;
   if (status !== 'error') return PROGRESS_POLL_MS;
+  if (error instanceof VisitorChangedError) return false;
   if (error instanceof ApiError) {
     if (error.status === 404) return failures < PROGRESS_NOT_FOUND_BEFORE_SLOWING ? PROGRESS_POLL_MS : PROGRESS_SLOW_POLL_MS;
     if (error.status === 429) {
       // The whole wait, never shortened; one too long to be of use ends the reading.
       const wait = progressRetryAfterMs(error);
-      return wait === Infinity ? false : wait;
+      return wait > PROGRESS_LONGEST_RETRY_AFTER_MS ? false : wait;
     }
     if (error.status < 500) return false;
   }
@@ -199,7 +204,9 @@ function questionRow(input: ChecklistInput, current: boolean): ChecklistRow {
   if (q.status === 'failed' || q.result === 'unavailable') return row('question', challenge, 'skipped', RESULTS.unavailable, false, SPOKEN.unavailable);
   if (q.result === 'note') return row('question', challenge, 'done', RESULTS.note, true, SPOKEN.note);
   if (q.result === 'nothing_to_suggest') return row('question', challenge, 'done', RESULTS.nothingToSuggest, true, SPOKEN.nothingToSuggest);
-  return row('question', challenge, 'done', RESULTS.suggestions, true, SPOKEN.suggestions);
+  if (q.result === 'suggestions') return row('question', challenge, 'done', RESULTS.suggestions, true, SPOKEN.suggestions);
+  // Done, with no result given: read, and nothing more is claimed.
+  return row('question', challenge, 'done', RESULTS.read, true, SPOKEN.read);
 }
 
 function searchRow(input: ChecklistInput, current: boolean): ChecklistRow {
@@ -220,7 +227,9 @@ function orderRow(input: ChecklistInput, current: boolean): ChecklistRow {
   if (o.status === 'skipped') return row('order', challenge, 'skipped', RESULTS.notUsed);
   if (o.status === 'failed') return o.result === 'match' ? row('order', challenge, 'skipped', RESULTS.matchOrder) : row('order', challenge, 'skipped', RESULTS.failed);
   if (o.result === 'match') return row('order', challenge, 'done', RESULTS.matchOrder, true, SPOKEN.matchOrder);
-  return row('order', challenge, 'done', RESULTS.aiOrder, true, SPOKEN.aiOrder);
+  if (o.result === 'ai_relevance') return row('order', challenge, 'done', RESULTS.aiOrder, true, SPOKEN.aiOrder);
+  // Done, with no result given: no kind of order is claimed.
+  return row('order', challenge, 'done', RESULTS.done, true, SPOKEN.ordered);
 }
 
 /**
@@ -246,7 +255,19 @@ export function elapsed(startedAt: number, now: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-/** What the live region says: the latest completion, so reads that bring nothing new say nothing new. */
-export function checklistAnnouncement(rows: readonly ChecklistRow[]): string {
-  return rows.filter((r) => r.spoken !== null && (r.tone === 'done' || r.tone === 'skipped')).at(-1)?.spoken ?? '';
+/** The rows whose end is said, in order: done, or ended with something to say (skipped rows say nothing). */
+export function spokenCompletions(rows: readonly ChecklistRow[]): ChecklistRow[] {
+  return rows.filter((r) => r.spoken !== null && (r.tone === 'done' || r.tone === 'skipped'));
+}
+
+/**
+ * What the live region says after a read: every completion not said yet (`said`: the rows already
+ * announced), in order and joined, so stages that end between two reads are each said once; empty
+ * when the read brought none.
+ */
+export function checklistAnnouncement(rows: readonly ChecklistRow[], said: ReadonlySet<ChecklistRow['id']>): string {
+  return spokenCompletions(rows)
+    .filter((r) => !said.has(r.id))
+    .map((r) => r.spoken)
+    .join(' ');
 }
