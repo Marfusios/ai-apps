@@ -546,7 +546,7 @@ for (const [policy, config, sentence] of [
   ['none', null, 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.'],
   [
     'state',
-    RELEASE,
+    STATE_POLICY,
     'Ask in plain English: AirCase searches with your question. A US state it names explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.',
   ],
 ] as const) {
