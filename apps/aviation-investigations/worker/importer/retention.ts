@@ -1,15 +1,16 @@
 import { sql } from 'drizzle-orm';
-import { createDb, closeDb, type Db } from '../../server/db/client.js';
+import { type Db } from '../../server/db/client.js';
 import { pinGeneration, unpinGeneration, pruneGenerations } from '../../server/db/generations.js';
 import { deleteUnusedIndices, cleanupStalePins } from '../index/publications.js';
 import { fenced, manifest, type ImportSession } from './store.js';
 import type { Client } from '@elastic/elasticsearch';
-import { environmentConfig, type ImporterConfig } from './config.js';
+import { type ImporterConfig } from './config.js';
 import { ManagedSpace } from './files.js';
 import { digest } from './provenance.js';
 import { join } from 'node:path';
 import { lstat } from 'node:fs/promises';
 import { ImportFailure } from './contracts.js';
+import { retainedArchives, type HostFacts } from './facts.js';
 
 /** Release only reconciled imports superseded for 48h; active/previous and unresolved candidates remain protected. */
 export async function retainDatabase(db: Db, es: Client, s: ImportSession): Promise<void> {
@@ -37,7 +38,8 @@ export async function retainDatabase(db: Db, es: Client, s: ImportSession): Prom
         );
     }
     const old = await tx.execute(sql`select id,generation_id,baseline from import_artifacts
-      where canary is not null and not needs_review and rollback is null and superseded_at<clock_timestamp()-interval '48 hours'
+      where ((canary is not null and not needs_review and rollback is null) or resolved_at is not null)
+        and coalesce(superseded_at,resolved_at)<clock_timestamp()-interval '48 hours'
         and generation_id not in (select generation_id from dataset_manifests order by active desc,published_at desc limit 2)
         and exists (select 1 from import_index_refs r where r.artifact_id=import_artifacts.id and released_at is null)`);
     for (const a of old.rows) {
@@ -55,24 +57,17 @@ export async function retainDatabase(db: Db, es: Client, s: ImportSession): Prom
   await deleteUnusedIndices(es, db, { olderThanHours: 48, yes: true });
 }
 /** File cleanup is cross-environment: dev cannot discard the accepted/pending live archive. */
-export async function retainFiles(config: ImporterConfig, space: ManagedSpace): Promise<void> {
-  const keep = new Set<string>();
-  for (const environment of ['dev', 'live'] as const) {
-    if (!config[environment]) continue;
-    const cfg = environmentConfig(config, environment, true),
-      db = createDb(cfg.databaseIngestUrl!, {
-        max: 2,
-        applicationName: 'aviation-import-retention',
-      });
-    try {
-      const rows =
-        await db.execute(sql`select accepted->>'archive' as archive from import_control where accepted is not null
-        union select a.archive_sha256 from import_artifacts a where needs_review or canary is null
-          or exists (select 1 from import_index_refs r where r.artifact_id=a.id and released_at is null)`);
-      for (const r of rows.rows) if (typeof r.archive === 'string') keep.add(r.archive);
-    } finally {
-      await closeDb(db);
-    }
+export async function retainFiles(
+  db: Db,
+  config: ImporterConfig,
+  environment: 'dev' | 'live',
+  space: ManagedSpace,
+  facts: HostFacts,
+): Promise<void> {
+  const keep = new Set(await retainedArchives(db));
+  const other = environment === 'dev' ? 'live' : 'dev';
+  if (config[other]) {
+    for (const archive of await facts.retention(other)) keep.add(archive);
   }
   for (const path of await space.registered()) {
     const sha = /^(?:archives|extracts)\/([0-9a-f]{64})$/.exec(path)?.[1];

@@ -9,6 +9,8 @@ import { runImport } from './run.js';
 import { operatorCommand } from './commands.js';
 import { ManagedSpace } from './files.js';
 import { recordSkippedLive } from './recovery.js';
+import { recoveryCommand } from './operations.js';
+import { classify } from './failure.js';
 
 async function main(): Promise<void> {
   process.umask(0o077);
@@ -28,6 +30,9 @@ async function main(): Promise<void> {
       approval: { type: 'string' },
       artifact: { type: 'string' },
       'publication-sha256': { type: 'string' },
+      run: { type: 'string' },
+      'evidence-sha256': { type: 'string' },
+      apply: { type: 'boolean' },
     },
   });
   if (!values.config || !['dev', 'live'].includes(values.env ?? '') || positionals.length !== 1)
@@ -67,7 +72,7 @@ async function main(): Promise<void> {
     await recordSkippedLive(config);
     return;
   }
-  if (positionals[0] === 'run') {
+  if (positionals[0] === 'run' || positionals[0] === 'recertify') {
     if (
       Boolean(values['seed-archive']) !== Boolean(values.sha256) ||
       Boolean(values['seed-archive']) !== Boolean(values['seed-advertised-at'])
@@ -75,7 +80,8 @@ async function main(): Promise<void> {
       throw new ImportFailure('configuration');
     const report = await runImport(config, {
       environment,
-      cacheOnly: values['cache-only'] === true,
+      cacheOnly: positionals[0] === 'recertify' || values['cache-only'] === true,
+      recertify: positionals[0] === 'recertify',
       noChange: values['no-change'],
       forcedDev: values['forced-dev'],
       seed: values['seed-archive']
@@ -93,6 +99,40 @@ async function main(): Promise<void> {
     process.stdout.write(`${safeLog('complete', report.result, report.reason)}\n`);
     return;
   }
+  if (positionals[0] === 'rebaseline' && values['publication-sha256']) {
+    if (
+      Boolean(values['seed-archive']) !== Boolean(values.sha256) ||
+      Boolean(values['seed-archive']) !== Boolean(values['seed-advertised-at'])
+    )
+      throw new ImportFailure('configuration');
+    await recoveryCommand(config, environment, {
+      command: 'rebaseline',
+      publication: values['publication-sha256'],
+      apply: values.apply === true,
+      seed: values['seed-archive']
+        ? {
+            path: values['seed-archive'],
+            sha256: values.sha256!,
+            observation: SourceSchema.parse({
+              advertisedAtLocal: values['seed-advertised-at'],
+              bytes: lstatSync(values['seed-archive']).size,
+            }),
+          }
+        : undefined,
+    });
+    process.stdout.write(`${safeLog('complete', 'deferred', null)}\n`);
+    return;
+  }
+  if (positionals[0] === 'acknowledge-preartifact' && values.run && values['evidence-sha256']) {
+    await recoveryCommand(config, environment, {
+      command: 'acknowledge-preartifact',
+      run: values.run,
+      evidence: values['evidence-sha256'],
+      apply: values.apply === true,
+    });
+    process.stdout.write(`${safeLog('complete', 'deferred', null)}\n`);
+    return;
+  }
   if ((positionals[0] === 'approve' || positionals[0] === 'rollback') && values.artifact) {
     await operatorCommand(config, environment, positionals[0], values.artifact, {
       approval: values.approval,
@@ -105,8 +145,12 @@ async function main(): Promise<void> {
   }
   throw new ImportFailure('configuration');
 }
-main().catch((error) => {
-  const e = safeFailure(error);
-  process.stdout.write(`${safeLog('check', e.review ? 'needs_review' : 'deferred', e.reason)}\n`);
-  process.exitCode = 1;
-});
+main()
+  .catch((error) => {
+    const e = classify(error);
+    process.stdout.write(`${safeLog('check', e.result, e.reason)}\n`);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    if (process.connected) process.disconnect();
+  });

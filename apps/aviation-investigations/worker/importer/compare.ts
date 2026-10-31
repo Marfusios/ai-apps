@@ -1,5 +1,5 @@
 import { digest, type SnapshotFacts } from './provenance.js';
-import { POLICY_VERSION } from './contracts.js';
+import { POLICY_VERSION, type SourceObservation } from './contracts.js';
 
 export interface Comparison {
   policy: typeof POLICY_VERSION;
@@ -9,8 +9,13 @@ export interface Comparison {
   failures: string[];
   changed: string[];
   added: string[];
+  removed: string[];
+  reassociated: string[];
+  usMembershipLost: string[];
+  cases: string[];
   counts: Record<string, number>;
   hash: string;
+  observations?: { accepted: SourceObservation; candidate: SourceObservation };
 }
 const ratio = (value: number, baseline: number, low: number, high: number): boolean =>
   BigInt(value) * 1000n >= BigInt(baseline) * BigInt(low) &&
@@ -20,6 +25,7 @@ export function compareSnapshots(
   old: SnapshotFacts,
   next: SnapshotFacts,
   observedAt: Date,
+  observations?: { accepted: SourceObservation; candidate: SourceObservation },
 ): Comparison {
   const failures: string[] = [];
   const check = (name: string, ok: boolean) => {
@@ -34,6 +40,25 @@ export function compareSnapshots(
     .map(([key]) => key)
     .sort();
   const added = [...cb.keys()].filter((k) => !ca.has(k)).sort();
+  const removed = [...old.identities.keys()].filter((key) => !next.identities.has(key)).sort();
+  const reassociated = [...old.identities]
+    .filter(([key, id]) => next.identities.has(key) && next.identities.get(key) !== id)
+    .map(([key]) => key)
+    .sort();
+  const usMembershipLost = a.cases
+    .filter((c) => c.isUs && cb.get(c.ntsbNo)?.isUs !== true)
+    .map((c) => c.ntsbNo)
+    .sort();
+  if (old.digest !== next.digest && observations) {
+    check(
+      'source_reissued',
+      observations.candidate.advertisedAtLocal > observations.accepted.advertisedAtLocal,
+    );
+    const gap =
+      Date.parse(`${observations.candidate.advertisedAtLocal}Z`) -
+      Date.parse(`${observations.accepted.advertisedAtLocal}Z`);
+    check('baseline_required', Number.isFinite(gap) && gap <= 62 * 86_400_000);
+  }
   const count = (s: SnapshotFacts) => ({
     e: s.normalized.cases.length,
     u: s.normalized.cases.filter((c) => c.isUs).length,
@@ -43,14 +68,9 @@ export function compareSnapshots(
     n = count(next);
   check('baseline_nonempty', o.e > 0 && o.u > 0 && o.a > 0);
   check('events', ratio(n.e, o.e, 1000, 1030));
-  check(
-    'identities',
-    [...old.identities].every(([k, id]) => next.identities.get(k) === id),
-  );
-  check(
-    'us_membership',
-    a.cases.filter((c) => c.isUs).every((c) => cb.get(c.ntsbNo)?.isUs === true),
-  );
+  check('removals', removed.length === 0);
+  check('reassociations', reassociated.length === 0);
+  check('us_membership', usMembershipLost.length === 0);
   check('us_count', ratio(n.u, o.u, 1000, 1030));
   check('changed', BigInt(changed.length) * 100n <= BigInt(o.e) * 5n);
   check('eligible_count', ratio(n.a, o.a, 995, 1050));
@@ -167,8 +187,24 @@ export function compareSnapshots(
     candidate: next.digest,
     ok: failures.length === 0,
     failures,
+    ...(observations ? { observations } : {}),
     changed,
     added,
+    removed,
+    reassociated,
+    usMembershipLost,
+    cases: [
+      ...new Set([
+        ...changed,
+        ...added,
+        ...removed,
+        ...reassociated,
+        ...usMembershipLost,
+        ...(failures.includes('dictionary')
+          ? [...old.identities.keys(), ...next.identities.keys()]
+          : []),
+      ]),
+    ].sort(),
     counts: {
       events: n.e,
       us: n.u,

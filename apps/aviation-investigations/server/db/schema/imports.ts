@@ -25,6 +25,9 @@ export const importControl = pgTable(
     ownerPid: integer('owner_pid'),
     restoreRequired: boolean('restore_required').notNull().default(false),
     accepted: jsonb('accepted'),
+    pending: jsonb('pending'),
+    lastFetched: jsonb('last_fetched'),
+    pendingObservation: jsonb('pending_observation'),
     lastRemoteFetchAt: ts('last_remote_fetch_at'),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
@@ -50,6 +53,7 @@ export const importArtifacts = pgTable(
     canary: jsonb('canary'),
     rollback: jsonb('rollback'),
     supersededAt: ts('superseded_at'),
+    resolvedAt: ts('resolved_at'),
   },
   (t) => [
     unique('import_artifact_identity').on(t.environment, t.archiveSha256),
@@ -77,7 +81,36 @@ export const importRuns = pgTable('import_runs', {
   /** Historical report snapshot only; never used for budget admission or ledger compaction. */
   reportedCostUsd: numeric('reported_cost_usd', { precision: 12, scale: 6 }).notNull().default('0'),
   observedSha256: text('observed_sha256'),
+  successPublication: jsonb('success_publication'),
+  pendingRunId: uuid('pending_run_id'),
+  acknowledgedAt: ts('acknowledged_at'),
+  acknowledgementSha256: text('acknowledgement_sha256'),
 });
+
+/** Append-only validation and operator decisions. Certificates and ledger history stay intact. */
+export const importAttestations = pgTable(
+  'import_attestations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .unique()
+      .references(() => importRuns.id),
+    artifactId: uuid('artifact_id').references(() => importArtifacts.id),
+    kind: text('kind').notNull(),
+    publication: jsonb('publication'),
+    accepted: jsonb('accepted'),
+    canary: jsonb('canary'),
+    evidenceSha256: text('evidence_sha256').notNull(),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'import_attestation_kind',
+      sql`${t.kind} in ('legacy','publication','recertification','rebaseline','abandon')`,
+    ),
+    check('import_attestation_digest', sql`${t.evidenceSha256} ~ '^[0-9a-f]{64}$'`),
+  ],
+);
 export const importIndexRefs = pgTable(
   'import_index_refs',
   {

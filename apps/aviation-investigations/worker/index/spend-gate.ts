@@ -39,7 +39,7 @@ export interface SpendGate {
 }
 
 export class SpendRefusedError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly reason?: 'busy' | 'restore_hold' | 'budget') {
     super(message);
     this.name = 'SpendRefusedError';
   }
@@ -189,14 +189,14 @@ export function createLedgerSpendGate(db: Db, opts: LedgerSpendGateOptions): Spe
         }),
       );
       if (r.ok) return { reservationId: String(r.reservationId), fencingToken: r.fencingToken };
-      if (r.reason === 'busy') throw new SpendRefusedError(`${category} spend of $${amount.toFixed(6)} refused: the ledger stayed busy`);
+      if (r.reason === 'busy') throw new SpendRefusedError(`${category} spend of $${amount.toFixed(6)} refused: the ledger stayed busy`, 'busy');
       if (r.reason === 'restore_hold') {
         throw new SpendRefusedError(
-          `${category} spend of $${amount.toFixed(6)} refused: paid operations are held after a restore (pnpm worker restore-reconcile, RUNBOOK "Backups")`,
+          `${category} spend of $${amount.toFixed(6)} refused: paid operations are held after a restore (pnpm worker restore-reconcile, RUNBOOK "Backups")`, 'restore_hold',
         );
       }
       throw new SpendRefusedError(
-        `${category} spend of $${amount.toFixed(6)} refused (${r.reason}): $${r.remainingUsd.toFixed(6)} left until ${r.retryAt.toISOString()}`,
+        `${category} spend of $${amount.toFixed(6)} refused (${r.reason}): $${r.remainingUsd.toFixed(6)} left until ${r.retryAt.toISOString()}`, 'budget',
       );
     },
     async settle(res, outcome) {

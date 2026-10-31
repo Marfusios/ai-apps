@@ -32,10 +32,32 @@ const CleanupSchema = z.strictObject({
   containers: z.array(z.string().regex(/^ai-aviation-(dev|live)-extract-[0-9a-f]{12}$/)).max(16),
 });
 /** Read only owner-created bounded JSON; never deserialize source-supplied paths. */
+export async function privateBytes(path: string): Promise<Buffer> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (
+      !stat.isFile() ||
+      stat.uid !== process.getuid?.() ||
+      (stat.mode & 0o077) !== 0 ||
+      stat.size > FILE_LIMITS.report
+    ) {
+      throw new ImportFailure('storage');
+    }
+    const bytes = Buffer.alloc(FILE_LIMITS.report + 1);
+    let length = 0;
+    for (;;) {
+      const { bytesRead } = await handle.read(bytes, length, bytes.length - length, null);
+      length += bytesRead;
+      if (length > FILE_LIMITS.report) throw new ImportFailure('storage');
+      if (!bytesRead) return bytes.subarray(0, length);
+    }
+  } finally {
+    await handle.close();
+  }
+}
 export async function privateJson(path: string): Promise<unknown> {
-  if ((await regular(path)) > FILE_LIMITS.report || ((await lstat(path)).mode & 0o077) !== 0)
-    throw new ImportFailure('storage');
-  return JSON.parse(await readFile(path, 'utf8')) as unknown;
+  return JSON.parse((await privateBytes(path)).toString('utf8')) as unknown;
 }
 export async function recoverExtraction(space: ManagedSpace): Promise<void> {
   // Registered partial downloads belong only to a terminated previous child (the host owns both locks).

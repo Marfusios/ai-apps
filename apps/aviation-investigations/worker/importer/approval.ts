@@ -18,6 +18,10 @@ export const ApprovalSchema = z.strictObject({
   policy: z.literal(POLICY_VERSION),
   code: z.string().regex(/^[0-9a-f]{40}$/),
   report: Sha256,
+  cases: z
+    .array(z.string().min(1).max(128))
+    .max(100_000)
+    .refine((v) => new Set(v).size === v.length),
   reasons: z
     .array(z.string().min(1).max(64))
     .min(1)
@@ -28,6 +32,11 @@ export const ApprovalSchema = z.strictObject({
 /** Only comparative policy deviations are reviewable; structural/provenance/servable/money failures never are. */
 export const REVIEWABLE = new Set([
   'events',
+  'removals',
+  'reassociations',
+  'us_membership',
+  'source_reissued',
+  'baseline_required',
   'us_count',
   'changed',
   'eligible_count',
@@ -58,8 +67,12 @@ export function checkApproval(
     approval.code !== code ||
     approval.report !== comparison.hash ||
     !sameManifest(approval.baseline, baseline) ||
-    digest([...approval.reasons].sort()) !== digest(reasons)
+    digest([...approval.reasons].sort()) !== digest(reasons) ||
+    !approval.cases ||
+    digest([...approval.cases].sort()) !== digest(comparison.cases)
   ) {
+    if (reasons.includes('source_reissued')) throw new ImportFailure('source_reissued');
+    if (reasons.includes('baseline_required')) throw new ImportFailure('baseline_required');
     throw new ImportFailure('cohort_bounds');
   }
   return reasons;

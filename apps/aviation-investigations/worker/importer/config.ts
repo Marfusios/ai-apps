@@ -1,4 +1,5 @@
-import { lstat, readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
@@ -23,35 +24,49 @@ const EnvironmentSchema = z.strictObject({
   container: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/),
   image: z.string().regex(/^sha256:[0-9a-f]{64}$/),
 });
-export const ImporterConfigSchema = z.strictObject({
-  version: z.literal('snapshot-importer.v1'),
-  root: path,
-  hostLock: path,
-  maintenanceLock: path,
-  /** This identity is checked against Git, rather than accepted as the worker's identity on trust. */
-  code: z.string().regex(/^[0-9a-f]{40}$/),
-  schedule: z.strictObject({
-    enabled: z.boolean(),
-    localTime: z.literal(IMPORT_LOCAL_TIME),
-    timeZone: z.literal(IMPORT_TIME_ZONE),
-  }),
-  /** Controller's installation evidence, never manufactured by the runner. */
-  installation: z
-    .strictObject({
-      backupMutexConfirmed: z.literal(true),
-      headroomReportSha256: z.string().regex(/^[0-9a-f]{64}$/),
-    })
-    .nullable(),
-  dev: EnvironmentSchema,
-  live: EnvironmentSchema.optional(),
-});
+export const ImporterConfigSchema = z
+  .strictObject({
+    version: z.literal('snapshot-importer.v1'),
+    root: path,
+    hostLock: path,
+    maintenanceLock: path,
+    /** This identity is checked against Git, rather than accepted as the worker's identity on trust. */
+    code: z.string().regex(/^[0-9a-f]{40}$/),
+    schedule: z.strictObject({
+      enabled: z.boolean(),
+      localTime: z.literal(IMPORT_LOCAL_TIME),
+      timeZone: z.literal(IMPORT_TIME_ZONE),
+    }),
+    /** Controller's installation evidence, never manufactured by the runner. */
+    installation: z
+      .strictObject({
+        backupMutexConfirmed: z.literal(true),
+        headroomReportSha256: z.string().regex(/^[0-9a-f]{64}$/),
+      })
+      .nullable(),
+    dev: EnvironmentSchema,
+    live: EnvironmentSchema.optional(),
+  })
+  .refine((config) => !config.live || config.dev.image === config.live.image, {
+    message: 'dev and live must use one reviewed image',
+  });
 export type ImporterConfig = z.infer<typeof ImporterConfigSchema>;
 export async function readImporterConfig(path: string): Promise<ImporterConfig> {
   try {
-    const s = await lstat(path);
-    if (!s.isFile() || s.isSymbolicLink() || (s.mode & 0o077) !== 0 || s.size > 65536)
-      throw new ImportFailure('configuration');
-    const c = ImporterConfigSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let c: ImporterConfig;
+    try {
+      const s = await handle.stat();
+      if (!s.isFile() || s.uid !== process.getuid?.() || (s.mode & 0o077) !== 0 || s.size > 65536)
+        throw new ImportFailure('configuration');
+      // Bound the read even if the owner concurrently replaces or grows the configuration.
+      const bytes = Buffer.alloc(65537);
+      const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+      if (bytesRead > 65536) throw new ImportFailure('configuration');
+      c = ImporterConfigSchema.parse(JSON.parse(bytes.subarray(0, bytesRead).toString('utf8')));
+    } finally {
+      await handle.close();
+    }
     const dirs = [c.root, c.hostLock, c.maintenanceLock].map((p) => resolve(p));
     if (new Set(dirs).size !== 3 || dirs.slice(1).some((p) => p.startsWith(`${dirs[0]}/`)))
       throw new ImportFailure('configuration');
@@ -143,11 +158,9 @@ export function environmentConfig(
   }
   return app;
 }
-/** Called only after a nonzero miss plan has passed the cap; existing nonempty process keys win. */
+/** Called only after admission. The selected environment's files bind its provider account. */
 export function providerKey(config: ImporterConfig, environment: 'dev' | 'live'): string {
-  const value =
-    process.env.OPENAI_API_KEY ||
-    fileValues(config[environment]!.envFiles, ['OPENAI_API_KEY']).OPENAI_API_KEY;
+  const value = fileValues(config[environment]!.envFiles, ['OPENAI_API_KEY']).OPENAI_API_KEY;
   if (!value) throw new ImportFailure('configuration');
   return value;
 }

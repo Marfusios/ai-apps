@@ -111,6 +111,8 @@ export function findProfile(archiveSha256: string, dir: string = PROFILES_DIR): 
 }
 
 export interface VerifyOptions {
+  /** Produce a fresh generic report without changing the verification stamp (operator dry run). */
+  readOnly?: boolean;
   maxReportBytes?: number;
   /** Directory for `verify-gen-<id>-<sha256>.json` (default `data/work`). */
   outDir?: string;
@@ -651,7 +653,7 @@ function isConflict(err: unknown): boolean {
  * (aggregate counts only); its sha256 is the recorded report hash.
  */
 export async function verifyCorpus(db: Db, generationId: number, opts: VerifyOptions = {}): Promise<VerifyReport> {
-  const analyzed = await analyzeCorpus(db).then(
+  const analyzed = opts.readOnly ? false : await analyzeCorpus(db).then(
     () => true,
     () => false,
   );
@@ -659,7 +661,7 @@ export async function verifyCorpus(db: Db, generationId: number, opts: VerifyOpt
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     try {
       const report = await verifyInSnapshot(q, generationId, opts, analyzed);
-      if (report.conflict) await client.query('ROLLBACK');
+      if (report.conflict || opts.readOnly) await client.query('ROLLBACK');
       else await client.query('COMMIT');
       return report;
     } catch (err) {
@@ -753,14 +755,16 @@ async function verifyInSnapshot(q: Queryable, generationId: number, opts: Verify
   let verificationStatus: VerificationStatus | null = gen.verificationStatus;
   let conflict = false;
   try {
-    const [row] = await rows(
-      q,
-      sql`select record_verification(${generationId}, ${gen.status}, ${ok}, ${VERIFIER_VERSION}, ${reportSha256}) as status`,
-    ).catch((err: unknown) => {
-      throw lifecycleError(err);
-    });
-    status = row?.status as GenerationStatus;
-    verificationStatus = ok ? 'ok' : 'failed';
+    if (!opts.readOnly) {
+      const [row] = await rows(
+        q,
+        sql`select record_verification(${generationId}, ${gen.status}, ${ok}, ${VERIFIER_VERSION}, ${reportSha256}) as status`,
+      ).catch((err: unknown) => {
+        throw lifecycleError(err);
+      });
+      status = row?.status as GenerationStatus;
+      verificationStatus = ok ? 'ok' : 'failed';
+    }
   } catch (err) {
     if (!isConflict(err)) throw err;
     conflict = true;

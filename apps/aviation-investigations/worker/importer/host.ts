@@ -13,11 +13,13 @@ import {
   safeFailure,
   sourceReminder,
 } from './contracts.js';
-import { readImporterConfig, WORKER_VARS } from './config.js';
+import { readImporterConfig, type ImporterConfig } from './config.js';
 import { inBackupWindow } from './status.js';
 import { ManagedSpace, privateDirectory } from './files.js';
 import { recoverExtraction } from './extraction.js';
 import { workerIdentity } from './application.js';
+import { classify } from './failure.js';
+import { FactMessageSchema, readHostFacts } from './facts.js';
 
 /** flock on the inherited open file description: the parent retains the lock after the helper exits. */
 export async function hostLock(path: string): Promise<FileHandle> {
@@ -60,6 +62,7 @@ export async function boundedChild(
   args: string[],
   deadline: number,
   locks: readonly FileHandle[],
+  config: ImporterConfig,
 ): Promise<number> {
   return new Promise<number>((done) => {
     const names = [
@@ -78,10 +81,6 @@ export async function boundedChild(
       'DOCKER_HOST',
       'DOCKER_CONTEXT',
       'DOCKER_CONFIG',
-      ...WORKER_VARS,
-      ...(!args.includes('--cache-only') && !args.includes('--no-change')
-        ? ['OPENAI_API_KEY']
-        : []),
     ];
     const environment = Object.fromEntries(
       names.filter((n) => Boolean(process.env[n])).map((n) => [n, process.env[n]!]),
@@ -91,7 +90,7 @@ export async function boundedChild(
       ['--import', 'tsx', fileURLToPath(new URL('./cli.ts', import.meta.url)), ...args],
       {
         detached: true,
-        stdio: ['ignore', 'pipe', 'pipe', locks[0]!.fd, locks[1]!.fd],
+        stdio: ['ignore', 'pipe', 'pipe', locks[0]!.fd, locks[1]!.fd, 'ipc'],
         env: {
           ...environment,
           AVIATION_TRACING_ENABLED: 'false',
@@ -144,6 +143,29 @@ export async function boundedChild(
       }
     });
     child.stderr!.on('data', () => {});
+    let factsPending = false;
+    const ownEnvironment = args[args.indexOf('--env') + 1];
+    child.on('message', (raw: unknown) => {
+      const parsed = FactMessageSchema.safeParse(raw);
+      if (!parsed.success || factsPending || parsed.data.request.environment === ownEnvironment)
+        return;
+      const message = parsed.data;
+      factsPending = true;
+      void readHostFacts(config, message.request)
+        .then(
+          (value) => {
+            if (child.connected)
+              child.send({ type: 'import-facts-reply', id: message.id, ok: true, value }, () => {});
+          },
+          () => {
+            if (child.connected)
+              child.send({ type: 'import-facts-reply', id: message.id, ok: false }, () => {});
+          },
+        )
+        .finally(() => {
+          factsPending = false;
+        });
+    });
     const finish = (code: number | null) => {
       clearTimeout(soft);
       clearTimeout(hard);
@@ -173,12 +195,23 @@ async function main(args: string[], deadline: number): Promise<number> {
       approval: { type: 'string' },
       artifact: { type: 'string' },
       'publication-sha256': { type: 'string' },
+      run: { type: 'string' },
+      'evidence-sha256': { type: 'string' },
+      apply: { type: 'boolean' },
     },
   });
   if (
     !values.config ||
     positionals.length !== 1 ||
-    !['run', 'cycle', 'approve', 'rollback'].includes(positionals[0]!)
+    ![
+      'run',
+      'cycle',
+      'approve',
+      'rollback',
+      'recertify',
+      'rebaseline',
+      'acknowledge-preartifact',
+    ].includes(positionals[0]!)
   ) {
     throw new ImportFailure('configuration');
   }
@@ -197,16 +230,16 @@ async function main(args: string[], deadline: number): Promise<number> {
     await workerIdentity(config.code, resolve(dirname(fileURLToPath(import.meta.url)), '../../..'));
     await privateDirectory(config.root);
     await space.check();
-    await recoverExtraction(space);
+    if (command !== 'acknowledge-preartifact') await recoverExtraction(space);
     try {
-      if (command !== 'cycle') return await boundedChild(args, deadline, locks);
+      if (command !== 'cycle') return await boundedChild(args, deadline, locks, config);
       const common = [
         'run',
         '--config',
         values.config,
         ...(values['cache-only'] ? ['--cache-only'] : []),
       ];
-      const dev = await boundedChild([...common, '--env', 'dev'], deadline, locks);
+      const dev = await boundedChild([...common, '--env', 'dev'], deadline, locks, config);
       if (dev !== 0) {
         process.stdout.write(`${safeLog('check', 'skipped_dev_failed', 'dev_failed')}\n`);
         if (config.live && deadline - Date.now() > 180_000)
@@ -214,12 +247,15 @@ async function main(args: string[], deadline: number): Promise<number> {
             ['record-skip', '--config', values.config, '--env', 'live'],
             deadline,
             locks,
+            config,
           );
         return dev;
       }
-      return config.live ? await boundedChild([...common, '--env', 'live'], deadline, locks) : 0;
+      return config.live
+        ? await boundedChild([...common, '--env', 'live'], deadline, locks, config)
+        : 0;
     } finally {
-      await recoverExtraction(space);
+      if (command !== 'acknowledge-preartifact') await recoverExtraction(space);
     }
   } finally {
     for (const lock of locks.reverse()) await lock.close();
@@ -229,7 +265,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   // Includes lock acquisition, recovery, both environments and final daemon cleanup.
   const deadline = Date.now() + 3 * 3_600_000;
   const final = setTimeout(() => {
-    process.stderr.write(`${safeLog('cleanup', 'needs_review', 'timeout')}\n`);
+    process.stderr.write(`${safeLog('cleanup', 'cancelled', 'timeout')}\n`);
     process.exit(124);
   }, 3 * 3_600_000);
   main(process.argv.slice(2), deadline)
@@ -238,10 +274,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
         process.exitCode = code;
       },
       (error) => {
-        const failure = safeFailure(error);
-        process.stderr.write(
-          `${safeLog('check', failure.review ? 'needs_review' : 'deferred', failure.reason)}\n`,
-        );
+        const failure = classify(error);
+        process.stderr.write(`${safeLog('check', failure.result, failure.reason)}\n`);
         process.exitCode = 1;
       },
     )

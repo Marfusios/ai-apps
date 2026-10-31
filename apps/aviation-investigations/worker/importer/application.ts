@@ -11,6 +11,23 @@ import type { ApplicationProbe } from './probes.js';
 import type { ImporterConfig } from './config.js';
 
 const exec = promisify(execFile);
+/** Cheap availability check before any candidate work; the full contract is checked by the canary. */
+export async function applicationAvailable(
+  config: ImporterConfig['dev'],
+  http: typeof fetch = globalThis.fetch,
+): Promise<void> {
+  try {
+    const response = await http(new URL('/api/config', config.applicationUrl), {
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'Cache-Control': 'no-cache', 'User-Agent': 'AirCase-snapshot-canary/1.0' },
+    });
+    await response.body?.cancel();
+    if (response.status !== 200) throw new ImportFailure('source_unavailable', false);
+  } catch {
+    throw new ImportFailure('source_unavailable', false);
+  }
+}
 export async function deployedImage(config: ImporterConfig['dev']): Promise<string> {
   try {
     const r = await exec(
@@ -25,10 +42,11 @@ export async function deployedImage(config: ImporterConfig['dev']): Promise<stri
       ],
       { timeout: 10_000, maxBuffer: 1024 },
     );
-    if (r.stdout.trim() !== `${config.image} true`) throw new ImportFailure('configuration');
+    if (r.stdout.trim() !== `${config.image} true`)
+      throw new ImportFailure('source_unavailable', false);
     return config.image;
   } catch {
-    throw new ImportFailure('configuration');
+    throw new ImportFailure('source_unavailable', false);
   }
 }
 export async function workerIdentity(expected: string, cwd: string): Promise<void> {

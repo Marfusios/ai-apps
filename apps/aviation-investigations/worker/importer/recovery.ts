@@ -8,6 +8,8 @@ import { ManagedSpace, ownedPath } from './files.js';
 import { privateJson } from './extraction.js';
 import { beginRun, review, updateRun, withImportSession, type ImportSession } from './store.js';
 import { environmentConfig, type ImporterConfig } from './config.js';
+import { committedSuccess, setPending } from './durable.js';
+import { control } from './store.js';
 
 export const OutageSchema = z.strictObject({
   version: z.literal(1),
@@ -17,6 +19,7 @@ export const OutageSchema = z.strictObject({
   step: z.enum(IMPORT_STEPS),
   reason: z.enum(IMPORT_REASONS),
   review: z.boolean(),
+  result: z.enum(['needs_review', 'deferred', 'failed', 'cancelled']).optional(),
 });
 export type Outage = z.infer<typeof OutageSchema>;
 
@@ -49,6 +52,7 @@ export async function spoolFailure(
       step,
       reason: failure.reason,
       review: failure.review,
+      result: failure.result,
     }),
   );
 }
@@ -68,13 +72,23 @@ export async function replayOutage(
   const parsed = OutageSchema.safeParse(raw);
   if (!parsed.success) throw new ImportFailure('integrity');
   const r = parsed.data;
+  if (await committedSuccess(db, r.runId)) {
+    await unlink(path);
+    return;
+  }
+  if (r.review) {
+    const pending = (await control(db)).pending;
+    if (pending && pending.runId === r.runId && !pending.needsReview) {
+      await setPending(db, s, { ...pending, needsReview: true, reason: r.reason });
+    }
+  }
   if (r.artifactId && r.review) await review(db, s, r.artifactId, r.reason);
   const id = r.runId ?? (await beginRun(db, s, 'automatic'));
   // Save the generated ID before updating: replay after a lost acknowledgment updates the same row.
   if (!r.runId) await space.json(path, { ...r, runId: id });
   await updateRun(db, s, id, {
     step: r.step,
-    result: r.review ? 'needs_review' : 'deferred',
+    result: r.result ?? (r.review ? 'needs_review' : 'deferred'),
     reason: r.reason,
     artifactId: r.artifactId,
     sourceCheckSucceeded: false,

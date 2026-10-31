@@ -49,7 +49,8 @@ export async function operatorCommand(
         !options.approval ||
         !a.baseline ||
         !a.needs_review ||
-        a.reason !== 'cohort_bounds' ||
+        !['cohort_bounds', 'source_reissued', 'baseline_required'].includes(a.reason ?? '') ||
+        a.resolved_at !== null ||
         a.publication ||
         !sameManifest(a.baseline, await manifest(db))
       )
@@ -67,9 +68,10 @@ export async function operatorCommand(
         if (!sameManifest(await manifest(tx), a.baseline))
           throw new ImportFailure('baseline_changed');
         await tx.execute(sql`update import_artifacts set approved=${JSON.stringify(approved)}::jsonb,needs_review=false,reason=null
-        where id=${a.id}::uuid and reason='cohort_bounds'`);
+        where id=${a.id}::uuid and reason=${a.reason} and resolved_at is null`);
         // Age/history remains mandatory. Clearing a policy review cannot clear an accounting or restore latch.
         await tx.execute(sql`select import_check_budget(${a.id}::uuid,${s.fence}::uuid,0::bigint)`);
+        await tx.execute(sql`select import_approve_pending(${s.fence}::uuid,${a.id}::uuid)`);
       });
     });
   } finally {

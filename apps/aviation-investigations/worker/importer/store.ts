@@ -38,6 +38,7 @@ export interface Artifact {
   canary: Canary | null;
   approved: Approval | null;
   rollback: ManifestIdentity | null;
+  resolved_at: string | null;
 }
 export interface Certificate {
   version: 'import-certificate.v1';
@@ -79,6 +80,7 @@ export interface Approval {
   code: string;
   report: string;
   reasons: string[];
+  cases: string[];
 }
 
 export async function withImportSession<T>(
@@ -108,7 +110,7 @@ export async function withImportSession<T>(
     return await fn({
       fence,
       assertLocked() {
-        if (lost) throw new ImportFailure('lock_lost');
+        if (lost) throw new ImportFailure('lock_lost', false, 'cancelled');
       },
     });
   } finally {
@@ -184,7 +186,7 @@ export async function resumeArtifact(db: Db, session: ImportSession, id: string)
     const r = await tx.execute(
       sql`update import_artifacts set attempts=attempts+1 where id=${id}::uuid and attempts<4 returning id`,
     );
-    if (r.rows.length !== 1) throw new ImportFailure('interrupted');
+    if (r.rows.length !== 1) throw new ImportFailure('interrupted', true);
   });
 }
 export async function budgetRemaining(db: Db, session: ImportSession, id: string): Promise<number> {
@@ -283,28 +285,38 @@ export async function updateRun(
     sourceCheckSucceeded?: boolean;
     canaryPassed?: boolean;
     observedSha256?: string;
+    pendingRunId?: string;
   },
 ): Promise<void> {
-  await fenced(db, session, async (tx) => {
-    await tx.execute(sql`update import_runs set step=${value.step},result=${value.result},reason=${value.reason ?? null},
+  await fenced(db, session, (tx) => updateRunTransaction(tx, id, value));
+}
+
+/** Caller holds the fresh fence; canary acceptance records the run in that same transaction. */
+export async function updateRunTransaction(
+  tx: DbOrTx,
+  id: string,
+  value: Parameters<typeof updateRun>[3],
+): Promise<void> {
+  await tx.execute(sql`update import_runs set step=${value.step},result=${value.result},reason=${value.reason ?? null},
       heartbeat_at=clock_timestamp(),finished_at=case when ${value.result}='running' then null else clock_timestamp() end,
       source=coalesce(${value.source ? JSON.stringify(value.source) : null}::jsonb,source),
       observed_sha256=coalesce(${value.observedSha256 ?? null},observed_sha256),
+      pending_run_id=coalesce(${value.pendingRunId ?? null}::uuid,pending_run_id),
       artifact_id=coalesce(${value.artifactId ?? null}::uuid,artifact_id),
       source_check_succeeded=coalesce(${value.sourceCheckSucceeded ?? null}::boolean,source_check_succeeded),
       canary_passed=canary_passed or ${value.canaryPassed === true} where id=${id}::uuid
       and (not canary_passed or ${value.result}='published')`);
-    // A post-success report/spool failure cannot erase an acknowledged canary. Only guarded rollback can.
-    // After the retention cutoff copy the last report snapshot, never a pruned ledger total; this is not admission state.
-    await tx.execute(sql`update import_runs r set reported_cost_usd=case when exists(
+  // A post-success report/spool failure cannot erase an acknowledged canary. Only guarded rollback can.
+  // After the retention cutoff copy the last report snapshot, never a pruned ledger total; this is not admission state.
+  await tx.execute(sql`update import_runs r set reported_cost_usd=case when exists(
       select 1 from import_artifacts a where a.id=r.artifact_id
-        and a.first_reservation_at<=clock_timestamp()-interval '2160 hours')
+        and a.first_reservation_at<=clock_timestamp()-interval '2136 hours')
       then coalesce((select rr.reported_cost_usd from import_runs rr where rr.artifact_id=r.artifact_id and rr.id<>r.id
         order by rr.checked_at desc limit 1),r.reported_cost_usd)
       else coalesce((select sum(case when status='open' then usd else charged_usd end)
         from reservations where import_artifact_id=r.artifact_id),0) end where r.id=${id}::uuid`);
-  });
 }
+
 export async function saveCertificate(
   db: Db,
   session: ImportSession,
@@ -324,17 +336,43 @@ export interface AcceptedSnapshot {
   manifest: ManifestIdentity;
   observation: SourceObservation;
   code: string;
+  resolvedPendingRun?: string;
+  validation?: { genericReport: string; verifier: string; probes: string };
+}
+export interface PendingFetch {
+  archive: string;
+  observation: SourceObservation;
+  fetchedAt: string;
+  runId: string;
+  artifactId: string | null;
+  content: string | null;
+  attempts: number;
+  needsReview: boolean;
+  reason: ImportReason | null;
 }
 export async function control(
   db: Db,
-): Promise<{ accepted: AcceptedSnapshot | null; lastRemoteFetchAt: string | null }> {
+): Promise<{
+  accepted: AcceptedSnapshot | null;
+  lastRemoteFetchAt: string | null;
+  pending: PendingFetch | null;
+  lastFetched:
+    | (PendingFetch & { state: 'pending' | 'needs_review' | 'accepted' | 'reviewed_abandoned' })
+    | null;
+  pendingObservation: SourceObservation | null;
+}> {
   const r = await db.execute(
-    sql`select accepted,last_remote_fetch_at::text as fetched from import_control where id=1`,
+    sql`select accepted,pending,last_fetched,pending_observation,last_remote_fetch_at::text as fetched from import_control where id=1`,
   );
   if (!r.rows[0]) throw new ImportFailure('accounting');
   return {
     accepted: r.rows[0].accepted as AcceptedSnapshot | null,
     lastRemoteFetchAt: r.rows[0].fetched as string | null,
+    pending: r.rows[0].pending as PendingFetch | null,
+    lastFetched: r.rows[0].last_fetched as
+      | (PendingFetch & { state: 'pending' | 'needs_review' | 'accepted' | 'reviewed_abandoned' })
+      | null,
+    pendingObservation: r.rows[0].pending_observation as SourceObservation | null,
   };
 }
 export async function accept(
@@ -367,6 +405,21 @@ export async function checkCertificate(
 ): Promise<void> {
   await assertFence(tx, session);
   const a = await artifact(tx, expected.artifactId);
+  if (expected.environment === 'live') {
+    const canary = expected.dev;
+    if (
+      !canary ||
+      canary.archive !== expected.archive ||
+      canary.content !== expected.content ||
+      canary.code !== expected.code ||
+      canary.deployedCode !== expected.deployedCode ||
+      !Number.isFinite(Date.parse(canary.checkedAt)) ||
+      Date.parse(canary.checkedAt) > Date.now() ||
+      Date.now() - Date.parse(canary.checkedAt) > 86_400_000
+    ) {
+      throw new ImportFailure('dev_failed', false);
+    }
+  }
   if (
     !a.certificate ||
     a.needs_review ||

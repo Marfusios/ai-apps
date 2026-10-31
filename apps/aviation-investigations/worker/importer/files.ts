@@ -84,6 +84,12 @@ export class ManagedSpace {
   async remove(path: string): Promise<void> {
     await ownedPath(this.root, path);
     await rm(path, { force: true, recursive: true });
+    const removed = relative(resolve(this.root), resolve(path));
+    const paths = await this.registered();
+    const retained = paths.filter((name) => name !== removed && !name.startsWith(`${removed}/`));
+    if (retained.length !== paths.length) {
+      await this.json(join(this.root, 'owned-paths.json'), { version: 1, paths: retained });
+    }
   }
   async registered(): Promise<string[]> {
     const path = join(this.root, 'owned-paths.json');

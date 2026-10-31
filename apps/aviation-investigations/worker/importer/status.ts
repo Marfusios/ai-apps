@@ -16,9 +16,11 @@ export const DEFAULT_SCHEDULE: ImportSchedule = {
   localTime: IMPORT_LOCAL_TIME,
   timeZone: IMPORT_TIME_ZONE,
 };
-export function localClock(at: Date, zone: string): { day: string; hour: number; minute: number } {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-GB', {
+const formatters = new Map<string, Intl.DateTimeFormat>();
+function formatter(zone: string): Intl.DateTimeFormat {
+  let value = formatters.get(zone);
+  if (!value) {
+    value = new Intl.DateTimeFormat('en-GB', {
       timeZone: zone,
       year: 'numeric',
       month: '2-digit',
@@ -26,7 +28,15 @@ export function localClock(at: Date, zone: string): { day: string; hour: number;
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23',
-    })
+    });
+    if (formatters.size >= 8) formatters.clear();
+    formatters.set(zone, value);
+  }
+  return value;
+}
+export function localClock(at: Date, zone: string): { day: string; hour: number; minute: number } {
+  const parts = Object.fromEntries(
+    formatter(zone)
       .formatToParts(at)
       .map((p) => [p.type, p.value]),
   );

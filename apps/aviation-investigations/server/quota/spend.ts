@@ -92,7 +92,8 @@ function validate(a: ReserveSpendInput): void {
 export async function reserveSpend(db: Db, a: ReserveSpendInput): Promise<SpendReservation | SpendRefusal> {
   validate(a);
   const now = a.import
-    ? new Date(String((await db.execute(sql`select clock_timestamp()::text as now`)).rows[0]?.now))
+    ? new Date(String((await db.execute(sql`select to_char(clock_timestamp() at time zone 'UTC',
+      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as now`)).rows[0]?.now))
     : a.now ?? new Date();
   const amount = toMicros(a.usd);
   const leaseExpiresAt = new Date(now.getTime() + (a.ttlMs ?? LEASE_TTL_MS));
