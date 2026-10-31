@@ -99,7 +99,7 @@ for (const [width, theme] of [
     await expect(costs.getByRole('meter')).toHaveCount(4);
     const system = page.getByRole('region', { name: 'System' });
     await expect(system.locator('[data-fact="Ranking"] dd')).toContainText('The question as asked; AI reranks the top 50');
-    await expect(system.locator('[data-fact="Next import"] dd')).toHaveText('Not set up yet');
+    await expect(system.locator('[data-fact="Next snapshot check"] dd')).toHaveText('Not set up yet');
     await fitsTheWidth(page);
     await usage.getByRole('button', { name: 'Hide the figures' }).click();
     await page.evaluate('document.activeElement && document.activeElement.blur()');

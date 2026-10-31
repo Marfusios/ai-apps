@@ -18,17 +18,35 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { replayOutage,spoolFailure } from '../../worker/importer/recovery.js';
 import { ManagedSpace,FILE_LIMITS } from '../../worker/importer/files.js';
+import { adminOverview } from '../../server/admin/overview.js';
+import type { ApiContext } from '../../server/routes/context.js';
 
 const budgets = { monthlyUsd:100,interactiveMonthlyUsd:80,ingestionMonthlyUsd:20,interactiveDailyUsd:3,anonymousShare:0.25 };
 const baseline = {generationId:1,casesIndex:'test-cases',passagesIndex:'test-passages',publishedAt:'2026-10-31T01:00:00.000001Z'};
-const scratch = async (fn: (db:Db, owner:Db)=>Promise<void>) => withScratchEnvironment(localAdminUrl(),'importercheck',async urls => {
-  const db=createDb(urls.ingest,{max:8}), owner=createDb(urls.migrator,{max:4});
-  try { await fn(db,owner); } finally { await Promise.all([closeDb(db),closeDb(owner)]); }
+const scratch = async (fn: (db:Db, owner:Db,app:Db)=>Promise<void>) => withScratchEnvironment(localAdminUrl(),'importercheck',async urls => {
+  const db=createDb(urls.ingest,{max:8}), owner=createDb(urls.migrator,{max:4}),app=createDb(urls.app,{max:2});
+  try { await fn(db,owner,app); } finally { await Promise.all([closeDb(db),closeDb(owner),closeDb(app)]); }
 });
 async function registered(db:Db,s:ImportSession) { return registerArtifact(db,s,'dev','a'.repeat(64),'b'.repeat(64),baseline); }
 const request = {provider:'openai',model:'text-embedding-3-small',stage:'embed'};
 
 describe('import ledger on an isolated migrated PostgreSQL database', () => {
+  it('wires the trimmed importer state into the actual overview snapshot under the app role',async()=>scratch(async(db,_owner,app)=>{
+    await withImportSession(db,async s=>{
+      const a=await registered(db,s),id=await beginRun(db,s,'automatic');
+      await updateRun(db,s,id,{step:'complete',result:'unchanged',artifactId:a.id,sourceCheckSucceeded:true,
+        source:{advertisedAtLocal:'2026-10-01T07:36:33',bytes:100}});
+      await fenced(db,s,tx=>tx.execute(sql`update import_artifacts set certificate='{"PRIVATE_SENTINEL":"private report"}'::jsonb where id=${a.id}::uuid`));
+    });
+    const result=await adminOverview({db:app,datasets:{current:async()=>null}} as unknown as ApiContext,
+      {emails:[],appEnv:'dev',startedAt:'2026-10-31T12:00:00.000Z',ranking:'er-q-v1',automaticFilters:'none',
+        imports:{enabled:true,localTime:'05:30',timeZone:'Europe/Prague'}},new Date('2026-10-31T12:00:00Z'));
+    expect(result.system.imports.schedule?.nextCheckAt).toBe('2026-11-01T04:30:00.000Z');
+    expect(result.system.imports.lastCheck?.result).toBe('unchanged');
+    expect(result.system).not.toHaveProperty('nextAutomaticImport');
+    expect(result.costs.interactiveToday).toBe(0);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_SENTINEL');
+  }));
   it('reconciles an outage without refreshing lastCheck, and keeps the original artifact review latched',async()=>scratch(async db=>{
     const root=await mkdtemp(join(tmpdir(),'import-spool-')),space=new ManagedSpace(root,{...FILE_LIMITS,reserve:0});
     try{await withImportSession(db,async s=>{

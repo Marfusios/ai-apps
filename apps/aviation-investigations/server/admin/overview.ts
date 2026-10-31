@@ -12,6 +12,8 @@ import type { ApiContext } from '../routes/context.js';
 import { untilAborted } from '../db/bounded-read.js';
 import type { Db, DbOrTx } from '../db/client.js';
 import * as schema from '../db/schema/index.js';
+import { readImportStatus } from '../db/import-status.js';
+import { DEFAULT_SCHEDULE } from '../../worker/importer/status.js';
 
 export const ADMIN_OVERVIEW_TIMEOUT_MS = 15_000;
 export class AdminOverviewTimeoutError extends Error {
@@ -63,6 +65,7 @@ export interface AdminSettings {
   startedAt: string;
   ranking: string;
   automaticFilters: string;
+  imports?: AppConfig['imports'];
 }
 const dayMs = 86400_000;
 const isoDay = (date: Date) => date.toISOString().slice(0, 10);
@@ -167,6 +170,7 @@ async function assembleOverview(ctx: ApiContext, settings: AdminSettings, now: D
       AND accounting_day BETWEEN ${month}::date AND ${today}::date`)).rows[0]?.n);
     const state = await readAiSwitch(tx);
     const generation = pinned ? (await tx.execute(sql`SELECT sealed_at FROM dataset_generations WHERE id = ${pinned.manifest.generationId}`)).rows[0] : null;
+    const imports = await readImportStatus(tx, settings.imports ?? DEFAULT_SCHEDULE, now);
     const counts = new Map(daily.map(d => [isoDay(new Date(d.day as string)), d]));
     const dollars = new Map(money.map(d => [isoDay(new Date(d.day as string)), num(d.usd)]));
     const budget = settings.budgets;
@@ -230,7 +234,7 @@ async function assembleOverview(ctx: ApiContext, settings: AdminSettings, now: D
           cases: pinned.coverage.defaultCohort + pinned.coverage.otherRecords,
           eligibleCases: pinned.coverage.defaultCohort,
         } : null,
-        nextAutomaticImport: null,
+        imports,
       },
     });
   });

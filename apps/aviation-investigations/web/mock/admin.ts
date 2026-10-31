@@ -174,7 +174,12 @@ export function mockAdminOverview({ now, evidence, ratings, admin }: MockAdminOp
         cases: config.coverage.defaultCohort + config.coverage.otherRecords,
         eligibleCases: config.coverage.defaultCohort,
       },
-      nextAutomaticImport: null,
+      imports: {
+        enabled: false,
+        schedule: { localTime: '05:30', timeZone: 'Europe/Prague', nextCheckAt: null },
+        lastCheck: null, lastSuccessfulImport: null,
+        attentionRequired: false, overdue: false, recentRuns: [],
+      },
     },
   };
 }

@@ -216,6 +216,6 @@ describe('the mock admin overview', () => {
     expect(indexingDay.costs.today - indexingDay.costs.interactiveToday).toBeCloseTo(0.92, 6);
     expect(o.costs.byStage.map((s) => s.usd)).toEqual([...o.costs.byStage.map((s) => s.usd)].sort((a, b) => b - a));
     expect(o.usage.feedback).toEqual({ useful: 43, notUseful: 14, usefulLast30Days: 19, notUsefulLast30Days: 7 });
-    expect(o.system).toMatchObject({ ranking: 'er-q-h50-v1', automaticFilters: 'none', nextAutomaticImport: null, appEnv: 'dev' });
+    expect(o.system).toMatchObject({ ranking: 'er-q-h50-v1', automaticFilters: 'none', imports: { enabled: false, schedule: { nextCheckAt: null } }, appEnv: 'dev' });
   });
 });

@@ -252,7 +252,7 @@ describe('the admin page', { timeout: 20_000 }, () => {
     expect(fact('Failed exports')).toBe('0');
     expect(fact('NTSB snapshot')).toBe('16 Oct 2026');
     expect(fact('Cases')).toBe('26 (21 completed US investigations with a probable cause)');
-    expect(fact('Next import')).toBe(ADMIN_COPY.notSetUp);
+    expect(fact('Next snapshot check')).toBe(ADMIN_COPY.notSetUp);
   });
 
   it('shapes the mock never makes: a capped list, no accounts, no dataset, an unknown ranking, an import set up, tracing off', async () => {
@@ -269,7 +269,7 @@ describe('the admin page', { timeout: 20_000 }, () => {
         ai: { enabled: false, anonymousEnabled: false, accountCheck: 'always' },
         tracing: { enabled: false, lastExportOkAt: null, failedExports: 3 },
         dataset: null,
-        nextAutomaticImport: '2026-11-16T02:00:00.000Z',
+        imports: { ...o.system.imports, enabled: true, schedule: { localTime: '05:30', timeZone: 'Europe/Prague', nextCheckAt: '2026-11-16T04:30:00.000Z' } },
       },
     }));
     await openAdmin();
@@ -286,7 +286,7 @@ describe('the admin page', { timeout: 20_000 }, () => {
     expect(fact('Last export')).toBe('None yet');
     expect(fact('Failed exports')).toBe('3');
     expect(fact('Dataset')).toBe('None loaded');
-    expect(fact('Next import')).toBe(formatDateTime('2026-11-16T02:00:00.000Z', viewerTimeZone()));
+    expect(fact('Next snapshot check')).toBe(formatDateTime('2026-11-16T04:30:00.000Z', viewerTimeZone()));
   });
 
   it('no accounts yet', async () => {

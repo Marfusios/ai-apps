@@ -1,39 +1,16 @@
-/** Local until the coordinated Task 25 admin contract integration. No private report fields. */
+/** Worker-only control types plus the shared, trimmed admin status contract. */
 import { z } from 'zod';
 
-export const IMPORT_STEPS = ['check', 'acquire', 'extract', 'load', 'verify', 'plan', 'index_cases',
-  'index_passages', 'validate', 'publish', 'canary', 'cleanup', 'complete'] as const;
-export const IMPORT_RESULTS = ['running', 'unchanged', 'published', 'needs_review', 'deferred', 'failed',
-  'skipped_dev_failed', 'cancelled', 'rolled_back'] as const;
-export const IMPORT_REASONS = ['metadata_unchanged', 'same_archive', 'same_content', 'source_listing_changed',
-  'source_reissued', 'source_changed_during_download', 'source_unavailable', 'source_retired', 'baseline_required',
-  'baseline_changed', 'schema', 'integrity', 'verification', 'cohort_bounds', 'mapping', 'probe', 'import_cap',
-  'monthly_budget', 'restore_hold', 'accounting', 'storage', 'alias_unknown', 'busy', 'backup_window', 'lock_lost',
-  'timeout', 'interrupted', 'dev_failed', 'configuration', 'cleanup'] as const;
+import { IMPORT_STEPS, IMPORT_RESULTS, IMPORT_REASONS, AdminImportRunSchema } from '../../shared/contracts/admin.js';
+export { IMPORT_STEPS, IMPORT_RESULTS, IMPORT_REASONS, AdminImportRunSchema, AdminImportsSchema } from '../../shared/contracts/admin.js';
+export type { AdminImportRun, AdminImports } from '../../shared/contracts/admin.js';
+
 export type ImportReason = typeof IMPORT_REASONS[number];
 export type ImportStep = typeof IMPORT_STEPS[number];
 export type ImportResult = typeof IMPORT_RESULTS[number];
 export const Sha256 = z.string().regex(/^[0-9a-f]{64}$/);
-const Iso = z.iso.datetime();
-const Count = z.number().int().nonnegative();
-const Usd = z.number().nonnegative();
-export const SourceSchema = z.strictObject({
-  advertisedAtLocal: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/), bytes: Count,
-});
+export const SourceSchema = AdminImportRunSchema.shape.source.unwrap();
 export type SourceObservation = z.infer<typeof SourceSchema>;
-export const AdminImportRunSchema = z.strictObject({
-  checkedAt: Iso, finishedAt: Iso.nullable(), mode: z.enum(['automatic', 'forced_dev']),
-  source: SourceSchema.nullable(), archiveSha256: Sha256.nullable(), generationId: Count.nullable(),
-  step: z.enum(IMPORT_STEPS), result: z.enum(IMPORT_RESULTS), reason: z.enum(IMPORT_REASONS).nullable(), costUsd: Usd,
-});
-export type AdminImportRun = z.infer<typeof AdminImportRunSchema>;
-export const AdminImportsSchema = z.strictObject({
-  enabled: z.boolean(), schedule: z.strictObject({ localTime: z.string().regex(/^\d{2}:\d{2}$/),
-    timeZone: z.string().min(1).max(64), nextCheckAt: Iso.nullable() }).nullable(),
-  lastCheck: AdminImportRunSchema.nullable(), lastSuccessfulImport: AdminImportRunSchema.nullable(),
-  attentionRequired: z.boolean(), overdue: z.boolean(), recentRuns: z.array(AdminImportRunSchema).max(20),
-});
-export type AdminImports = z.infer<typeof AdminImportsSchema>;
 
 export const POLICY_VERSION = 'snapshot-monthly.v1';
 export const ADAPTER_VERSION = 'ntsb-avall.v1';
