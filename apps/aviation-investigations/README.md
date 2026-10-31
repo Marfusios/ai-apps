@@ -23,6 +23,8 @@ published privacy notice; AI features are not enabled yet).
   copy, night mode, phone layout, print, and accessibility.
 - [Tracing and evaluation](docs/OBSERVABILITY_AND_EVALUATION.md): Langfuse dashboard,
   TypeScript experiments, development/production workflows, and privacy boundaries.
+- [Ranking experiments in Langfuse](evals/langfuse/README.md): upload the public coded
+  datasets, compare Q0 and Haiku top-50 through the production spend gate, and inspect scores.
 - [Data assessment](docs/DATA_REVIEW.md): measured archive contents, schema traps,
   real cases, and dashboard opportunities.
 - [Aggregate data profile](docs/data-profile-2026-10-16.json): source identifiers

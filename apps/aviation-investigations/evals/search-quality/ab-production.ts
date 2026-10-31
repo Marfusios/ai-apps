@@ -8,6 +8,7 @@ import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { createOpenAIQueryEmbedder, type QueryEmbedder } from '../../server/ai/embeddings.js';
 import type { LlmProvider } from '../../server/ai/provider.js';
 import { rankEvidence, RankingFailure } from '../../server/evidence/pipeline.js';
+import { autoFilterPolicy } from '../../server/evidence/auto-filters.js';
 import { evidenceRankingConfig, evidenceRankingIdentity } from '../../server/evidence/ranking-config.js';
 import { createEvidenceRetriever, type EvidenceRetriever } from '../../server/evidence/retrieve.js';
 import { evaluationRankingSpendGate } from '../../server/evidence/spend.js';
@@ -17,7 +18,7 @@ import { ARM_IDS, type ArmIdentity, type Arm, type RankingPort, type SearchObser
 import type { EvaluationSettings } from './config.js';
 
 export function productionPort(settings: EvaluationSettings, db: Db, es: Client, pinned: PinnedDataset,
-  allocation: TaskAllocation, phase: 'selection' | 'confirmation', hash: string, directory: string,
+  allocation: Pick<TaskAllocation, 'gate'>, phase: 'selection' | 'confirmation', hash: string, directory: string,
   identities: Readonly<Record<Arm, ArmIdentity>>): RankingPort {
   const baseLlm = createAnthropicProvider({ apiKey: settings.config.ai.anthropic.apiKey!, models: {
     scope: 'claude-haiku-5-5', answer: 'claude-haiku-5-5', check: 'claude-haiku-5-5' } });
@@ -80,7 +81,7 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
     const finishStage = () => { if (currentStage) timing[currentStage].ms = performance.now() - stageStarted; };
     let result, failure: string | null = null, usage: SearchObservation['usage'] = [];
     try {
-      result = await rankEvidence(c, { question: question.question, filters: {}, dataset: pinned, signal: AbortSignal.timeout(c.deadlineMs) },
+      result = await rankEvidence(c, { question: question.question, filters: {}, autoFilters: autoFilterPolicy('none'), dataset: pinned, signal: AbortSignal.timeout(c.deadlineMs) },
         { llm, retriever, embeddingModel: 'text-embedding-3-small' }, spend, undefined, {
           onStage: stage => {
             finishStage(); currentStage = stage === 'retrieval' ? 'retrieve' : stage;

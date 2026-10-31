@@ -26,6 +26,7 @@
     "ingest": "tsx scripts/compose.ts ingest",
     "worker": "tsx worker/cli.ts",
     "eval:retrieval": "tsx evals/retrieval/run.ts",
+    "eval:langfuse": "tsx evals/langfuse/bootstrap.ts",
     "eval:retrieval:silver": "tsx evals/retrieval/build-silver.ts",
     "eval:retrieval:coded": "tsx evals/retrieval/coded/build-coded.ts",
     "eval:retrieval:experiments": "tsx evals/retrieval/experiments/cli.ts",
