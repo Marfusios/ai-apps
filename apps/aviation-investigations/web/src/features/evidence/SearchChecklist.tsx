@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { configQuery } from '../../api';
 import { cx } from '../../lib/cx';
-import { SEARCH_CHECKLIST_NOTE, SEARCH_CHECKLIST_TITLE, checklistAnnouncement, checklistRows, elapsed } from './checklist';
+import { SEARCH_CHECKLIST_NOTE, SEARCH_CHECKLIST_TITLE, checklistAnnouncement, checklistRows, elapsed, spokenCompletions, type ChecklistRow } from './checklist';
 import { evidenceProgressQuery } from './progress';
 import type { PendingSearch } from './useEvidenceSearch';
 
@@ -20,11 +20,13 @@ export interface SearchChecklistProps {
  * search's progress about every 500 ms while its POST runs: each fills in its real result as its
  * stage ends, with a magenta ✓, the row under way has a faint magenta wash, and rows not reached are
  * muted. Until the first good read the card stays unticked. Completions are announced politely, once
- * each; the timer is not. Statuses and counts only, never model text; it does not print.
+ * each, and stages that end between two reads together, in order; the timer is not. Statuses and
+ * counts only, never model text; it does not print. It reads only for the visitor who sent the
+ * search (`pending.visitor`).
  */
 export function SearchChecklist({ pending, className }: SearchChecklistProps) {
   const cohort = useQuery(configQuery()).data?.coverage.defaultCohort ?? null;
-  const progress = useQuery(evidenceProgressQuery(pending.key)).data ?? null;
+  const progress = useQuery(evidenceProgressQuery(pending.key, pending.visitor)).data ?? null;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -32,6 +34,19 @@ export function SearchChecklist({ pending, className }: SearchChecklistProps) {
   }, []);
   const titleId = useId();
   const rows = checklistRows({ kind: pending.kind, progress, cohort });
+  // Each completion is said once: the rows already said, and what the live region says now.
+  const said = useRef(new Set<ChecklistRow['id']>());
+  const [announcement, setAnnouncement] = useState('');
+  const completed = spokenCompletions(rows)
+    .map((r) => r.id)
+    .join(' ');
+  useEffect(() => {
+    const next = checklistAnnouncement(rows, said.current);
+    if (!next) return;
+    for (const r of spokenCompletions(rows)) said.current.add(r.id);
+    setAnnouncement(next);
+    // Only a new completion changes what is said.
+  }, [completed]);
   return (
     <section aria-labelledby={titleId} className={cx('w-full max-w-[640px] text-left', className)} data-search-checklist="" data-print="hide">
       <div className="overflow-hidden rounded-chip border-[1.5px] border-checklist-edge bg-raised shadow-[var(--bezel)]">
@@ -75,7 +90,7 @@ export function SearchChecklist({ pending, className }: SearchChecklistProps) {
       <p className="mt-2 text-meta text-muted">{SEARCH_CHECKLIST_NOTE}</p>
       {/* Rendered empty first, so each completion is announced; reads that bring nothing new say nothing. */}
       <p aria-live="polite" className="sr-only" data-checklist-live="">
-        {checklistAnnouncement(rows)}
+        {announcement}
       </p>
     </section>
   );

@@ -1234,9 +1234,15 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   a 429 is waited out for its whole `Retry-After`, and one over 30 s ends the reading, the card as it
   is (nothing reads sooner: not focus, a reconnect or a reset, `web/src/features/evidence/progress.ts`);
   until the first answer the card is unticked. Reading stops when the POST settles, and the card goes;
-  meanwhile the control that asked says "Searching…".
-  Completions are announced politely; statuses and counts only, never model text. The card and its
-  client load with the first AI request, never with the home page (`SearchWait`).
+  meanwhile the control that asked says "Searching…". The card also goes, and nothing more is read
+  for it, as soon as the visitor changes (sign-out, deletion, another account): its progress is read
+  only for the visitor who sent the search (`PendingSearch.visitor`). Completions are announced
+  politely, each once (several that end between two reads together, in order); a stage that ended
+  without its result says READ or DONE, never a result the server did not send; statuses and counts
+  only, never model text. The card and its client load with the first AI request, never with the
+  home page (`SearchWait`): the card's code starts loading as the search starts, before its
+  Turnstile check, and the control says "Searching…" only once it has loaded (otherwise
+  "Starting…").
 - **Rating a search** (UI_DESIGN §4.11): "Was this search useful?" under the results, "Useful" and
   "Not useful" (`POST /api/evidence/:id/feedback`, `EvidenceFeedbackRequestSchema`; no AI search used);
   "Thanks — noted." with the choice chosen once the server has it, changeable (the latest counts); kept
@@ -1247,7 +1253,9 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   table, the ratings), costs (budgets as meters, the daily one against `costs.interactiveToday`) and
   the system, all from `GET /api/admin/overview`
   (`AdminOverviewSchema`; the private `admin` query), times in the viewer's own zone. Everyone else,
-  and an admin the API answers 404, sees the ordinary not-found page; the page is not indexed.
+  and an admin the API answers 404, sees the ordinary not-found page; when who is signed in cannot
+  be read (the account read and its retry failed), the page says it didn't load, with Try again. The
+  page is not indexed.
 - **Briefs that exist**: the interface starts none. While the server has briefs off
   (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
   failed step offers New search, not Try again.

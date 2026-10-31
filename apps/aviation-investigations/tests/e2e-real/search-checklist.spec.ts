@@ -8,9 +8,10 @@
  *
  * Covered: a visitor's first anonymous search, sent with no trial cookie yet, ticks from the
  * server's own progress (bound to the visitor's network until the trial exists): the question's
- * result, as many cases as the results page then counts, and AI's order; a second search, with
- * the trial cookie, ticks the same way; every read used the POST's own idempotency key, and the
- * reads that saw stages under way and the finished search were answered 200, not a fallback. Then
+ * result, as many cases as the results page then counts, and AI's order; its progress reads carry
+ * no trial cookie either. A second search, with the trial cookie on its POST and its reads, ticks
+ * the same way; every read used the POST's own idempotency key, and the reads that saw stages under
+ * way and the finished search were answered 200, not a fallback. Then
  * the visitor rates a search Useful, and changes it to Not useful, each kept (204). Every test fails
  * on a CSP violation, a page error or a request that would leave the machine.
  */
@@ -54,6 +55,8 @@ interface Read {
   key: string;
   status: number;
   body: EvidenceProgress | null;
+  /** The read carried the visitor's trial cookie. */
+  trialCookie: boolean;
 }
 
 /** Every `POST /api/evidence` (its key and whether it carried a trial cookie) and every progress read, with its answer. */
@@ -72,8 +75,14 @@ function record(page: Page): { sent: Sent[]; reads: Read[]; settled: () => Promi
   page.on('response', (response) => {
     const url = new URL(response.url());
     if (!url.pathname.startsWith('/api/evidence/progress/')) return;
-    const read: Read = { key: decodeURIComponent(url.pathname.split('/').pop() ?? ''), status: response.status(), body: null };
+    const read: Read = { key: decodeURIComponent(url.pathname.split('/').pop() ?? ''), status: response.status(), body: null, trialCookie: false };
     reads.push(read);
+    pending.push(
+      response
+        .request()
+        .allHeaders()
+        .then((headers) => void (read.trialCookie = TRIAL_COOKIE.test(headers.cookie ?? ''))),
+    );
     if (response.status() === 200) {
       pending.push(
         response.json().then(
@@ -156,6 +165,13 @@ test('a first anonymous search ticks from the real server’s progress, and so d
   const keys = sent.map((s) => s.key);
   expect([...new Set(reads.map((r) => r.key))].sort()).toEqual([...keys].sort());
   for (const key of keys) checkReads(reads, key);
+  // The first search's reads carried no trial cookie, as its POST did not: the server bound them to
+  // this visitor's network. The second search's reads carried the cookie the first one set.
+  const readsOf = (key: string | undefined) => reads.filter((r) => r.key === key);
+  expect(readsOf(keys[0]).length).toBeGreaterThan(0);
+  expect(readsOf(keys[0]).filter((r) => r.trialCookie)).toEqual([]);
+  expect(readsOf(keys[1]).length).toBeGreaterThan(0);
+  expect(readsOf(keys[1]).every((r) => r.trialCookie)).toBe(true);
   expect(problems).toEqual([]);
 });
 
