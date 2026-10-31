@@ -37,6 +37,17 @@
  *   is signed in now. It remembers the names it has seen, and once it has forgotten for
  *   the latest recorded change, an earlier one arriving late (a message queued while its
  *   page was away) changes nothing.
+ * - **A switch the page finds itself** (Task 25 security review, condition 1). Every read of
+ *   the account goes through `acceptAccount` before the page takes it. A different account
+ *   than the one the page had, or none, with no sign-out or marker here (the session ended,
+ *   or another account signed in from another tab; also when a page back from the
+ *   back/forward cache reads the account again) is a new visitor: the page forgets the
+ *   previous one first, as above, and what screens still show is read again as the new one.
+ *   Nothing is announced: the other tabs share the session, and each finds the change at
+ *   its own next read (every return to a page reads the account, `accountQuery`), while a
+ *   tab that already shows the new account keeps its work. An account that stops being an
+ *   admin loses the admin overview. Signing in where the page was signed out forgets
+ *   nothing: a trial's work moves to the account (UI_DESIGN §5, "Signing in mid-brief").
  *
  * Public namespaces (`PUBLIC_QUERY_ROOTS`) are the same for everyone and stay. A test keeps
  * every query key of the app in one of the two lists.
@@ -61,6 +72,15 @@ const CHANGED = 'visitor-changed';
 
 let generation = 0;
 const listeners = new Set<() => void>();
+
+/** Who a query cache's account is, as the page last took it: the e-mail (`null`: signed out), and whether an admin. */
+interface KnownAccount {
+  email: string | null;
+  admin: boolean;
+}
+const SIGNED_OUT: KnownAccount = { email: null, admin: false };
+/** Per query cache; absent until the page has read the account. */
+const knownAccounts = new WeakMap<QueryClient, KnownAccount>();
 
 /** The recorded change, or `undefined` when local storage cannot be read (blocked, or no window). */
 function recordedChange(): string | null | undefined {
@@ -152,18 +172,9 @@ export interface ForgetOptions {
  * change came from one of them).
  */
 export async function forgetVisitor(queryClient: QueryClient, opts: ForgetOptions = {}): Promise<void> {
-  generation += 1;
-  forgetQuestions();
-  forgetAllUnsettled();
-  forgetUndos();
-  forgetRatings();
-  for (const listener of [...listeners]) {
-    try {
-      listener();
-    } catch {
-      // One listener's failure never keeps the others from forgetting.
-    }
-  }
+  // Signed out from here on: an account read again next is a sign-in, not a switch.
+  knownAccounts.set(queryClient, SIGNED_OUT);
+  forgetHere();
   if (opts.announce !== false) {
     const change = newChangeName();
     see(change);
@@ -178,10 +189,63 @@ export async function forgetVisitor(queryClient: QueryClient, opts: ForgetOption
     channel?.postMessage({ type: CHANGED, change, recorded });
   }
   await Promise.all(PRIVATE_QUERY_ROOTS.map((root) => queryClient.cancelQueries({ queryKey: [root] })));
+  // Whatever was read meanwhile, the page shows the visitor signed out.
+  knownAccounts.set(queryClient, SIGNED_OUT);
   queryClient.setQueryData<AccountResponse>(['account'], { signedIn: false });
   // Reset (not remove): screens keep their queries and read them again as the new visitor.
   for (const root of PRIVATE_QUERY_ROOTS) if (root !== 'account') void queryClient.resetQueries({ queryKey: [root] });
   if (opts.reread) void queryClient.invalidateQueries({ queryKey: ['account'] });
+}
+
+/** A new visitor in this tab: a new generation, this tab's memory of the previous one forgotten, and the listeners told. */
+function forgetHere(): void {
+  generation += 1;
+  forgetQuestions();
+  forgetAllUnsettled();
+  forgetUndos();
+  forgetRatings();
+  for (const listener of [...listeners]) {
+    try {
+      listener();
+    } catch {
+      // One listener's failure never keeps the others from forgetting.
+    }
+  }
+}
+
+/**
+ * The previous visitor's queries under `roots` go: what is on its way is cancelled (never
+ * cached), every one is reset to no data (a screen still showing one reads it again, as the
+ * new visitor), and those no screen reads are removed.
+ */
+function dropQueries(queryClient: QueryClient, roots: readonly string[]): void {
+  for (const root of roots) {
+    void queryClient.cancelQueries({ queryKey: [root] });
+    void queryClient.resetQueries({ queryKey: [root] });
+    queryClient.removeQueries({ queryKey: [root], type: 'inactive' });
+  }
+}
+
+/**
+ * The account as just read from the server, before the page takes it (the account query's
+ * read, web/src/features/auth/api.ts): returns it. A different account than the page had,
+ * or none, is a new visitor, though nothing here signed out: everything private of the
+ * previous one goes first (a new generation, so an answer still on its way for them is
+ * dropped; their queries; this tab's memory), without telling the other tabs. An account
+ * that stops being an admin loses the admin overview. The account's own query is left
+ * alone, so taking the new account reads nothing again by itself.
+ */
+export function acceptAccount(queryClient: QueryClient, account: AccountResponse): AccountResponse {
+  const now: KnownAccount = account.signedIn ? { email: account.user.email, admin: account.isAdmin === true } : SIGNED_OUT;
+  const before = knownAccounts.get(queryClient);
+  knownAccounts.set(queryClient, now);
+  if (before !== undefined && before.email !== null && before.email !== now.email) {
+    forgetHere();
+    dropQueries(queryClient, PRIVATE_QUERY_ROOTS.filter((root) => root !== 'account'));
+  } else if (before?.admin === true && !now.admin) {
+    dropQueries(queryClient, ['admin']);
+  }
+  return account;
 }
 
 /** A change made elsewhere, or only possible: forget, without telling the other tabs, and read the account again. */

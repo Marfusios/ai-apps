@@ -2302,7 +2302,13 @@ lock order in migration 0019.
   tab, whatever the sign-out's answer: as soon as the sign-out starts, nothing started for
   the visitor is kept or sent, and once the answer is in (or none can come), everything
   private goes. Anything but the server's success, read in full, reads the account again and
-  says the server has not confirmed the sign-out. No other Better Auth endpoint is served.
+  says the server has not confirmed the sign-out. A page that reads another account than the
+  one it had, or none, with no sign-out of its own (the session ended, or another account
+  signed in from another tab; also a page back from the back/forward cache) forgets the
+  previous one the same way before it shows the new account, without telling the other tabs,
+  which each find the change at their own next read; every return to a page reads the account
+  again. Signing in where the page was signed out forgets nothing (the trial's work moves to
+  the account). No other Better Auth endpoint is served.
 - **What is accepted and kept.** An ID token from Google's token endpoint (the only
   source: ID-token sign-in is off) whose header says RS256 and carries a signature, for
   this client and no other audience, with finite `exp` (not passed) and `iat` (not in
