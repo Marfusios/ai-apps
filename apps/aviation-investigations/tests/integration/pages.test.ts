@@ -194,12 +194,12 @@ describe('pages for search engines and link previews', () => {
     }
   });
 
-  it('case pages count against the API’s rate limit and need a network identity; other pages do not', async () => {
-    const limited = makeApp({ rateLimit: { limit: 3, windowMs: 60_000 } });
+  it('case pages and the sitemaps have a limit of their own, apart from the API’s, and need a network identity; other pages do not', async () => {
+    const limited = makeApp({ rateLimit: { limit: 2, windowMs: 60_000 }, pageRateLimit: { limit: 3, windowMs: 60_000 } });
     expect((await page('/cases/DFW08TA066', { app: limited })).status).toBe(200);
-    expect((await get('/api/cases/DFW08TA066', { app: limited })).status).toBe(200);
     expect((await page('/cases/ZZZ99ZZ999', { app: limited })).status).toBe(404);
-    // A refused page request gets the page with 429, noindex, and the Retry-After the API sends.
+    expect((await get('/sitemap.xml', { app: limited })).status).toBe(200);
+    // The pages' allowance is used up: a refused page request gets the page with 429, noindex, and Retry-After.
     const refused = await page('/cases/DFW08TA066', { app: limited });
     expect(refused.status).toBe(429);
     expect(refused.body).toContain('<div id="root">');
@@ -207,12 +207,15 @@ describe('pages for search engines and link previews', () => {
     expect(refused.headers['cache-control']).toBe('no-store');
     expect(Number(refused.headers['retry-after'])).toBeGreaterThanOrEqual(1);
     expect((await page('/cases/ZZZ99ZZ999', { app: limited })).status).toBe(429);
+    expect((await get('/sitemaps/pages.xml', { app: limited })).status).toBe(429);
+    // Crawling did not use the API's allowance, which still refuses past its own limit.
+    expect((await get('/api/cases/DFW08TA066', { app: limited })).status).toBe(200);
+    expect((await get('/api/cases/DFW08TA066', { app: limited })).status).toBe(200);
     const api = await get('/api/cases/DFW08TA066', { app: limited });
     expect(api.status).toBe(429);
     const body = ErrorResponseSchema.parse(api.json);
     expect(body.error).toBe('rate_limited');
     expect(api.headers['retry-after']).toBe(String(body.retryAfter));
-    expect((await get('/sitemap.xml', { app: limited })).status).toBe(429);
     // The other pages, robots.txt and the files are not limited.
     for (const url of ['/', '/explore?q=carb', '/about', '/no-such-page', '/robots.txt', '/assets/app-0123abcd.js']) {
       expect((await page(url, { app: limited })).status, url).toBeLessThan(429);
