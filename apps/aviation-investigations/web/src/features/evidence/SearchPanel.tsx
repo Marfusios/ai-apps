@@ -51,6 +51,7 @@ import {
   yearsInWords,
   type SearchDraft,
 } from './display';
+import { SearchWait } from './SearchWait';
 import { addedTerms, freeUndoRule, undoWasCharged } from './undo';
 import { useEvidenceSearch } from './useEvidenceSearch';
 
@@ -588,6 +589,7 @@ export function SearchPanel({ search }: SearchPanelProps) {
           {suggestionInWords(suggestion)}
         </p>
       )}
+      <SearchWait pending={evidence.pending} className="mt-2.5" />
       <AiNoticeBox
         notice={evidence.notice}
         keywordHref={keyword}

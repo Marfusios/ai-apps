@@ -38,6 +38,7 @@ import {
 import { EvidenceCard } from '../features/evidence/EvidenceCard';
 import { EvidenceHint } from '../features/evidence/Hint';
 import { SearchPanel } from '../features/evidence/SearchPanel';
+import { SearchWait } from '../features/evidence/SearchWait';
 import { takeArrival } from '../features/evidence/arrival';
 import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
 import { undoWasCharged } from '../features/evidence/undo';
@@ -102,6 +103,7 @@ function Expired({ id }: { id: string }) {
         askPhase={ai.phase}
         className="mt-4"
       />
+      <SearchWait pending={ai.pending} className="mt-3" />
       <AiNoticeBox notice={ai.notice} keywordHref={keyword} onRetry={() => void ai.ask(value)} className="mt-3" />
     </div>
   );
@@ -139,9 +141,10 @@ function FewResults({ search }: { search: EvidencePage }) {
  * capability note when the question's intent selects one (nothing blocks a search), then the
  * investigations retrieved under the fixed heading and notice, as cards of NTSB text and coded
  * data, highest-ranked first or with the leading ones in AI's order (the count line says which),
- * ten at a time ("Show more" is free and reads the pinned ranking). The drawer, Compare and print
- * show the same projection and the notice. Every read is the viewer's own; a search that is gone,
- * or not theirs, shows the expired state.
+ * ten at a time ("Show more" is free and reads the pinned ranking). While a search the page asks
+ * for runs, its checklist shows where the reader waits (§4.10). The drawer, Compare and print show
+ * the same projection and the notice. Every read is the viewer's own; a search that is gone, or not
+ * theirs, shows the expired state.
  */
 export function Evidence() {
   const { id = '' } = useParams();

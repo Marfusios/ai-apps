@@ -11,9 +11,23 @@ import { ApiError, isNotFound } from '../../api';
 import { CASES_PARAM } from '../explore/url-state';
 import { expectArrival } from './arrival';
 import { EXPIRED_TITLE, evidencePageKey, evidencePath } from './keys';
+import { preloadSearchChecklist } from './SearchWait';
 import { UNDO_USED_NOTICE, rememberCharged } from './undo';
 
 type EvidenceShape = Extract<AiRequestShape, { kind: 'evidence' | 'evidence-edited' }>;
+
+/**
+ * An AI search on its way (`POST /api/evidence` sent, no answer yet): what its checklist reads
+ * (UI_DESIGN §4.10). Each send has its own: a send again under a new key (after a 409) is another.
+ */
+export interface PendingSearch {
+  /** The request's idempotency key: its progress is read under it. */
+  key: string;
+  /** A question search, or an edit (which reads no question). */
+  kind: 'question' | 'edited';
+  /** When it left, in milliseconds since the epoch (the checklist's timer). */
+  startedAt: number;
+}
 
 /** What an edit changes besides its filters. */
 export interface EvidenceEdit {
@@ -41,6 +55,10 @@ export interface EvidenceEdit {
  * blocks a search (gate answer 2): the answer is always results, which open the search's page with
  * page 1 already in the cache (the POST answers with it).
  *
+ * While a search's POST runs, `pending` names it (its key, its kind and when it left), and its
+ * checklist reads its progress under that key (web/src/features/evidence/SearchWait.tsx, UI_DESIGN
+ * §4.10); a request refused before it leaves, or a Turnstile check, shows none.
+ *
  * The idempotency key is kept for the tab right before the request leaves (write-ahead,
  * web/src/features/ai/unsettled.ts), so a reload or Back while it is on its way loses nothing,
  * and the same request again replays it until the search's page has taken over; a 409 `conflict`
@@ -62,6 +80,8 @@ export function useEvidenceSearch() {
   // read right before one found it used): its undo is not offered until a newer read of it is there.
   // The cache has that read (or a mark) already, but its readers learn of it a moment later.
   const [staleHint, setStaleHint] = useState<EvidencePage | null>(null);
+  // The search on its way, while its POST runs (the checklist shows it).
+  const [pending, setPending] = useState<PendingSearch | null>(null);
 
   const send = useCallback(
     async (shape: EvidenceShape, body: (idempotencyKey: string, turnstileToken: string | null) => CreateEvidenceRequest, keepCompare: boolean, free = false): Promise<boolean> => {
@@ -80,21 +100,27 @@ export function useEvidenceSearch() {
       let unfinished = false;
       const result = await run(
         async (turnstileToken) => {
-          // The evidence client and its contracts load with the first AI request, not with the home page.
+          // The evidence client and its contracts load with the first AI request, not with the home page;
+          // its checklist with it, while the request is on its way.
           const { createEvidence } = await import('./api');
+          preloadSearchChecklist();
           if (gone()) throw new VisitorChangedError('the visitor changed before this was sent');
           // Write-ahead: kept for the tab before it leaves (createEvidence sends in this same turn).
           rememberUnsettled(id, idempotencyKey);
-          return createEvidence(body(idempotencyKey, turnstileToken), visitor).catch((err: unknown) => {
-            // The search being edited is gone (expired, or not this visitor's): its page reads it
-            // again, finds it gone and says so, instead of a generic failure under it.
-            if (shape.kind === 'evidence-edited' && isNotFound(err)) {
-              parentGone = true;
-              void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
-            }
-            unfinished = err instanceof ApiError && err.status === 503 && err.body?.error === 'unavailable';
-            throw err;
-          });
+          // Its checklist shows while it runs, read under this key.
+          setPending({ key: idempotencyKey, kind: shape.kind === 'evidence' ? 'question' : 'edited', startedAt: Date.now() });
+          return createEvidence(body(idempotencyKey, turnstileToken), visitor)
+            .catch((err: unknown) => {
+              // The search being edited is gone (expired, or not this visitor's): its page reads it
+              // again, finds it gone and says so, instead of a generic failure under it.
+              if (shape.kind === 'evidence-edited' && isNotFound(err)) {
+                parentGone = true;
+                void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
+              }
+              unfinished = err instanceof ApiError && err.status === 503 && err.body?.error === 'unavailable';
+              throw err;
+            })
+            .finally(() => setPending(null));
         },
         earlier
           ? {
@@ -218,5 +244,5 @@ export function useEvidenceSearch() {
     [queryClient, send, setNotice],
   );
 
-  return { ...request, phase: verifying ? ('checking' as const) : request.phase, staleHint, ask, edit };
+  return { ...request, phase: verifying ? ('checking' as const) : request.phase, staleHint, pending, ask, edit };
 }

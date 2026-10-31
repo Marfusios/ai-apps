@@ -22,6 +22,7 @@ import { cx } from '../lib/cx';
 import { formatCount, plural } from '../lib/format';
 import { AiNoticeBox } from '../features/ai/AiNoticeBox';
 import { AskAiButton } from '../features/ai/AskAiButton';
+import { SearchWait } from '../features/evidence/SearchWait';
 import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { CaseDrawer, type DrawerPosition } from '../features/case/CaseDrawer';
 import { COMPARE_FULL_MESSAGE, CompareTray } from '../features/explore/CompareTray';
@@ -359,6 +360,7 @@ export function Explore() {
             onAsk={(value) => askAi(value, 'box')}
             askPhase={askedFrom === 'box' ? ai.phase : 'idle'}
           />
+          <SearchWait pending={askedFrom === 'box' ? ai.pending : null} className="mt-3" />
           <AiNoticeBox
             notice={askedFrom === 'box' ? ai.notice : null}
             keywordHref={listHrefFor(draft)}
@@ -443,6 +445,7 @@ export function Explore() {
                 </span>
                 <AskAiButton size="sm" className="ml-auto" onAsk={() => askAi(draft, 'nudge')} phase={askedFrom === 'nudge' ? ai.phase : 'idle'} />
               </div>
+              <SearchWait pending={askedFrom === 'nudge' ? ai.pending : null} className="mt-3" />
               <AiNoticeBox
                 notice={askedFrom === 'nudge' ? ai.notice : null}
                 keywordHref={listHrefFor(draft)}
