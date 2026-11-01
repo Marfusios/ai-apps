@@ -1308,34 +1308,77 @@ plain words and formatted numbers; times are in the viewer's own time zone, name
   automatic import (below).
 - **Automatic import** (Task 26, Proposed), in the System section after the dataset, from
   `system.imports`. The admin page is the automatic NTSB importer's notification channel
-  (docs/IMPORTER.md), so a problem comes first and nothing alarms while all is well:
+  (docs/IMPORTER.md), so a problem comes first and nothing alarms while all is well. The words
+  follow what the server sends: the last completed check is only ever a run that found nothing new or
+  imported a file (stops, postponements and failures never refresh it); a run's cost is its file's
+  total so far; a daily run an open review blocks is recorded as postponed with that review's reason.
   - **Attention:** when a review is open, an ink-edged notice at the top of the block, "Import needs
-    a review": "The last run stopped for review: ⟨the reason in words⟩." (or "The importer reports an
-    open review, or its status could not be read." when no stopped run is listed), "Nothing new is
-    imported until an operator resolves it; the site keeps serving generation 7, the dataset above.",
-    the run's identifiers on a code line, and "How to resolve it: docs/IMPORTER.md, “Free
-    re-certification and baseline recovery”: `pnpm importer approve, rebaseline or rollback`.".
-  - **Overdue:** when the daily check has not succeeded for over 36 hours, "The daily snapshot check is
-    overdue": "It has not succeeded for over 36 hours. Last successful check: ⟨time⟩." and "The
-    importer's journal says why: `journalctl --user -u aircase-importer.service`".
+    a review". Its first sentence names the newest run that stopped for review with nothing completed
+    after it: "On 31 Oct 2026, a run stopped for review: ⟨the reason in words⟩." (or "a run stopped
+    after the switch to the new data: …"); when only the runs it blocks are listed, "Daily runs are
+    waiting for an earlier review: ⟨reason⟩."; when no listed run explains it, "The importer reports an
+    open review that no listed run explains: a database restore, an uncertain cost record or index
+    switch, a failed re-certification, or a stuck run."; with no runs and no completed check at all,
+    "The importer’s status could not be read, or a database restore waits for its review.". Then what
+    it means for the data that serves: before the switch, "Nothing new is imported until it is
+    resolved; the site keeps serving generation 7, the dataset above."; at or after the switch (the
+    publication, the site checks, the cleanup), "The new data may already be live: the site serves
+    generation 8, the dataset above. An operator should check it and roll it back if needed."; for the
+    retired source, "Automatic imports have ended; the site keeps serving generation 7, the dataset
+    above.". The run's identifiers on a code line. Then how to resolve that kind of review, and its
+    commands, each on a line of its own that wraps only between words:
+    - a comparison review of a downloaded file (cohort bounds, a reissued file, no baseline): docs/IMPORTER.md,
+      “Configuration and operator commands”: approve the named exception, then run again; or abandon
+      the file, “Free re-certification and baseline recovery” (`pnpm importer approve`, `pnpm importer
+      rebaseline`);
+    - any other review of a downloaded file before the switch: “Free re-certification and baseline
+      recovery”: review the private reports, then abandon the file (`pnpm importer rebaseline`);
+    - a stop at or after the switch: “Configuration and operator commands”: check the site and roll
+      back if needed; then adopt the data that serves (`pnpm importer rollback`, `pnpm importer
+      rebaseline`);
+    - a stop before any file was downloaded: “Acknowledge a proved pre-artifact setup failure”, once
+      the cause is fixed; or rebaseline (`pnpm importer acknowledge-preartifact`, `pnpm importer
+      rebaseline`);
+    - the retired NTSB download (every run from 5 Apr 2027): turn the daily check off, “Installation
+      gate”, then acknowledge the stopped run; a new source needs its own reviewed adapter
+      (`systemctl --user disable --now aircase-importer.timer`, `pnpm importer acknowledge-preartifact`);
+    - a database restore or cost records to reconcile: docs/RUNBOOK.md, “Paid operations after a
+      restore”; the importer’s own commands cannot clear it (no command);
+    - an open review no listed run explains: “Free re-certification and baseline recovery”; after a
+      database restore, the RUNBOOK section (no command);
+    - an unreadable status: “After a database restore: docs/RUNBOOK.md, “Paid operations after a
+      restore”. Otherwise reload the page; if it persists, the app’s logs say why.” (no command).
+  - **Overdue:** when no check has completed for over 36 hours, "The daily snapshot check is
+    overdue": "No check has completed for over 36 hours. Last completed check: ⟨time⟩." (or "No check
+    has completed yet.") and "The importer’s journal says why:" with `journalctl --user -u
+    aircase-importer.service`. When a review is open as well, "No check has completed for over 36
+    hours: the daily runs wait for the open review, above." alone; with an unreadable status, "No check
+    has completed for over 36 hours, or the importer’s status could not be read."
   - **At the head of the page** (between the section links and Users), while either holds, one
     ink-edged line, "The automatic import needs a review." or "The daily snapshot check is overdue.",
-    links to its notice (focus and scroll), so the notification cannot be missed at the page's foot.
+    links to its notice (focus and scroll; a 44px target on touch), so the notification cannot be
+    missed at the page's foot.
   - **Facts:** Schedule ("Daily at 05:30, Europe/Prague", or "Off" when it is off or not configured),
-    the next snapshot check, the last check (time, the outcome in words, and for anything but no change
-    or an import what the result means, then its identifiers on a code line), and the last successful
+    the next snapshot check; the latest run (time, the outcome in words, what the result means unless
+    it found nothing new or imported a file, its identifiers on a code line); the last completed check
+    ("The latest run, above" when it is that run, else its time and outcome); and the last successful
     import (time, then "NTSB file of 16 Oct 2026 · generation 7 · cost $0.21"). Times are in the
-    viewer's zone with the zone named, "1 Nov 2026, 05:30 (Europe/Prague)"; the NTSB file's advertised
-    date is NTSB's own, a date with no zone. "None yet" when there is none.
-  - **Recent runs,** newest first, at most 20: "Newest first. Times are in your time zone, ⟨zone⟩.",
-    then a table from 640px (checked, mode, result, reached, cost) and on a phone a block per run.
-    Digests are never shown. "No runs yet." when there are none.
+    viewer's zone with the zone named, "1 Nov 2026, 05:30 (Europe/Prague)", a long zone breaking at
+    its slashes; the NTSB file's advertised date is NTSB's own, a date with no zone. "None yet" when
+    there is none.
+  - **Recent runs** (a heading), newest first, at most 20: "Newest first. Times are in your time zone,
+    ⟨zone⟩. File cost is the file’s total so far, across its attempts.", then a table where there is
+    room (640 to 1023px, and from 1280px beside Costs: checked with the mode under it, result,
+    reached, file cost) and otherwise a block per run (a phone, and beside Costs from 1024 to 1279px).
+    A run refused before it started reached no step ("—", said "Not started"); a run with no file has
+    no file cost ("—", said "No file"). Digests are never shown. "No runs yet." when there are none.
   - **Outcomes in words:** "No new file (NTSB still lists the 16 Oct 2026 file)", "File
     re-downloaded: identical", "File re-downloaded: the same content, repackaged", "No change",
-    "Imported generation 8", "Stopped for review: ⟨reason⟩", "Postponed: ⟨reason⟩", "Failed:
-    ⟨reason⟩", "Cancelled: ⟨reason⟩", "Live skipped: the dev check failed", "Rolled back: the previous
-    dataset serves again", "Running (⟨step⟩)". Every reason, result, step and mode has its words
-    (web/src/features/admin/imports.ts); no identifier shows except on a code line.
+    "Imported generation 8", "Stopped for review: ⟨reason⟩", "Postponed: ⟨reason⟩", "Blocked: an
+    earlier run is waiting for review", "Failed: ⟨reason⟩", "Cancelled: ⟨reason⟩", "Live skipped: the
+    dev check failed", "Rolled back: the previous dataset serves again", "Running (⟨step⟩)". Every
+    reason, result, step and mode has its words (web/src/features/admin/imports.ts); no identifier
+    shows except on a code line.
 - A failed read says "The admin figures didn't load." with Try again. When who is signed in cannot be
   read (the account read and its retry failed, Task 25b), the page says "This page didn't load." and
   "Check your connection and try again." with Try again, rather than not-found; an account the server
@@ -1761,35 +1804,45 @@ counting rules.
   "Leading results in order."; stages that end between two reads announced together; and the admin
   page's "This page didn't load." when who is signed in cannot be read (§4.10, §4.12).
 - Builder calls (Task 26), for the owner's review (§4.12, "Automatic import"): the block's notices,
-  facts, runs and their copy, and the line at the head of the page, as above; and the words for each
-  importer reason, result, step and mode in web/src/features/admin/imports.ts:
+  their first sentences, what they say serves, and how to resolve each kind of review with its
+  commands; the overdue notice's three forms; the facts ("Latest run", "Last completed check", "The
+  latest run, above"); the runs' "File cost" and its sentence; and the line at the head of the page,
+  as above. And the words for each importer reason, result, step and mode in
+  web/src/features/admin/imports.ts:
   - **Reasons**, after "Stopped for review:", "Postponed:", "Failed:" or "Cancelled:": metadata
     unchanged "NTSB still lists the same file"; same archive "the downloaded file is identical to the
     current one"; same content "the downloaded file has the same content as the current one"; source
-    listing changed "NTSB's download page is not laid out as expected"; source reissued "NTSB changed
-    the file without giving it a newer date"; source changed during download "the file changed while
-    it was downloading"; source unavailable "NTSB or the app could not be reached"; source retired "the
-    NTSB download the importer uses has been retired"; baseline required "more than 62 days passed
-    between NTSB's files, so the new one needs a full review"; baseline changed "the dataset the site
-    serves changed outside the importer"; schema "the file's tables or columns are not as expected";
-    integrity "a data integrity check failed"; verification "the new data did not pass verification";
-    cohort bounds "the new file differs from the current data by more than the automatic limits
-    allow"; mapping "the way cases are classified changed"; probe "the new search indexes did not pass
-    their checks"; import cap "this file's $0.50 cost limit was reached"; monthly budget "this month's
-    budget does not cover it"; cache miss "it needs text embeddings that are not cached"; restore hold
-    "a database restore is waiting for review"; accounting "its cost records need reconciling";
-    storage "there is not enough disk space"; alias unknown "the switch of the search indexes is in an
-    unknown state"; busy "another import or a backup was running"; backup window "it was the nightly
-    backup window"; lock lost "it lost its lock"; timeout "it ran past its three-hour limit";
-    interrupted "it was interrupted"; dev failed "the dev check failed"; configuration "the importer's
-    configuration needs attention"; cleanup "cleaning up after it did not finish".
-  - **Results**, one sentence each: running "A run is in progress."; unchanged "The check found nothing
-    new to import; the site keeps its data."; published "A new NTSB snapshot was imported and now
-    serves."; needs review "The run stopped and waits for an operator's review; nothing new is
-    imported until then."; deferred "The run was postponed; the next daily check tries again.";
-    failed "The run failed; the next daily check tries again, within its retry limit."; skipped (dev
-    failed) "Live was skipped because the dev check failed; live keeps its data."; cancelled "The run
-    was cancelled before it finished."; rolled back "An operator rolled the import back; the previous
+    listing changed "NTSB's download listing is not in the expected form"; source reissued "NTSB
+    changed the file without giving it a newer date"; source changed during download "the file changed
+    while it was downloading"; source unavailable "NTSB or the app could not be reached"; source
+    retired "the NTSB download the importer uses has been retired"; baseline required "the importer has
+    no reviewed starting point for this file (NTSB's files are more than 62 days apart, or none was
+    recorded)"; baseline changed "the dataset the site serves changed outside the importer"; schema
+    "the file's tables or columns are not as expected"; integrity "a data integrity check failed";
+    verification "the new data did not pass verification"; cohort bounds "the new file differs from
+    the current data in a way the automatic checks do not accept"; mapping "the way cases are
+    classified changed"; probe "the new search indexes did not pass their checks" (before the switch)
+    or "the live site did not pass its checks after the switch" (at the site checks); import cap "this
+    file's $0.50 cost limit was reached"; monthly budget "this month's budget does not cover it"; cache
+    miss "it needs text embeddings that are not cached"; restore hold "a database restore is waiting
+    for review"; accounting "its cost records need reconciling"; storage "the importer hit a storage
+    limit or its free-space reserve"; alias unknown "the switch of the search indexes is in an unknown
+    state"; busy "another import or a backup was running"; backup window "it was the nightly backup
+    window"; lock lost "it lost the lock that lets one run work at a time"; timeout "it ran past its
+    3-hour limit"; interrupted "it stopped unexpectedly" (or, stopped for review, "it stopped
+    unexpectedly too many times"); dev failed "the dev check failed"; configuration "the importer's
+    configuration needs attention"; cleanup "its temporary files or containers could not be cleaned
+    up".
+  - **Results**, one sentence each, said under the latest run unless it found nothing new or imported
+    a file: running "A run is in progress."; unchanged "The check found nothing new to import; the
+    site keeps its data."; published "A new NTSB snapshot was imported and now serves."; needs review
+    "The run stopped and waits for an operator's review; nothing new is imported until then." (after
+    the switch: "The run stopped after the switch to the new data; an operator should check the site
+    and roll it back if needed."); deferred "The run was postponed; the next daily check tries again."
+    (a run an open review blocks: "Each daily run waits until the open review is resolved."); failed
+    "The run failed; the next daily check tries again, within its retry limit."; skipped (dev failed)
+    "Live was skipped because the dev check failed; live keeps its data."; cancelled "The run was
+    cancelled before it finished."; rolled back "An operator rolled the import back; the previous
     dataset serves again."
   - **Steps reached:** Source check, Download, Extraction, Load, Verification, Indexing plan, Case
     index, Passage index, Validation, Publication, Site checks, Cleanup, Complete. **Modes:**

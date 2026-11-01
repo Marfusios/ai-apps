@@ -1259,9 +1259,10 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   be read (the account read and its retry failed), the page says it didn't load, with Try again. The
   page is not indexed. Its System section's "Automatic import" (Task 26) is the automatic NTSB
   importer's notification channel: a stop for review or an overdue daily check comes first, as a
-  notice with what to do (docs/IMPORTER.md) and a line at the head of the page; then the schedule,
-  the last check and the last successful import in words, and the recent runs
-  (`web/src/features/admin/ImportStatus.tsx`).
+  notice that says what it means for the data that serves and how to resolve that kind of review
+  (docs/IMPORTER.md, or docs/RUNBOOK.md after a restore), and a line at the head of the page; then
+  the schedule, the latest run, the last completed check and the last successful import in words,
+  and the recent runs (`web/src/features/admin/ImportStatus.tsx`).
 - **Briefs that exist**: the interface starts none. While the server has briefs off
   (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
   failed step offers New search, not Try again.
@@ -1394,8 +1395,12 @@ accounts at the example domains, 30 days of use with a weekly rhythm, a small be
 ratings the mock was given and the configuration it stands in for. Its automatic importer
 (`web/mock/imports.ts`) is in one of five synthetic states, from `createHandlers({ imports })` or
 this tab's session storage `casebook-mock-admin-imports`: `healthy` (the default), `published`,
-`needs_review`, `overdue` or `disabled`. `tests/unit/evidence-progress-mock.test.ts` and
-`tests/unit/import-status-mock.test.ts` check them against the contracts.
+`needs_review`, `blocked`, `after_switch`, `restore_hold`, `retired`, `unreadable`, `overdue` or
+`disabled`, each shaped as the server sends it (the last completed check is only an unchanged or
+published run, a run's cost is its file's running total, blocked daily runs carry their review's
+reason). `tests/unit/evidence-progress-mock.test.ts` and
+`tests/unit/import-status-mock.test.ts` check them against the contracts, and
+`tests/web/import-words.test.ts` ties the limits the copy names to the worker's own.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
