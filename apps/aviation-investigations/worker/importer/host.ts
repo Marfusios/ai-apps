@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -58,6 +58,36 @@ export function journalLine(line: string): string | null {
     return null;
   }
 }
+/** The production IPC handler, shared with the real child-process regression harness. */
+export function serveChildFacts(
+  child: ChildProcess,
+  config: ImporterConfig,
+  ownEnvironment: string | undefined,
+): void {
+  let factsPending = false;
+  child.on('message', (raw: unknown) => {
+    const parsed = FactMessageSchema.safeParse(raw);
+    if (!parsed.success || factsPending || parsed.data.request.environment === ownEnvironment)
+      return;
+    const message = parsed.data;
+    factsPending = true;
+    void readHostFacts(config, message.request)
+      .then(
+        (value) => {
+          if (child.connected)
+            child.send({ type: 'import-facts-reply', id: message.id, ok: true, value }, () => {});
+        },
+        () => {
+          if (child.connected)
+            child.send({ type: 'import-facts-reply', id: message.id, ok: false }, () => {});
+        },
+      )
+      .finally(() => {
+        factsPending = false;
+      });
+  });
+}
+
 export async function boundedChild(
   args: string[],
   deadline: number,
@@ -143,29 +173,8 @@ export async function boundedChild(
       }
     });
     child.stderr!.on('data', () => {});
-    let factsPending = false;
     const ownEnvironment = args[args.indexOf('--env') + 1];
-    child.on('message', (raw: unknown) => {
-      const parsed = FactMessageSchema.safeParse(raw);
-      if (!parsed.success || factsPending || parsed.data.request.environment === ownEnvironment)
-        return;
-      const message = parsed.data;
-      factsPending = true;
-      void readHostFacts(config, message.request)
-        .then(
-          (value) => {
-            if (child.connected)
-              child.send({ type: 'import-facts-reply', id: message.id, ok: true, value }, () => {});
-          },
-          () => {
-            if (child.connected)
-              child.send({ type: 'import-facts-reply', id: message.id, ok: false }, () => {});
-          },
-        )
-        .finally(() => {
-          factsPending = false;
-        });
-    });
+    serveChildFacts(child, config, ownEnvironment);
     const finish = (code: number | null) => {
       clearTimeout(soft);
       clearTimeout(hard);

@@ -76,7 +76,8 @@ export async function readHostFacts(
     onConnectionError: () => {},
   });
   try {
-    if (request.kind === 'retention') return retainedArchives(db);
+    // Keep the query inside this try: finally closes the pool.
+    if (request.kind === 'retention') return await retainedArchives(db);
     const before = await manifest(db);
     const canary = await latestCanary(db, request.content);
     const observedImage = await deployedImage(config.dev);
