@@ -102,6 +102,8 @@ Canary acceptance, its immutable attestation and the run's exact successful gene
 commit in one fenced transaction. A lost acknowledgement or report-file failure
 cannot downgrade that success. Later code/image changes use the free re-certification
 path, including the full ten-minute canary, rather than waiting for a new NTSB file.
+For routine application releases, [the release command](RUNBOOK.md#release-command)
+updates the worker/image pins and performs this check as part of `pnpm app:release`.
 
 After a possibly committed switch, failure status does not claim that the previous
 dataset is still serving. Both pairs stay protected. A network outage does not cause
@@ -289,7 +291,11 @@ restore a backup, delete spend or delete candidate data still referenced by user
 
 ### Free re-certification and baseline recovery
 
-Re-certify the exact accepted serving pair after a reviewed code/image upgrade:
+Use [the release command](RUNBOOK.md#release-command) for a reviewed application
+upgrade: it deploys live and the private dev canary, updates this config's worker/image
+pins under the importer/maintenance locks, releases them, then runs the free check.
+To repeat just re-certification of the exact accepted serving pair after repairing a
+failed check (with the reviewed pins already correct):
 
 ```sh
 pnpm importer recertify --config "$IMPORT_CONFIG" --env dev

@@ -502,9 +502,9 @@ code under an old tag. `--rebuild` as the first argument (`pnpm app:up --rebuild
 app:migrate --rebuild`, `pnpm ingest --rebuild ...`) rebuilds a tag on purpose, again only
 from a clean checkout of its tagged commit.
 
-To update `live`: tag the release's commit (`git tag <APP_VERSION> <commit>`), check it
-out, set `APP_VERSION`, run `pnpm app:migrate` (which builds the image and applies its
-migrations) and the [AI preflight](#ai-preflight), then `pnpm app:up`. To roll back, set
+For updates after the initial deployment, use [the release command](#release-command).
+It includes both environments, privilege checks, the importer pins and free dev
+re-certification. To roll back, set
 the previous `APP_VERSION` and run `pnpm app:up`: its image is still local and starts
 unchanged. If that image was removed, the wrapper refuses; check out the clean commit of
 its git tag and run the command again to build it from that commit.
@@ -525,6 +525,110 @@ migration that changes what an earlier release relies on, roll forward instead. 
 release image takes about 350 MB: keep the current and the previous two tags as rollback
 inventory and remove older ones (`docker image rm ai-aviation/app:<tag>`); `docker image
 prune` removes the untagged layers that `dev` rebuilds leave behind.
+
+### Release command
+
+After the reviewed merge, create an **annotated** tag on the clean release commit,
+named `YYYY.MM.DD-<first seven characters of HEAD>` (for example with
+`git tag -a <tag> -m <release-note>`). Exactly one tag matching that form may name HEAD;
+its suffix must match the commit. The command creates no tags, merges or pushes.
+Run it from the configured main checkout, not a different worktree:
+
+```sh
+pnpm app:release --config /abs/private/release.json --dry-run
+pnpm app:release --config /abs/private/release.json
+```
+
+The strict JSON config has these fields; all filesystem paths are absolute and outside
+the repository. Keep it owner-only, and every dotenv/version file at mode 0600:
+
+```json
+{
+  "version": "aircase-release.v1",
+  "checkout": "/abs/ai-apps",
+  "branch": "aviation-casebook",
+  "importerConfig": "/abs/private/importer.json",
+  "publicUrl": "https://example.org",
+  "logDir": "/abs/private/release-logs",
+  "live": {
+    "versionFile": "/abs/private/live.env",
+    "composeEnvFiles": ["/abs/private/live.env", "/abs/private/live-compose.env"],
+    "preflightEnvFiles": ["/abs/private/live-host.env"],
+    "migratorEnvFile": "/abs/private/live-migrator.env"
+  },
+  "dev": {
+    "versionFile": "/abs/private/dev-canary.env",
+    "migrateEnvFiles": ["/abs/private/dev-migrate.env"],
+    "canaryEnvFiles": ["/abs/private/dev-canary.env"],
+    "migratorEnvFile": "/abs/private/dev-migrator.env"
+  }
+}
+```
+
+File lists have the usual highest-priority-first ordering. Each version file contains
+exactly one `APP_VERSION=` assignment and must supply the effective version to its
+Compose invocation. Dev migration settings select `APP_ENV=dev`, ordinary dev tools
+(`APP_VERSION` absent or `dev`, no release-image mode) and the dev migrator; this migration
+runs before the new release image exists. The canary settings select
+`AVIATION_DEV_RELEASE_IMAGE=true` and the private dev app described below. Host migrator
+files hold `DATABASE_MIGRATOR_URL` for the correct database and `aviation_migrator` role.
+They are not the container connection files. Preflight settings select live and provide
+the configured models and Anthropic key. The existing preflight uses the **free Anthropic
+token-count endpoint**, with generation disabled; it needs provider connectivity but
+makes no paid model call.
+
+Containers, application health URLs, locks, image pins and worker commit come only from
+the importer config. Both containers and the existing lock files must already exist.
+The config and env reads reject symlinks, unsafe ownership/permissions and files over
+64 KiB. The checkout must resolve to the script's own repo, use the configured branch,
+and contain no tracked or untracked changes. Starts from **03:30 inclusive to 06:00
+exclusive Europe/Prague** are refused, including across DST. Both non-blocking importer
+locks are held through installation, migration, deployment and the pin update. The
+maintenance lock also excludes the actual AirCase backup commands.
+
+After those checks, the command:
+
+1. Runs `pnpm install --frozen-lockfile` and atomically changes only the `APP_VERSION`
+   assignment in the live and canary files, retaining their line endings and mode 0600.
+2. Migrates **dev first** and compares its read-only privilege snapshot against the
+   committed baseline. Only then does it migrate and check live. A dev failure never
+   migrates or restarts live; the version files may already hold the target tag.
+3. Runs the live host preflight, then starts live. Compose builds the release image at
+   its first required use (normally the live migration) and subsequently reuses it.
+   Each app gets at most 180 seconds for `/api/config` to return 200. Log levels
+   40/50 from that container's first 180 seconds fail, except `api request` lines; a
+   no-restart retry rechecks that same startup window. Signed-out public `/` and `/privacy` must return
+   200, and `/admin` and `/api/admin/overview` must return 404, without following redirects.
+4. Starts the private dev canary, checks health/startup logs, verifies a readable
+   `APP_VERSION`, and requires equal valid immutable live/dev image IDs.
+5. Validates and atomically writes the importer config with HEAD's full commit and that
+   image in both environments. It preserves schedule, installation evidence and other
+   settings, and refuses to overwrite a concurrent operator edit.
+6. Closes **both** locks, then runs the importer's own free dev re-certification, which
+   acquires them itself and runs the full ten-minute canary. Success requires exit 0 and
+   a final `complete/unchanged` step. Another maintenance job winning that handoff causes
+   a safe refusal, not a lock bypass.
+
+All release children receive a fresh environment containing only `PATH`, `HOME`, and
+the applicable `AVIATION_ENV_FILES`. Exported database, provider and Compose settings
+cannot override these files. Child diagnostics go to
+`<logDir>/<tag>/<NN>-<step>.log` (directory 0700, files 0600); repeated runs append.
+Treat those logs as private: deployment tooling can print sensitive diagnostics.
+The console has fixed step results, a version/image/pin summary and only validated
+importer JSON step lines. Privilege differences contain found/expected catalog lines
+in the private log, never the connection URL. Dry-run checks files, Git, time, both
+locks and existing containers, prints the entire plan, and creates no logs or other
+files; it does not install, migrate, deploy or re-certify.
+
+Exit codes: **0** success, **1** step failure, **2** usage/config, **75** busy/quiet window.
+There is no automatic rollback of earlier completed steps. **Fix the cause and run the
+same command again:** every step is idempotent, equal version/pin values are no-ops,
+migrations are no-ops when current, and Compose reuses the existing tagged image.
+Re-certification failure leaves the new pins in place; rerun after repair, or let the
+daily importer perform its own re-certification. A long release can reach the importer's
+own backup exclusion window at the lock handoff; do not bypass it. SIGINT/SIGTERM stop
+the active child before releasing locks. A release cannot guarantee completion merely
+because it started before 03:30.
 
 ### Dev canary app
 
@@ -586,10 +690,9 @@ docker inspect --type container --format '{{.Image}}' ai-aviation-live-aviation-
 
 They must be identical; matching version strings alone is insufficient. These commands
 print image IDs only, never container environments. Keep release tags immutable. To update
-the canary, pause importer scheduling, wait for any run to end, set `APP_VERSION` to the
-new approved live tag in the private dev file, and repeat the clean-environment `app:up`
-and image-ID/HTTP checks. Run the required new-image dev certification before resuming
-scheduled imports. The importer continues to use its separate private worker settings;
+live and its canary together, use [the release command](#release-command), including its
+lock, image-ID/HTTP checks and new-image dev certification. The initial standalone
+canary setup still uses the steps above. The importer uses its separate private worker settings;
 the canary app receives neither worker credentials nor provider keys.
 
 ### AI preflight

@@ -21,9 +21,12 @@ import { workerIdentity } from './application.js';
 import { classify } from './failure.js';
 import { FactMessageSchema, readHostFacts } from './facts.js';
 
-/** flock on the inherited open file description: the parent retains the lock after the helper exits. */
-export async function hostLock(path: string): Promise<FileHandle> {
-  const fd = await open(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+/**
+ * flock on the inherited open file description: the parent retains it after the helper exits.
+ * The release command supplies a fresh environment and create=false for read-only dry-run checks.
+ */
+export async function hostLock(path: string, env?: NodeJS.ProcessEnv, create = true): Promise<FileHandle> {
+  const fd = await open(path, (create ? constants.O_CREAT : 0) | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
   try {
     const stat = await fd.stat();
     if (!stat.isFile() || (stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.())
@@ -31,6 +34,7 @@ export async function hostLock(path: string): Promise<FileHandle> {
     const code = await new Promise<number | null>((done, reject) => {
       const p = spawn('flock', ['--nonblock', '3'], {
         stdio: ['ignore', 'ignore', 'ignore', fd.fd],
+        ...(env ? { env } : {}),
       });
       p.once('error', reject);
       p.once('close', done);
