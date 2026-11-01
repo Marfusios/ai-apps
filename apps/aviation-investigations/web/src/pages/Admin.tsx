@@ -16,6 +16,8 @@ import {
   rankingInWords,
   viewerTimeZone,
 } from '../features/admin/format';
+import { ImportPointer, ImportStatus } from '../features/admin/ImportStatus';
+import { Fact, Id, Missing } from '../features/admin/parts';
 import { UsageChart, USAGE_CHART_TITLE } from '../features/admin/UsageChart';
 import { accountQuery } from '../features/auth/api';
 import { useSignIn } from '../features/auth/SignInDialog';
@@ -45,7 +47,6 @@ export const ADMIN_COPY = {
   admin: 'Admin',
   never: 'Never',
   none: 'None',
-  notSetUp: 'Not set up yet',
   notSet: 'Not set',
   on: 'On',
   off: 'Off',
@@ -84,16 +85,6 @@ function Stats({ children }: { children: ReactNode }) {
 /** The small caps tag of an admin account. */
 function AdminTag() {
   return <span className="ml-1.5 rounded-tag border border-hairline px-1 text-micro font-bold tracking-caps whitespace-nowrap text-muted uppercase">{ADMIN_COPY.admin}</span>;
-}
-
-/** "—" for a time that is not there, said as such. */
-function Missing({ words }: { words: string }) {
-  return (
-    <>
-      <span aria-hidden="true">—</span>
-      <span className="sr-only">{words}</span>
-    </>
-  );
 }
 
 /**
@@ -410,21 +401,6 @@ function Costs({ costs }: { costs: AdminOverview['costs'] }) {
   );
 }
 
-/** One line of the system's facts: its name, and the value (with an identifier in mono where there is one). */
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[minmax(0,9.5rem)_1fr] gap-x-3 py-1 sm:grid-cols-[11rem_1fr]" data-fact={label}>
-      <dt className="text-meta text-muted">{label}</dt>
-      <dd className="min-w-0 text-meta break-words text-ink">{children}</dd>
-    </div>
-  );
-}
-
-/** A configuration's identifier, under its words (or alone, for one the page has no words for). */
-function Id({ children }: { children: string }) {
-  return <span className="block font-mono text-label break-words text-muted">{children}</span>;
-}
-
 function System({ system, now }: { system: AdminOverview['system']; now: number }) {
   const ranking = rankingInWords(system.ranking);
   const automatic = automaticFiltersInWords(system.automaticFilters);
@@ -478,9 +454,7 @@ function System({ system, now }: { system: AdminOverview['system']; now: number 
         )}
       </dl>
       <SectionHead>Automatic import</SectionHead>
-      <dl>
-        <Fact label="Next snapshot check">{system.imports.schedule?.nextCheckAt ? when(system.imports.schedule.nextCheckAt) : ADMIN_COPY.notSetUp}</Fact>
-      </dl>
+      <ImportStatus imports={system.imports} dataset={d} environment={system.appEnv} timeZone={tz} />
     </Panel>
   );
 }
@@ -591,6 +565,7 @@ export function Admin() {
               </a>
             ))}
           </nav>
+          <ImportPointer imports={data.system.imports} />
           <div className="space-y-3.5">
             <Users users={data.users} />
             <Usage usage={data.usage} />
