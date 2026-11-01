@@ -454,7 +454,7 @@ function System({ system, now }: { system: AdminOverview['system']; now: number 
         )}
       </dl>
       <SectionHead>Automatic import</SectionHead>
-      <ImportStatus imports={system.imports} dataset={d} timeZone={tz} />
+      <ImportStatus imports={system.imports} dataset={d} environment={system.appEnv} timeZone={tz} />
     </Panel>
   );
 }

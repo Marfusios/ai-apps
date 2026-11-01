@@ -1,39 +1,43 @@
 /**
  * The System section's "Automatic import" (UI_DESIGN §4.12, Task 26): the automatic NTSB snapshot
- * importer's status from `system.imports`, which is also its notification channel. A stop for
- * review comes first, saying what it means for the data that serves and how to resolve that kind of
- * review (docs/IMPORTER.md, docs/RUNBOOK.md), and so does a daily check that has not completed for
- * over 36 hours; neither shows while all is well. Then the schedule and the next check, the latest
+ * importer's status from `system.imports`, which is also its notification channel. An open review
+ * comes first, saying what it means for the data that serves and how to resolve that kind of review
+ * with the documented commands (docs/IMPORTER.md, docs/RUNBOOK.md), or, where its kind is not
+ * certain, a neutral notice with no command; so does a daily check that has not completed for over
+ * 36 hours; neither shows while all is well. Then the schedule and the next check, the latest listed
  * run, the last completed check and the last successful import, and the recent runs (a table where
- * there is room, else a list of blocks). Everything is in plain words (imports.ts); times are
- * in the viewer's own zone, named, and the NTSB file's advertised date is a date with no zone.
+ * there is room, else a list of blocks). Everything is in plain words (imports.ts); times are in the
+ * viewer's own zone, named, and the NTSB file's advertised date is a date with no zone.
  */
 import { Fragment, type ReactNode } from 'react';
 import type { AdminImportRun, AdminImports, AdminOverview } from '../../../../shared/contracts/admin';
 import { cx } from '../../lib/cx';
 import { formatDateTime, formatDay, formatUsd } from './format';
 import {
+  BLOCKING_KINDS,
   IMPORT_COPY,
   IMPORT_MODE_WORDS,
   advertisedDate,
-  afterSwitch,
-  attentionOf,
+  fileCost,
   importCode,
+  importCommands,
   importOutcome,
+  importView,
   reasonWords,
-  recentRuns,
   runMeaning,
   stepWords,
   type Attention,
+  type ImportCommand,
+  type ImportEnvironment,
+  type ImportView,
 } from './imports';
 import { Fact, Id, Missing } from './parts';
 
 /** A time zone name that may break after each "/" (a long one would not fit a phone's column). */
 function ZoneName({ zone }: { zone: string }) {
-  const parts = zone.split('/');
   return (
     <>
-      {parts.map((part, i) => (
+      {zone.split('/').map((part, i) => (
         <Fragment key={i}>
           {i > 0 && (
             <>
@@ -81,69 +85,93 @@ function Notice({ kind, title, children }: { kind: 'attention' | 'overdue'; titl
 }
 
 /**
- * Commands an operator runs, each on a line of its own; a line wraps only between its words, never
- * inside an option or a file name, and copies as written.
+ * Commands an operator runs, as docs/IMPORTER.md gives them, each on a line of its own (with what to
+ * know before running it); a line wraps only between its words, never inside an option, and copies
+ * as written. Angle brackets mark the operator's own paths and digests.
  */
-function Commands({ commands }: { commands: readonly string[] }) {
+function Commands({ commands }: { commands: readonly ImportCommand[] }) {
   if (commands.length === 0) return null;
   return (
-    <div className="space-y-0.5" data-import-commands="">
-      {commands.map((command) => (
-        <code key={command} className="block font-mono text-label">
-          {command.split(' ').map((word, i) => (
-            <Fragment key={i}>
-              {i > 0 && ' '}
-              <span className="whitespace-nowrap">{word}</span>
-            </Fragment>
-          ))}
-        </code>
+    <div className="space-y-1" data-import-commands="">
+      {commands.map(({ command, note }) => (
+        <div key={command}>
+          <code className="block font-mono text-label">
+            {command.split(' ').map((word, i) => (
+              <Fragment key={i}>
+                {i > 0 && ' '}
+                <span className="whitespace-nowrap">{word}</span>
+              </Fragment>
+            ))}
+          </code>
+          {note && <span className="block text-label text-muted">{note}</span>}
+        </div>
       ))}
     </div>
   );
 }
 
-function AttentionNotice({ attention, generation, timeZone }: { attention: Attention; generation: number | null; timeZone: string }) {
-  const run = attention.stopped ?? attention.blocked;
+function AttentionNotice({ view, attention, generation, environment, timeZone }: { view: ImportView; attention: Attention; generation: number | null; environment: ImportEnvironment; timeZone: string }) {
+  const run = attention.run;
+  const date = run ? formatDay(run.checkedAt, timeZone) : '';
   const reason = run ? (reasonWords(run) ?? '') : '';
-  let first: string;
-  if (attention.stopped) {
-    const date = formatDay(attention.stopped.checkedAt, timeZone);
-    first = afterSwitch(attention.stopped) ? IMPORT_COPY.stoppedAfterSwitch(date, reason) : IMPORT_COPY.stopped(date, reason);
-  } else if (attention.blocked) {
-    first = IMPORT_COPY.blocked(reason);
-  } else {
-    first = attention.kind === 'unreadable' ? IMPORT_COPY.unreadable : IMPORT_COPY.unexplained;
-  }
-  let serving: string | null = null;
-  if (run) {
-    if (attention.kind === 'after_switch') serving = IMPORT_COPY.mayBeLive(generation);
-    else if (attention.kind === 'retired') serving = IMPORT_COPY.retiredServing(generation);
-    else serving = IMPORT_COPY.beforeSwitch(generation);
+  const sentences: string[] = [];
+  switch (attention.kind) {
+    case 'unreadable':
+      sentences.push(IMPORT_COPY.unreadable);
+      break;
+    case 'neutral':
+      sentences.push(IMPORT_COPY.neutral);
+      if (run) sentences.push(IMPORT_COPY.neutralLatest(date, importOutcome(run, view)));
+      break;
+    case 'recertification':
+      sentences.push(IMPORT_COPY.recertificationFailed(date, reason), IMPORT_COPY.nothingChanged(generation));
+      break;
+    case 'after_switch':
+      sentences.push(IMPORT_COPY.stoppedAfterSwitch(date, reason), IMPORT_COPY.mayBeLive(generation));
+      break;
+    case 'rolled_back':
+      sentences.push(IMPORT_COPY.rolledBack(date));
+      break;
+    case 'retired':
+      sentences.push(IMPORT_COPY.stopped(date, reason), IMPORT_COPY.retiredServing(generation));
+      break;
+    default:
+      sentences.push(IMPORT_COPY.stopped(date, reason), IMPORT_COPY.beforeSwitch(generation));
   }
   return (
     <Notice kind="attention" title={IMPORT_COPY.attentionTitle}>
-      <p>
-        {first}
-        {serving && ` ${serving}`}
-      </p>
+      <p>{sentences.join(' ')}</p>
       {run && <Id>{importCode(run)}</Id>}
       <p>{IMPORT_COPY.how[attention.kind]}</p>
-      <Commands commands={IMPORT_COPY.commands[attention.kind]} />
+      <Commands commands={importCommands(attention.kind, environment)} />
     </Notice>
   );
 }
 
 function OverdueNotice({ imports, attention, timeZone }: { imports: AdminImports; attention: Attention | null; timeZone: string }) {
-  const review = attention !== null && attention.kind !== 'unexplained' && attention.kind !== 'unreadable';
   const last = imports.lastCheck;
+  if (attention && BLOCKING_KINDS.has(attention.kind)) {
+    return (
+      <Notice kind="overdue" title={IMPORT_COPY.overdueTitle}>
+        <p>{IMPORT_COPY.overdueReview}</p>
+      </Notice>
+    );
+  }
+  if (attention?.kind === 'recertification') {
+    return (
+      <Notice kind="overdue" title={IMPORT_COPY.overdueTitle}>
+        <p>{IMPORT_COPY.overdueRecertification}</p>
+      </Notice>
+    );
+  }
   return (
     <Notice kind="overdue" title={IMPORT_COPY.overdueTitle}>
-      {review ? (
-        <p>{IMPORT_COPY.overdueReview}</p>
-      ) : (
-        <>
-          <p>
-            {attention?.kind === 'unreadable' ? IMPORT_COPY.overdueUnreadable : IMPORT_COPY.overdueText}{' '}
+      <p>
+        {attention?.kind === 'unreadable' ? (
+          IMPORT_COPY.overdueUnreadable
+        ) : (
+          <>
+            {IMPORT_COPY.overdueText}{' '}
             {last ? (
               <>
                 {IMPORT_COPY.overdueLast} <Zoned iso={last.checkedAt} timeZone={timeZone} />.
@@ -151,11 +179,11 @@ function OverdueNotice({ imports, attention, timeZone }: { imports: AdminImports
             ) : (
               IMPORT_COPY.overdueNever
             )}
-          </p>
-          <p>{IMPORT_COPY.overdueHow}</p>
-          <Commands commands={[IMPORT_COPY.overdueCommand]} />
-        </>
-      )}
+          </>
+        )}
+      </p>
+      <p>{IMPORT_COPY.overdueHow}</p>
+      <Commands commands={[{ command: IMPORT_COPY.overdueCommand }]} />
     </Notice>
   );
 }
@@ -166,16 +194,17 @@ function Reached({ run }: { run: AdminImportRun }) {
   return <span data-step="">{words ?? <Missing words={IMPORT_COPY.notStarted} />}</span>;
 }
 
-/** The run's file cost (its file's total so far), or a dash for a run with no file. */
-function FileCost({ run }: { run: AdminImportRun }) {
-  return run.archiveSha256 === null ? <Missing words={IMPORT_COPY.noFile} /> : <span className="font-mono tabular-nums">{formatUsd(run.costUsd)}</span>;
+/** The run's file cost (its file's total so far), or a dash that says why there is none. */
+function FileCost({ run, view }: { run: AdminImportRun; view: ImportView }) {
+  const cost = fileCost(run, view);
+  return 'none' in cost ? <Missing words={cost.none} /> : <span className="font-mono tabular-nums">{formatUsd(cost.usd)}</span>;
 }
 
 /**
  * The recent runs as a table where the System section has room for one: the page's width on a
  * tablet, or its column beside Costs from 1280px. The mode sits under the time.
  */
-function RunsTable({ runs, imports, timeZone }: { runs: readonly AdminImportRun[]; imports: AdminImports; timeZone: string }) {
+function RunsTable({ view, timeZone }: { view: ImportView; timeZone: string }) {
   const th = 'px-2 py-1.5 text-left text-micro font-bold tracking-caps text-muted uppercase first:pl-0 last:pr-0';
   return (
     <div className="hidden overflow-x-auto sm:block lg:hidden min-[1280px]:block" data-import-runs-wrap="">
@@ -198,7 +227,7 @@ function RunsTable({ runs, imports, timeZone }: { runs: readonly AdminImportRun[
           </tr>
         </thead>
         <tbody>
-          {runs.map((run) => (
+          {view.runs.map((run) => (
             <tr key={`${run.checkedAt}-${run.mode}`} className="border-b border-hairline align-top last:border-b-0">
               <th scope="row" className="py-1.5 pr-2 text-left font-normal whitespace-nowrap text-ink">
                 {formatDateTime(run.checkedAt, timeZone)}
@@ -207,13 +236,13 @@ function RunsTable({ runs, imports, timeZone }: { runs: readonly AdminImportRun[
                 </span>
               </th>
               <td className="px-2 py-1.5 text-ink" data-outcome="">
-                {importOutcome(run, imports)}
+                {importOutcome(run, view)}
               </td>
               <td className="px-2 py-1.5 whitespace-nowrap">
                 <Reached run={run} />
               </td>
               <td className="py-1.5 pl-2 text-right">
-                <FileCost run={run} />
+                <FileCost run={run} view={view} />
               </td>
             </tr>
           ))}
@@ -224,10 +253,10 @@ function RunsTable({ runs, imports, timeZone }: { runs: readonly AdminImportRun[
 }
 
 /** On a phone, and in the column beside Costs below 1280px, each run is a block of its own, in the table's order. */
-function RunsList({ runs, imports, timeZone }: { runs: readonly AdminImportRun[]; imports: AdminImports; timeZone: string }) {
+function RunsList({ view, timeZone }: { view: ImportView; timeZone: string }) {
   return (
     <ul className="sm:hidden lg:block min-[1280px]:hidden" aria-label={IMPORT_COPY.runsCaption} data-import-runs-list="">
-      {runs.map((run) => (
+      {view.runs.map((run) => (
         <li key={`${run.checkedAt}-${run.mode}`} className="border-t border-hairline py-2 text-meta first:border-t-0 first:pt-0">
           <p className="font-bold text-ink">
             {formatDateTime(run.checkedAt, timeZone)}{' '}
@@ -236,10 +265,10 @@ function RunsList({ runs, imports, timeZone }: { runs: readonly AdminImportRun[]
             </span>
           </p>
           <p className="text-ink" data-outcome="">
-            {importOutcome(run, imports)}
+            {importOutcome(run, view)}
           </p>
           <p className="text-muted">
-            Reached: <Reached run={run} /> · file cost <FileCost run={run} />
+            Reached: <Reached run={run} /> · file cost <FileCost run={run} view={view} />
           </p>
         </li>
       ))}
@@ -248,13 +277,13 @@ function RunsList({ runs, imports, timeZone }: { runs: readonly AdminImportRun[]
 }
 
 /** A run's time and outcome, its meaning when the outcome alone does not say it, and its identifiers. */
-function RunFact({ run, imports, timeZone, withCode }: { run: AdminImportRun; imports: AdminImports; timeZone: string; withCode: boolean }) {
-  const meaning = runMeaning(run, imports);
+function RunFact({ run, view, timeZone, withCode }: { run: AdminImportRun; view: ImportView; timeZone: string; withCode: boolean }) {
+  const meaning = runMeaning(run, view);
   return (
     <>
       <Zoned iso={run.checkedAt} timeZone={timeZone} />
       <span className="block" data-outcome="">
-        {importOutcome(run, imports)}
+        {importOutcome(run, view)}
       </span>
       {meaning && <span className="block text-muted">{meaning}</span>}
       {withCode && <Id>{importCode(run)}</Id>}
@@ -263,7 +292,7 @@ function RunFact({ run, imports, timeZone, withCode }: { run: AdminImportRun; im
 }
 
 /**
- * At the head of the page, while the importer needs attention (a stop for review, an overdue check):
+ * At the head of the page, while the importer needs attention (an open review, an overdue check):
  * one line that says so and takes the reader to its notice in the System section, so the page's
  * notification cannot be missed at its foot. Nothing while all is well.
  */
@@ -292,25 +321,34 @@ export function ImportPointer({ imports }: { imports: AdminImports }) {
   );
 }
 
-export function ImportStatus({ imports, dataset, timeZone }: { imports: AdminImports; dataset: AdminOverview['system']['dataset']; timeZone: string }) {
+export function ImportStatus({
+  imports,
+  dataset,
+  environment,
+  timeZone,
+}: {
+  imports: AdminImports;
+  dataset: AdminOverview['system']['dataset'];
+  environment: ImportEnvironment;
+  timeZone: string;
+}) {
+  const view = importView(imports);
   const schedule = imports.enabled ? imports.schedule : null;
-  const attention = attentionOf(imports);
-  const runs = recentRuns(imports);
-  const latest = runs[0] ?? null;
+  const latest = view.runs[0] ?? null;
   const completed = imports.lastCheck;
   const success = imports.lastSuccessfulImport;
   return (
     <div data-imports="">
-      {attention && <AttentionNotice attention={attention} generation={dataset?.generationId ?? null} timeZone={timeZone} />}
-      {imports.overdue && <OverdueNotice imports={imports} attention={attention} timeZone={timeZone} />}
+      {view.attention && <AttentionNotice view={view} attention={view.attention} generation={dataset?.generationId ?? null} environment={environment} timeZone={timeZone} />}
+      {imports.overdue && <OverdueNotice imports={imports} attention={view.attention} timeZone={timeZone} />}
       <dl className="mb-3">
         <Fact label="Schedule">{schedule ? IMPORT_COPY.schedule(schedule.localTime, schedule.timeZone) : IMPORT_COPY.off}</Fact>
         {schedule && (
           <Fact label="Next snapshot check">{schedule.nextCheckAt ? <Zoned iso={schedule.nextCheckAt} timeZone={timeZone} /> : IMPORT_COPY.notKnown}</Fact>
         )}
         {latest && (
-          <Fact label="Latest run">
-            <RunFact run={latest} imports={imports} timeZone={timeZone} withCode />
+          <Fact label="Latest listed run">
+            <RunFact run={latest} view={view} timeZone={timeZone} withCode />
           </Fact>
         )}
         <Fact label="Last completed check">
@@ -319,7 +357,7 @@ export function ImportStatus({ imports, dataset, timeZone }: { imports: AdminImp
           ) : latest !== null && completed.checkedAt === latest.checkedAt ? (
             IMPORT_COPY.sameAsLatest
           ) : (
-            <RunFact run={completed} imports={imports} timeZone={timeZone} withCode={false} />
+            <RunFact run={completed} view={view} timeZone={timeZone} withCode={false} />
           )}
         </Fact>
         <Fact label="Last successful import">
@@ -334,13 +372,13 @@ export function ImportStatus({ imports, dataset, timeZone }: { imports: AdminImp
         </Fact>
       </dl>
       <h4 className="text-micro font-bold tracking-caps text-muted uppercase">{IMPORT_COPY.runsTitle}</h4>
-      {runs.length === 0 ? (
+      {view.runs.length === 0 ? (
         <p className="mt-1 text-meta text-muted">{IMPORT_COPY.noRuns}</p>
       ) : (
         <>
           <p className="mt-0.5 mb-1.5 text-label text-muted">{IMPORT_COPY.runsIntro(timeZone)}</p>
-          <RunsTable runs={runs} imports={imports} timeZone={timeZone} />
-          <RunsList runs={runs} imports={imports} timeZone={timeZone} />
+          <RunsTable view={view} timeZone={timeZone} />
+          <RunsList view={view} timeZone={timeZone} />
         </>
       )}
     </div>

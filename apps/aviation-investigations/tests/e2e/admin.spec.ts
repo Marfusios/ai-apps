@@ -114,6 +114,8 @@ const IMPORT_STATES = [
   ['needs_review', 'the new file differs from the current data in a way the automatic checks do not accept'],
   ['blocked', 'Blocked: an earlier run is waiting for review'],
   ['after_switch', 'The new data may already be live'],
+  ['rolled_back', 'Rolled back: the previous dataset serves again'],
+  ['recertification', 'Re-check of the serving data failed'],
   ['restore_hold', 'Paid operations after a restore'],
   ['retired', 'Automatic imports have ended'],
   ['unreadable', 'could not be read'],
@@ -133,8 +135,8 @@ for (const [width, theme] of [
   [390, 'night'],
 ] as const) {
   test(`the automatic import, state by state: a stop for review first, then the facts and the recent runs (${width}px, ${theme})`, async ({ page }) => {
-    // Ten states, each its own page load (and screenshot).
-    test.setTimeout(120_000);
+    // Twelve states, each its own page load (and screenshot).
+    test.setTimeout(150_000);
     await signIn(page, { width, theme });
     for (const [state, words] of IMPORT_STATES) {
       await page.evaluate(`sessionStorage.setItem('casebook-mock-admin-imports', '${state}')`);

@@ -1,12 +1,14 @@
 /**
  * The admin page's "Automatic import" (UI_DESIGN §4.12, Task 26): the automatic NTSB importer's
  * status from `system.imports`, in each of the mock's server-shaped states (web/mock/imports.ts) and
- * in shapes the mock never makes. A stop for review and an overdue check come first, saying what
- * they mean for the data that serves and how to resolve that kind of review; neither shows while all
- * is well. The facts tell the latest run from the last completed check (which only an unchanged or
- * published run can be). Every result, reason, step and mode is said in words: no identifier shows
- * raw outside the secondary code lines. Times are in the viewer's zone, named; the NTSB file's
- * advertised date is a date with no zone.
+ * in shapes the mock never makes. An open review and an overdue check come first, saying what they
+ * mean for the data that serves and how to resolve that kind of review with the documented commands;
+ * where the kind is not certain, a neutral notice with no command; neither shows while all is well.
+ * A rollback is suggested only for a stop at or after the publication. The facts tell the latest
+ * listed run from the last completed check (only an unchanged or published run). Every result,
+ * reason, step and mode is said in words: no identifier shows raw outside the secondary code lines
+ * and the commands. Times are in the viewer's zone, named; the NTSB file's advertised date is a date
+ * with no zone.
  */
 import { fireEvent, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
@@ -17,7 +19,7 @@ import { mockAdminOverview } from '../../web/mock/admin';
 import { MOCK_EVIDENCE_RELEASE } from '../../web/mock/evidence';
 import type { MockImportState } from '../../web/mock/imports';
 import { formatDateTime, formatDay, formatUsd, viewerTimeZone } from '../../web/src/features/admin/format';
-import { IMPORT_COPY, IMPORT_RESULT_MEANINGS, RUN_MEANINGS, importOutcome, reasonWords } from '../../web/src/features/admin/imports';
+import { IMPORT_COPY, IMPORT_RESULT_MEANINGS, RUN_MEANINGS, importOutcome, importView, reasonWords } from '../../web/src/features/admin/imports';
 import { MOCK_USER, createHandlers } from '../../web/src/mocks/handlers';
 import { ADMIN_COPY } from '../../web/src/pages/Admin';
 import { renderApp, setupMockApi } from './render-app';
@@ -27,6 +29,8 @@ const SLOW = { timeout: 5000 };
 const tz = viewerTimeZone();
 /** 08:15 in Prague, after the day's 05:30 check: a stop today leaves yesterday's check as the last completed one (under 36 hours). */
 const NOW = new Date('2026-11-01T07:15:00.000Z');
+/** The mock admin page's environment (the commands name it). */
+const ENV = '--config <importer.json> --env dev';
 
 afterEach(() => {
   server.events.removeAllListeners();
@@ -78,9 +82,13 @@ function spaced(root: Element | null): string {
 const zoned = (iso: string): string => `${formatDateTime(iso, tz)} (${tz})`;
 const notice = (block: HTMLElement, kind: 'attention' | 'overdue'): HTMLElement | null => block.querySelector(`[data-import-notice="${kind}"]`);
 const pointer = (): HTMLElement | null => document.querySelector('[data-import-pointer]');
+/** The commands a notice shows, as they copy, each with its note. */
+const commandsOf = (el: Element | null): string[] => [...(el?.querySelectorAll('[data-import-commands] > div') ?? [])].map((c) => spaced(c));
 const IDENTIFIERS = new Set<string>([...IMPORT_RESULTS, ...IMPORT_REASONS, ...IMPORT_STEPS, 'automatic', 'forced_dev']);
+const DRY_RUN = IMPORT_COPY.dryRun;
+const REBASELINE = `pnpm importer rebaseline ${ENV} --publication-sha256 <current-publication-sha256> ${DRY_RUN}`;
 
-/** No identifier shows outside the code lines: no word with an underscore, and no outcome, step or mode that is an identifier or not in sentence case. */
+/** No identifier shows outside the code lines and the commands: no word with an underscore, and no outcome, step or mode that is an identifier or not in sentence case. */
 function noRawIdentifiers(block: HTMLElement): void {
   const copy = block.cloneNode(true) as HTMLElement;
   for (const code of copy.querySelectorAll('[data-code], [data-import-commands]')) code.remove();
@@ -88,7 +96,7 @@ function noRawIdentifiers(block: HTMLElement): void {
   for (const el of block.querySelectorAll('[data-outcome], [data-step], [data-mode]')) {
     const value = text(el);
     expect(IDENTIFIERS.has(value), value).toBe(false);
-    expect(value, el.getAttribute('data-outcome') ?? '').toMatch(/^([A-Z]|—)/);
+    expect(value).toMatch(/^([A-Z]|—)/);
   }
 }
 
@@ -111,7 +119,7 @@ describe('the automatic import, state by state', { timeout: 20_000 }, () => {
     expect(text(fact(block, 'Schedule'))).toBe('Daily at 05:30, Europe/Prague');
     expect(spaced(fact(block, 'Next snapshot check'))).toBe(zoned(imports.schedule?.nextCheckAt as string));
     const latest = imports.recentRuns[0] as AdminImportRun;
-    expect(spaced(fact(block, 'Latest run'))).toBe(`${zoned(latest.checkedAt)} No new file (NTSB still lists the 16 Oct 2026 file) unchanged · metadata_unchanged`);
+    expect(spaced(fact(block, 'Latest listed run'))).toBe(`${zoned(latest.checkedAt)} No new file (NTSB still lists the 16 Oct 2026 file) unchanged · metadata_unchanged`);
     expect(text(fact(block, 'Last completed check'))).toBe(IMPORT_COPY.sameAsLatest);
     const success = imports.lastSuccessfulImport as AdminImportRun;
     expect(spaced(fact(block, 'Last successful import'))).toBe(`${zoned(success.finishedAt as string)} NTSB file of 16 Oct 2026 · generation 7 · cost ${formatUsd(success.costUsd)}`);
@@ -121,26 +129,25 @@ describe('the automatic import, state by state', { timeout: 20_000 }, () => {
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Checked', 'Result', 'Reached', 'File cost']);
     const rows = tableRows(block);
     expect(rows).toHaveLength(imports.recentRuns.length);
-    expect(rows[0]).toEqual([`${formatDateTime(latest.checkedAt, tz)} Automatic`, 'No new file (NTSB still lists the 16 Oct 2026 file)', 'Complete', '$0.00']);
-    expect(rows[2]?.[1]).toBe('File re-downloaded: identical');
-    // A run refused before it started reached no step and had no file: a dash, which screen readers hear as words.
-    expect(rows[3]).toEqual([`${formatDateTime(imports.recentRuns[3]?.checkedAt as string, tz)} Automatic`, 'Postponed: another import or a backup was running', `—${IMPORT_COPY.notStarted}`, `—${IMPORT_COPY.noFile}`]);
-    const refused = within(within(block).getByRole('table', { name: IMPORT_COPY.runsCaption })).getAllByRole('row')[4] as HTMLElement;
-    expect([...refused.querySelectorAll('[aria-hidden="true"]')].map((dash) => dash.textContent)).toEqual(['—', '—']);
-    expect(rows[5]?.[1]).toBe('Imported generation 7');
+    // A check that found nothing new did no work on the file: no file cost.
+    expect(rows[0]).toEqual([`${formatDateTime(latest.checkedAt, tz)} Automatic`, 'No new file (NTSB still lists the 16 Oct 2026 file)', 'Complete', `—${IMPORT_COPY.noWork}`]);
+    expect(rows[2]?.slice(1)).toEqual(['File re-downloaded: identical', 'Complete', `—${IMPORT_COPY.noWork}`]);
+    // A run refused before it started reached no step and had no file: dashes, which screen readers hear as words.
+    expect(rows[3]?.slice(1)).toEqual(['Postponed: another import or a backup was running', `—${IMPORT_COPY.notStarted}`, `—${IMPORT_COPY.noFile}`]);
+    expect(rows[5]?.slice(1)).toEqual(['Imported generation 7', 'Complete', formatUsd(success.costUsd)]);
     const list = within(block).getByRole('list', { name: IMPORT_COPY.runsCaption });
     const items = within(list).getAllByRole('listitem');
     expect(items).toHaveLength(imports.recentRuns.length);
-    expect(spaced(items[0] ?? null)).toBe(`${formatDateTime(latest.checkedAt, tz)} · Automatic No new file (NTSB still lists the 16 Oct 2026 file) Reached: Complete · file cost $0.00`);
+    expect(spaced(items[0] ?? null)).toBe(`${formatDateTime(latest.checkedAt, tz)} · Automatic No new file (NTSB still lists the 16 Oct 2026 file) Reached: Complete · file cost —${IMPORT_COPY.noWork}`);
     noRawIdentifiers(block);
   });
 
-  it('published today: the latest run imported generation 8, the last successful import with its file, generation and cost', async () => {
+  it('published today: the latest listed run imported generation 8, the last successful import with its file, generation and cost', async () => {
     const o = serve('published');
     const run = o.system.imports.lastCheck as AdminImportRun;
     const block = await openImports();
     expect(block.querySelector('[data-import-notice]')).toBeNull();
-    expect(spaced(fact(block, 'Latest run'))).toBe(`${zoned(run.checkedAt)} Imported generation 8 published`);
+    expect(spaced(fact(block, 'Latest listed run'))).toBe(`${zoned(run.checkedAt)} Imported generation 8 published`);
     expect(text(fact(block, 'Last completed check'))).toBe(IMPORT_COPY.sameAsLatest);
     const file = formatDate(run.source?.advertisedAtLocal.slice(0, 10) ?? null);
     expect(spaced(fact(block, 'Last successful import'))).toBe(`${zoned(run.finishedAt as string)} NTSB file of ${file} · generation 8 · cost ${formatUsd(run.costUsd)}`);
@@ -148,7 +155,7 @@ describe('the automatic import, state by state', { timeout: 20_000 }, () => {
     noRawIdentifiers(block);
   });
 
-  it('needs review: the notice first, with the stopped run’s date and reason, what serves, and how to resolve a comparison review; the last completed check is the run before', async () => {
+  it('needs review: the notice first, with the stopped run’s date and reason, what serves, and how to resolve a comparison review with its commands and options', async () => {
     const o = serve('needs_review');
     const stopped = o.system.imports.recentRuns[0] as AdminImportRun;
     const block = await openImports();
@@ -159,20 +166,21 @@ describe('the automatic import, state by state', { timeout: 20_000 }, () => {
     expect(spaced(attention)).toBe(
       `${IMPORT_COPY.attentionTitle} On ${formatDay(stopped.checkedAt, tz)}, a run stopped for review: the new file differs from the current data in a way the automatic checks do not accept. ` +
         'Nothing new is imported until it is resolved; the site keeps serving generation 7, the dataset above. ' +
-        'needs_review · cohort_bounds ' +
-        `${IMPORT_COPY.how.comparison} pnpm importer approve pnpm importer rebaseline`,
+        `needs_review · cohort_bounds ${IMPORT_COPY.how.comparison} ${commandsOf(attention).join(' ')}`,
     );
+    expect(commandsOf(attention)).toEqual([`pnpm importer approve ${ENV} --artifact <archive-sha256> --approval <approval.json>`, `pnpm importer run ${ENV}`, REBASELINE]);
     expect(notice(block, 'overdue')).toBeNull();
     // At the head of the page, one line says so and takes the reader to the notice.
     expect(spaced(pointer())).toBe(IMPORT_COPY.pointerAttention);
     fireEvent.click(within(pointer() as HTMLElement).getByRole('link', { name: IMPORT_COPY.pointerAttention }));
     expect(document.activeElement).toBe(attention);
-    // The facts: the latest run is the stop; the last completed check is the quiet one before it.
-    expect(spaced(fact(block, 'Latest run'))).toBe(
+    // The facts: the latest listed run is the stop; the last completed check is the quiet one before it.
+    expect(spaced(fact(block, 'Latest listed run'))).toBe(
       `${zoned(stopped.checkedAt)} Stopped for review: the new file differs from the current data in a way the automatic checks do not accept ${IMPORT_RESULT_MEANINGS.needs_review} needs_review · cohort_bounds`,
     );
     const previous = o.system.imports.lastCheck as AdminImportRun;
     expect(spaced(fact(block, 'Last completed check'))).toBe(`${zoned(previous.checkedAt)} No new file (NTSB still lists the 16 Oct 2026 file)`);
+    // The stopped file's total so far.
     expect(tableRows(block)[0]?.slice(2)).toEqual(['Extraction', '$0.00']);
     noRawIdentifiers(block);
   });
@@ -184,62 +192,102 @@ describe('the automatic import, state by state', { timeout: 20_000 }, () => {
     expect(spaced(notice(block, 'attention'))).toContain(`On ${formatDay(stopped.checkedAt, tz)}, a run stopped for review: the new file differs`);
     expect(spaced(notice(block, 'overdue'))).toBe(`${IMPORT_COPY.overdueTitle} ${IMPORT_COPY.overdueReview}`);
     expect(spaced(pointer())).toBe(`${IMPORT_COPY.pointerAttention} ${IMPORT_COPY.pointerOverdue}`);
-    expect(spaced(fact(block, 'Latest run'))).toContain(`Blocked: an earlier run is waiting for review ${RUN_MEANINGS.blocked} deferred · cohort_bounds`);
+    expect(spaced(fact(block, 'Latest listed run'))).toContain(`Blocked: an earlier run is waiting for review ${RUN_MEANINGS.blocked} deferred · cohort_bounds`);
     const rows = tableRows(block);
     expect(rows.slice(0, 3).map((r) => r.slice(1))).toEqual(Array.from({ length: 3 }, () => ['Blocked: an earlier run is waiting for review', 'Source check', '$0.00']));
     expect(rows[3]?.[1]).toBe('Stopped for review: the new file differs from the current data in a way the automatic checks do not accept');
     noRawIdentifiers(block);
   });
 
-  it('after the switch: the new data may already be live, the probe blames the live site, and the way back is a rollback', async () => {
+  it('after the switch: the new data may already be live, the probe blames the live site, and the importer clears it only by a rollback, then rebaseline', async () => {
     const o = serve('after_switch');
     const stopped = o.system.imports.recentRuns[0] as AdminImportRun;
     const block = await openImports();
-    expect(spaced(notice(block, 'attention'))).toBe(
-      `${IMPORT_COPY.attentionTitle} On ${formatDay(stopped.checkedAt, tz)}, a run stopped after the switch to the new data: the live site did not pass its checks after the switch. ` +
-        'The new data may already be live: the site serves generation 8, the dataset above. An operator should check it and roll it back if needed. ' +
-        'needs_review · probe ' +
-        `${IMPORT_COPY.how.after_switch} pnpm importer rollback pnpm importer rebaseline`,
+    const attention = notice(block, 'attention') as HTMLElement;
+    expect(spaced(attention)).toBe(
+      `${IMPORT_COPY.attentionTitle} On ${formatDay(stopped.checkedAt, tz)}, a run stopped after the switch to the new data: the live site did not pass its checks. ` +
+        'The new data may already be live: the site serves generation 8, the dataset above. ' +
+        `needs_review · probe ${IMPORT_COPY.how.after_switch} ${commandsOf(attention).join(' ')}`,
     );
-    expect(spaced(notice(block, 'attention'))).not.toContain('Nothing new is imported');
-    expect(spaced(fact(block, 'Latest run'))).toContain(RUN_MEANINGS.stoppedAfterSwitch);
-    expect(tableRows(block)[0]?.slice(1, 3)).toEqual(['Stopped for review: the live site did not pass its checks after the switch', 'Site checks']);
+    expect(commandsOf(attention)).toEqual([`pnpm importer rollback ${ENV} --artifact <archive-sha256> --publication-sha256 <publication-sha256>`, REBASELINE]);
+    expect(spaced(attention)).not.toContain('Nothing new is imported');
+    expect(spaced(fact(block, 'Latest listed run'))).toContain(RUN_MEANINGS.stoppedAfterSwitch);
+    expect(tableRows(block)[0]?.slice(1, 3)).toEqual(['Stopped for review: the live site did not pass its checks', 'Site checks']);
     noRawIdentifiers(block);
   });
 
-  it('a restore hold points to the RUNBOOK, with no importer command; the overdue notice says the runs wait for it', async () => {
+  it('rolled back: the review stays open until the data that serves is adopted with rebaseline; no second rollback', async () => {
+    const o = serve('rolled_back');
+    const rolled = o.system.imports.recentRuns[1] as AdminImportRun;
+    const block = await openImports();
+    const attention = notice(block, 'attention') as HTMLElement;
+    expect(spaced(attention)).toBe(
+      `${IMPORT_COPY.attentionTitle} ${IMPORT_COPY.rolledBack(formatDay(rolled.checkedAt, tz))} rolled_back · probe ${IMPORT_COPY.how.rolled_back} ${REBASELINE}`,
+    );
+    expect(commandsOf(attention)).toEqual([REBASELINE]);
+    expect(tableRows(block)[0]?.[1]).toBe('Blocked: an earlier run is waiting for review');
+    expect(tableRows(block)[1]?.[1]).toBe('Rolled back: the previous dataset serves again');
+    noRawIdentifiers(block);
+  });
+
+  it('a failed re-check of the serving data: nothing changed, fix the cause and re-certify; never blocked, waiting or a rollback', async () => {
+    const o = serve('recertification');
+    const failed = o.system.imports.recentRuns[0] as AdminImportRun;
+    const block = await openImports();
+    const attention = notice(block, 'attention') as HTMLElement;
+    expect(spaced(attention)).toBe(
+      `${IMPORT_COPY.attentionTitle} On ${formatDay(failed.checkedAt, tz)}, the re-check of the serving data failed: the live site did not pass its checks. ` +
+        `Nothing changed on the site: it keeps serving generation 7, the dataset above. deferred · probe ${IMPORT_COPY.how.recertification} pnpm importer recertify ${ENV}`,
+    );
+    expect(commandsOf(attention)).toEqual([`pnpm importer recertify ${ENV}`]);
+    expect(spaced(notice(block, 'overdue'))).toBe(`${IMPORT_COPY.overdueTitle} ${IMPORT_COPY.overdueRecertification}`);
+    const all = spaced(block);
+    for (const wrong of ['rollback', 'Blocked', 'waiting', 'wait for the open review', 'may already be live']) expect(all, wrong).not.toContain(wrong);
+    expect(spaced(fact(block, 'Latest listed run'))).toContain(`Re-check of the serving data failed: the live site did not pass its checks ${RUN_MEANINGS.recertification}`);
+    // The re-check did no work on a file.
+    expect(tableRows(block)[0]?.slice(1)).toEqual(['Re-check of the serving data failed: the live site did not pass its checks', 'Site checks', `—${IMPORT_COPY.noWork}`]);
+    noRawIdentifiers(block);
+  });
+
+  it('a restore hold: the RUNBOOK and IMPORTER.md’s own words, and no importer command', async () => {
     serve('restore_hold');
     const block = await openImports();
-    const attention = spaced(notice(block, 'attention'));
-    expect(attention).toContain('a run stopped for review: a database restore is waiting for review. Nothing new is imported until it is resolved; the site keeps serving generation 7, the dataset above.');
-    expect(attention.endsWith(IMPORT_COPY.how.restore)).toBe(true);
-    expect(notice(block, 'attention')?.querySelector('[data-import-commands]')).toBeNull();
+    const attention = notice(block, 'attention') as HTMLElement;
+    expect(spaced(attention)).toContain('a run stopped for review: a database restore is waiting for review. Nothing new is imported until it is resolved; the site keeps serving generation 7, the dataset above.');
+    expect(spaced(attention).endsWith(IMPORT_COPY.how.restore)).toBe(true);
+    expect(attention.querySelector('[data-import-commands]')).toBeNull();
     expect(spaced(notice(block, 'overdue'))).toBe(`${IMPORT_COPY.overdueTitle} ${IMPORT_COPY.overdueReview}`);
     noRawIdentifiers(block);
   });
 
-  it('the retired source: automatic imports have ended; turn the daily check off and acknowledge the stopped run', async () => {
+  it('the retired source: automatic imports have ended; turn the daily check off, stop the service, set the intent false and deploy, then acknowledge', async () => {
     serve('retired');
     const block = await openImports();
-    const attention = spaced(notice(block, 'attention'));
-    expect(attention).toContain('a run stopped for review: the NTSB download the importer uses has been retired. Automatic imports have ended; the site keeps serving generation 7, the dataset above.');
-    expect(attention).toContain(`${IMPORT_COPY.how.retired} systemctl --user disable --now aircase-importer.timer pnpm importer acknowledge-preartifact`);
+    const attention = notice(block, 'attention') as HTMLElement;
+    expect(spaced(attention)).toContain('a run stopped for review: the NTSB download the importer uses has been retired. Automatic imports have ended; the site keeps serving generation 7, the dataset above.');
+    expect(spaced(attention)).toContain(IMPORT_COPY.how.retired);
+    expect(commandsOf(attention)).toEqual([
+      'systemctl --user disable --now aircase-importer.timer',
+      'systemctl --user stop aircase-importer.service',
+      `pnpm importer acknowledge-preartifact ${ENV} --run <run-uuid> --evidence-sha256 <evidence-sha256> ${DRY_RUN}`,
+    ]);
     noRawIdentifiers(block);
   });
 
-  it('an unreadable status: both notices say the status could not be read, and nothing claims a check or a review', async () => {
+  it('an unreadable status: both notices hedge, and nothing claims a check or a review', async () => {
     serve('unreadable');
     const block = await openImports();
     expect(spaced(notice(block, 'attention'))).toBe(`${IMPORT_COPY.attentionTitle} ${IMPORT_COPY.unreadable} ${IMPORT_COPY.how.unreadable}`);
-    expect(spaced(notice(block, 'overdue'))).toBe(`${IMPORT_COPY.overdueTitle} ${IMPORT_COPY.overdueUnreadable} ${IMPORT_COPY.overdueNever} ${IMPORT_COPY.overdueHow} ${IMPORT_COPY.overdueCommand}`);
-    expect(fact(block, 'Latest run')).toBeNull();
+    expect(spaced(notice(block, 'overdue'))).toBe(`${IMPORT_COPY.overdueTitle} ${IMPORT_COPY.overdueUnreadable} ${IMPORT_COPY.overdueHow} ${IMPORT_COPY.overdueCommand}`);
+    expect(spaced(block)).not.toContain(IMPORT_COPY.overdueNever);
+    expect(fact(block, 'Latest listed run')).toBeNull();
     expect(text(fact(block, 'Last completed check'))).toBe(IMPORT_COPY.noneYet);
     expect(text(fact(block, 'Last successful import'))).toBe(IMPORT_COPY.noneYet);
     expect(block.textContent).toContain(IMPORT_COPY.noRuns);
     noRawIdentifiers(block);
   });
 
-  it('overdue: no completed check for over 36 hours, when the last one was, and where to look; the latest run failed', async () => {
+  it('overdue: no completed check for over 36 hours, when the last one was, and where to look; the latest listed run failed', async () => {
     const o = serve('overdue');
     const imports = o.system.imports;
     const block = await openImports();
@@ -255,7 +303,7 @@ describe('the automatic import, state by state', { timeout: 20_000 }, () => {
     expect(notice(block, 'attention')).toBeNull();
     fireEvent.click(within(pointer() as HTMLElement).getByRole('link', { name: IMPORT_COPY.pointerOverdue }));
     expect(document.activeElement).toBe(overdue);
-    expect(spaced(fact(block, 'Latest run'))).toContain(`Failed: it stopped unexpectedly ${IMPORT_RESULT_MEANINGS.failed}`);
+    expect(spaced(fact(block, 'Latest listed run'))).toContain(`Failed: it stopped unexpectedly ${IMPORT_RESULT_MEANINGS.failed}`);
     expect(tableRows(block)[1]?.slice(1, 3)).toEqual(['Postponed: NTSB or the app could not be reached', 'Source check']);
     noRawIdentifiers(block);
   });
@@ -267,7 +315,7 @@ describe('the automatic import, state by state', { timeout: 20_000 }, () => {
     expect(pointer()).toBeNull();
     expect(text(fact(block, 'Schedule'))).toBe(IMPORT_COPY.off);
     expect(fact(block, 'Next snapshot check')).toBeNull();
-    expect(fact(block, 'Latest run')).toBeNull();
+    expect(fact(block, 'Latest listed run')).toBeNull();
     expect(text(fact(block, 'Last completed check'))).toBe(IMPORT_COPY.noneYet);
     expect(text(fact(block, 'Last successful import'))).toBe(IMPORT_COPY.noneYet);
     expect(block.textContent).toContain(IMPORT_COPY.noRuns);
@@ -276,9 +324,13 @@ describe('the automatic import, state by state', { timeout: 20_000 }, () => {
   });
 });
 
-describe('shapes the mock never makes', { timeout: 20_000 }, () => {
-  it('a review resolved days ago does not explain a later open review (a restore latch): the notice says no listed run explains it', async () => {
-    serve(
+describe('when the kind is not certain: a neutral notice, the latest listed run, no command', { timeout: 20_000 }, () => {
+  /** The neutral notice's text, for the latest listed run `latest`. */
+  const neutral = (latest: AdminImportRun, outcome: string): string =>
+    `${IMPORT_COPY.attentionTitle} ${IMPORT_COPY.neutral} ${IMPORT_COPY.neutralLatest(formatDay(latest.checkedAt, tz), outcome)}`;
+
+  it('a review resolved days ago does not explain a later open review (a restore latch)', async () => {
+    const o = serve(
       'healthy',
       withImports((imports) => {
         const runs = [...imports.recentRuns];
@@ -288,16 +340,56 @@ describe('shapes the mock never makes', { timeout: 20_000 }, () => {
     );
     const block = await openImports();
     const attention = notice(block, 'attention') as HTMLElement;
-    expect(spaced(attention)).toBe(`${IMPORT_COPY.attentionTitle} ${IMPORT_COPY.unexplained} ${IMPORT_COPY.how.unexplained}`);
-    expect(attention.querySelector('[data-code]')).toBeNull();
+    const latest = o.system.imports.recentRuns[0] as AdminImportRun;
+    expect(spaced(attention)).toBe(`${neutral(latest, 'No new file (NTSB still lists the 16 Oct 2026 file)')} unchanged · metadata_unchanged ${IMPORT_COPY.how.neutral}`);
+    expect(attention.querySelector('[data-import-commands]')).toBeNull();
   });
 
-  it('a stopped run no longer listed: the runs it blocks name its review', async () => {
-    serve('blocked', withImports((imports) => ({ ...imports, recentRuns: imports.recentRuns.slice(0, 3) })));
+  it('a stop that has left the list: the runs it blocked read as postponed, and no kind is guessed from them (a post-switch stop must not read as safe)', async () => {
+    const o = serve('after_switch', withImports((imports) => {
+      // Twenty days later: only the blocked runs are listed, at the source check.
+      const stopped = imports.recentRuns[0] as AdminImportRun;
+      const blocked = Array.from({ length: 20 }, (_, i): AdminImportRun => ({ ...stopped, checkedAt: new Date(Date.parse(stopped.checkedAt) + (20 - i) * 86_400_000).toISOString(), finishedAt: null, result: 'deferred', step: 'check', source: null }));
+      return { ...imports, overdue: true, recentRuns: blocked };
+    }));
     const block = await openImports();
-    expect(spaced(notice(block, 'attention'))).toContain(
-      'Daily runs are waiting for an earlier review: the new file differs from the current data in a way the automatic checks do not accept. Nothing new is imported until it is resolved',
-    );
+    const attention = notice(block, 'attention') as HTMLElement;
+    const latest = o.system.imports.recentRuns[0] as AdminImportRun;
+    expect(spaced(attention)).toBe(`${neutral(latest, 'Postponed: the new search indexes did not pass their checks')} deferred · probe ${IMPORT_COPY.how.neutral}`);
+    expect(attention.querySelector('[data-import-commands]')).toBeNull();
+    for (const claim of ['Nothing new is imported', 'keeps serving', 'may already be live']) expect(spaced(attention)).not.toContain(claim);
+    // The overdue notice gives the plain facts, not a cause.
+    expect(spaced(notice(block, 'overdue'))).toContain(IMPORT_COPY.overdueText);
+  });
+
+  it('a stop on the cost records (after a restore, or a file’s 89 days): not one remedy, so neutral', async () => {
+    serve('needs_review', withImports((imports) => ({ ...imports, recentRuns: [{ ...(imports.recentRuns[0] as AdminImportRun), reason: 'accounting', step: 'plan' }, ...imports.recentRuns.slice(1)] })));
+    const block = await openImports();
+    const attention = notice(block, 'attention') as HTMLElement;
+    expect(spaced(attention)).toContain(`${IMPORT_COPY.neutral} The latest listed run`);
+    expect(spaced(attention)).toContain('Stopped for review: its cost records need reconciling');
+    expect(attention.querySelector('[data-import-commands]')).toBeNull();
+  });
+
+  it('a candidate waiting for a failed dev check (a temporary reason, on a new file) is no re-check and no stop: neutral', async () => {
+    serve('healthy', withImports((imports) => {
+      const latest = imports.recentRuns[0] as AdminImportRun;
+      const waiting: AdminImportRun = { ...latest, checkedAt: new Date(Date.parse(latest.checkedAt) + 60_000).toISOString(), result: 'deferred', reason: 'dev_failed', step: 'check', archiveSha256: 'b'.repeat(64) };
+      return { ...imports, attentionRequired: true, recentRuns: [waiting, ...imports.recentRuns.slice(0, 19)] };
+    }));
+    const block = await openImports();
+    expect(spaced(notice(block, 'attention'))).toContain(`${IMPORT_COPY.neutral} The latest listed run`);
+    expect(spaced(notice(block, 'attention'))).toContain('Postponed: the dev check failed');
+  });
+});
+
+describe('shapes the mock never makes', { timeout: 20_000 }, () => {
+  it('a failed re-check of the serving data at the source check, with a review-class reason: still a re-check, not a blocked review', async () => {
+    serve('recertification', withImports((imports) => ({ ...imports, overdue: false, recentRuns: imports.recentRuns.map((r, i) => (i < 2 ? { ...r, step: 'check' } : r)) })));
+    const block = await openImports();
+    const attention = notice(block, 'attention') as HTMLElement;
+    expect(spaced(attention)).toContain('the re-check of the serving data failed: the new search indexes did not pass their checks. Nothing changed on the site');
+    expect(commandsOf(attention)).toEqual([`pnpm importer recertify ${ENV}`]);
   });
 
   it('with no dataset loaded, the notice names no generation', async () => {
@@ -306,11 +398,16 @@ describe('shapes the mock never makes', { timeout: 20_000 }, () => {
     expect(spaced(notice(block, 'attention'))).toContain('accept. Nothing new is imported until it is resolved. needs_review');
   });
 
+  it('the live page names its own environment in the commands', async () => {
+    serve('needs_review', (o) => ({ ...o, system: { ...o.system, appEnv: 'live' } }));
+    const block = await openImports();
+    expect(commandsOf(notice(block, 'attention'))[1]).toBe('pnpm importer run --config <importer.json> --env live');
+  });
+
   it.each([
-    ['a stop before any file (a setup failure)', { result: 'needs_review', reason: 'configuration', step: 'check', archiveSha256: null }, 'preartifact', ['pnpm importer acknowledge-preartifact', 'pnpm importer rebaseline']],
-    ['a review of a downloaded file that no exception can accept', { result: 'needs_review', reason: 'integrity', step: 'load' }, 'candidate', ['pnpm importer rebaseline']],
-    ['a stop with the cost records to reconcile', { result: 'needs_review', reason: 'accounting', step: 'plan' }, 'restore', []],
-    ['a switch that may not have finished', { result: 'needs_review', reason: 'alias_unknown', step: 'publish' }, 'after_switch', ['pnpm importer rollback', 'pnpm importer rebaseline']],
+    ['a stop before any file (a setup failure)', { result: 'needs_review', reason: 'configuration', step: 'check', archiveSha256: null }, 'preartifact', [`pnpm importer acknowledge-preartifact ${ENV} --run <run-uuid> --evidence-sha256 <evidence-sha256> ${DRY_RUN}`, REBASELINE]],
+    ['a review of a downloaded file that no exception can accept', { result: 'needs_review', reason: 'integrity', step: 'load' }, 'candidate', [REBASELINE]],
+    ['a switch that may not have finished', { result: 'needs_review', reason: 'alias_unknown', step: 'publish' }, 'after_switch', [`pnpm importer rollback ${ENV} --artifact <archive-sha256> --publication-sha256 <publication-sha256>`, REBASELINE]],
   ] as const)('%s: its own way to resolve it', async (_name, change, kind, commands) => {
     serve(
       'needs_review',
@@ -319,7 +416,7 @@ describe('shapes the mock never makes', { timeout: 20_000 }, () => {
     const block = await openImports();
     const attention = notice(block, 'attention') as HTMLElement;
     expect(spaced(attention)).toContain(IMPORT_COPY.how[kind]);
-    expect([...attention.querySelectorAll('[data-import-commands] code')].map((c) => spaced(c))).toEqual(commands);
+    expect(commandsOf(attention)).toEqual(commands);
   });
 
   it('both notices at once, attention first; enabled without a schedule is off; a running forced dev run', async () => {
@@ -359,8 +456,8 @@ describe('how a run is said, word for word (the owner-review copy, UI_DESIGN §1
     reason: 'metadata_unchanged',
     costUsd: 0,
   };
-  const calm = mockAdminOverview({ now: NOW, evidence: MOCK_EVIDENCE_RELEASE, ratings: { useful: 0, notUseful: 0 }, admin: MOCK_USER, imports: 'healthy' }).system.imports;
-  const reviewing = { ...calm, attentionRequired: true };
+  const calm = importView(mockAdminOverview({ now: NOW, evidence: MOCK_EVIDENCE_RELEASE, ratings: { useful: 0, notUseful: 0 }, admin: MOCK_USER, imports: 'healthy' }).system.imports);
+  const blocked = importView(mockAdminOverview({ now: NOW, evidence: MOCK_EVIDENCE_RELEASE, ratings: { useful: 0, notUseful: 0 }, admin: MOCK_USER, imports: 'blocked' }).system.imports);
 
   it('the brief’s outcomes, the advertised date as NTSB gives it (no zone)', () => {
     expect(importOutcome(run, calm)).toBe('No new file (NTSB still lists the 1 Oct 2026 file)');
@@ -370,13 +467,14 @@ describe('how a run is said, word for word (the owner-review copy, UI_DESIGN §1
     expect(importOutcome({ ...run, reason: null }, calm)).toBe('No change');
     expect(importOutcome({ ...run, result: 'published', reason: null, generationId: 8 }, calm)).toBe('Imported generation 8');
     expect(importOutcome({ ...run, result: 'published', reason: null }, calm)).toBe('Imported a new snapshot');
-    expect(importOutcome({ ...run, result: 'deferred', reason: 'busy', step: 'check' }, calm)).toBe('Postponed: another import or a backup was running');
-    expect(importOutcome({ ...run, result: 'deferred', reason: 'backup_window', step: 'check' }, calm)).toBe('Postponed: it was the nightly backup window');
-    expect(importOutcome({ ...run, result: 'deferred', reason: 'cohort_bounds', step: 'check' }, reviewing)).toBe('Blocked: an earlier run is waiting for review');
+    expect(importOutcome({ ...run, result: 'deferred', reason: 'busy', step: 'check', archiveSha256: null }, calm)).toBe('Postponed: another import or a backup was running');
+    expect(importOutcome({ ...run, result: 'deferred', reason: 'backup_window', step: 'check', archiveSha256: null }, calm)).toBe('Postponed: it was the nightly backup window');
+    expect(importOutcome(blocked.runs[0] as AdminImportRun, blocked)).toBe('Blocked: an earlier run is waiting for review');
+    expect(importOutcome({ ...run, result: 'deferred', reason: 'probe', step: 'canary', archiveSha256: calm.serving }, calm)).toBe('Re-check of the serving data failed: the live site did not pass its checks');
     expect(importOutcome({ ...run, result: 'skipped_dev_failed', reason: 'dev_failed', step: 'check' }, calm)).toBe('Live skipped: the dev check failed');
     expect(importOutcome({ ...run, result: 'needs_review', reason: 'interrupted', step: 'extract' }, calm)).toBe('Stopped for review: it stopped unexpectedly too many times');
     expect(importOutcome({ ...run, result: 'needs_review', reason: 'probe', step: 'validate' }, calm)).toBe('Stopped for review: the new search indexes did not pass their checks');
-    expect(importOutcome({ ...run, result: 'needs_review', reason: 'probe', step: 'canary' }, calm)).toBe('Stopped for review: the live site did not pass its checks after the switch');
+    expect(importOutcome({ ...run, result: 'needs_review', reason: 'probe', step: 'canary' }, calm)).toBe('Stopped for review: the live site did not pass its checks');
     expect(importOutcome({ ...run, result: 'failed', reason: 'interrupted' }, calm)).toBe('Failed: it stopped unexpectedly');
     expect(importOutcome({ ...run, result: 'cancelled', reason: 'lock_lost' }, calm)).toBe('Cancelled: it lost the lock that lets one run work at a time');
     expect(importOutcome({ ...run, result: 'rolled_back', reason: null }, calm)).toBe('Rolled back: the previous dataset serves again');

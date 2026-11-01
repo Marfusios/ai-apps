@@ -16,6 +16,10 @@
  * - `blocked`: that stop three checks ago, and every daily run since blocked by it (overdue too);
  * - `after_switch`: today's run published generation 8, which now serves, then failed the live site's
  *   checks (`probe`, at the site checks);
+ * - `rolled_back`: that run, rolled back by an operator (generation 7 serves again), the review open
+ *   until the data that serves is adopted;
+ * - `recertification`: the daily re-check of the serving data (a dev cycle's re-certification) has
+ *   failed at the site checks for two days: postponed, on the serving file; nothing changed;
  * - `restore_hold`: a database restore latched the importer two checks ago;
  * - `retired`: NTSB's download is retired (from 5 Apr 2027): the first stop, then blocked runs;
  * - `unreadable`: what the server sends when it cannot read the status: attention, no runs;
@@ -28,7 +32,20 @@
 import type { AdminImportRun, AdminImports, AdminOverview } from '../../shared/contracts/admin.js';
 import config from './config.json' with { type: 'json' };
 
-export const MOCK_IMPORT_STATES = ['healthy', 'published', 'needs_review', 'blocked', 'after_switch', 'restore_hold', 'retired', 'unreadable', 'overdue', 'disabled'] as const;
+export const MOCK_IMPORT_STATES = [
+  'healthy',
+  'published',
+  'needs_review',
+  'blocked',
+  'after_switch',
+  'rolled_back',
+  'recertification',
+  'restore_hold',
+  'retired',
+  'unreadable',
+  'overdue',
+  'disabled',
+] as const;
 export type MockImportState = (typeof MOCK_IMPORT_STATES)[number];
 
 const TIME_ZONE = 'Europe/Prague';
@@ -68,14 +85,13 @@ function nextCheck(now: number): number {
 
 const iso = (t: number): string => new Date(t).toISOString();
 
-/** A made-up SHA-256 digest from a seed (64 hex characters). */
+/** A made-up SHA-256 digest from a seed (64 hex characters): every character of the seed counts (FNV-1a, salted per group). */
 function digest(seed: string): string {
   let out = '';
-  for (let i = 0; out.length < 64; i++) {
-    const x = Math.sin((seed.charCodeAt(i % seed.length) + i) * 12.9898) * 43_758.5453;
-    out += Math.floor((x - Math.floor(x)) * 0xffffffff)
-      .toString(16)
-      .padStart(8, '0');
+  for (let group = 0; out.length < 64; group++) {
+    let h = (2_166_136_261 ^ group) >>> 0;
+    for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16_777_619) >>> 0;
+    out += h.toString(16).padStart(8, '0');
   }
   return out.slice(0, 64);
 }
@@ -199,6 +215,19 @@ export function mockImports(state: MockImportState, now: Date): MockImports {
       const stopped = run({ at: latest, minutes: 24, result: 'needs_review', reason: 'probe', step: 'canary', source: file, archive: digest(file.advertisedAtLocal), generationId: 8, costUsd: 0.1873 });
       const runs = [stopped, ...history(checks, 1, 5)];
       return { imports: imports(runs, true), dataset: servedBy(stopped) };
+    }
+    case 'rolled_back': {
+      const file = newerFile(checks[1] as number, 105_120_448);
+      // Yesterday's publication failed the site checks and was rolled back: the run says so, generation 7 serves again.
+      const rolledBack = run({ at: checks[1] as number, minutes: 24, result: 'rolled_back', reason: 'probe', step: 'canary', source: file, archive: digest(file.advertisedAtLocal), generationId: 8, costUsd: 0.1873 });
+      const runs = [...blockedRuns(checks.slice(0, 1), rolledBack), rolledBack, ...history(checks, 2, 6)];
+      return { imports: imports(runs, true), dataset: servedBy(runs[6] as AdminImportRun) };
+    }
+    case 'recertification': {
+      // The re-check of the serving data failed at the site checks, today and yesterday: postponed on the serving file, no file work.
+      const failed = checks.slice(0, 2).map((at) => run({ at, minutes: 12, result: 'deferred', reason: 'probe', step: 'canary', archive: CURRENT_ARCHIVE }));
+      const runs = [...failed, ...history(checks, 2, 6)];
+      return { imports: imports(runs, true), dataset: servedBy(runs[6] as AdminImportRun) };
     }
     case 'restore_hold': {
       const stopped = run({ at: checks[1] as number, minutes: 0, result: 'needs_review', reason: 'restore_hold', step: 'check' });

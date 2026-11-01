@@ -68,6 +68,11 @@ describe('the mock importer states', () => {
     expect(dataset?.snapshotDate).toBe(imports.lastCheck?.source?.advertisedAtLocal.slice(0, 10));
   });
 
+  it('a new file has its own digest, never the serving file’s', () => {
+    const { imports } = overview('needs_review').system;
+    expect(imports.recentRuns[0]?.archiveSha256).not.toBe(imports.lastCheck?.archiveSha256);
+  });
+
   it('needs review: today’s run stopped at extraction (the comparison sets no step of its own); the last completed check is yesterday’s', () => {
     const { imports, dataset } = overview('needs_review').system;
     expect(imports.attentionRequired).toBe(true);
@@ -93,6 +98,24 @@ describe('the mock importer states', () => {
     expect(imports.recentRuns[0]).toMatchObject({ result: 'needs_review', reason: 'probe', step: 'canary', generationId: 8 });
     expect(dataset?.generationId).toBe(8);
     expect(imports.lastSuccessfulImport?.generationId).toBe(7);
+  });
+
+  it('rolled back: yesterday’s publication rolled back (generation 7 serves again), the review still open, today’s run blocked by it', () => {
+    const { imports, dataset } = overview('rolled_back').system;
+    expect(imports.recentRuns[1]).toMatchObject({ result: 'rolled_back', reason: 'probe', step: 'canary', generationId: 8 });
+    expect(imports.recentRuns[0]).toMatchObject({ result: 'deferred', reason: 'probe', step: 'check' });
+    expect(imports.attentionRequired).toBe(true);
+    expect(dataset?.generationId).toBe(7);
+  });
+
+  it('a failed re-check of the serving data: postponed with its own reason, on the serving file, with no file work; nothing changed', () => {
+    const { imports, dataset } = overview('recertification').system;
+    for (const failed of imports.recentRuns.slice(0, 2)) {
+      expect(failed).toMatchObject({ result: 'deferred', reason: 'probe', step: 'canary', source: null, generationId: null, costUsd: 0 });
+      expect(failed.archiveSha256).toBe(imports.lastCheck?.archiveSha256);
+    }
+    expect(imports).toMatchObject({ attentionRequired: true, overdue: true });
+    expect(dataset?.generationId).toBe(7);
   });
 
   it('a restore hold and the retired source: a stop before any file, then blocked runs', () => {
