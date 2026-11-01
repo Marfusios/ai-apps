@@ -1393,12 +1393,13 @@ this tab's session storage `casebook-mock-admin` (`1`) says so, and `GET /api/ad
 (`web/mock/admin.ts`) answers that admin, and only that admin, with a synthetic overview: 37 made-up
 accounts at the example domains, 30 days of use with a weekly rhythm, a small beta's costs, the
 ratings the mock was given and the configuration it stands in for. Its automatic importer
-(`web/mock/imports.ts`) is in one of five synthetic states, from `createHandlers({ imports })` or
+(`web/mock/imports.ts`) is in one of twelve synthetic states, from `createHandlers({ imports })` or
 this tab's session storage `casebook-mock-admin-imports`: `healthy` (the default), `published`,
-`needs_review`, `blocked`, `after_switch`, `restore_hold`, `retired`, `unreadable`, `overdue` or
-`disabled`, each shaped as the server sends it (the last completed check is only an unchanged or
-published run, a run's cost is its file's running total, blocked daily runs carry their review's
-reason). `tests/unit/evidence-progress-mock.test.ts` and
+`needs_review`, `blocked`, `after_switch`, `rolled_back`, `recertification`, `restore_hold`,
+`retired`, `unreadable`, `overdue` or `disabled`, each shaped as the server sends it (the last
+completed check is only an unchanged or published run, a run's cost is its file's running total,
+blocked daily runs carry their review's reason, a failed re-check of the serving data is postponed
+on the serving file). `tests/unit/evidence-progress-mock.test.ts` and
 `tests/unit/import-status-mock.test.ts` check them against the contracts, and
 `tests/web/import-words.test.ts` ties the limits the copy names to the worker's own.
 
