@@ -7,7 +7,8 @@
  *
  * Covered: the admin sees "Admin" in the header and opens `/admin`, whose four sections come from
  * the server's own overview: the signed-in account in Users, the dataset's generation and snapshot,
- * the ranking in plain words and "Next snapshot check: Not set up yet". Another account, not an admin, sees
+ * the ranking in plain words and the automatic import's schedule, "Off" (the harness turns no importer
+ * on). Another account, not an admin, sees
  * no Admin link, the ordinary not-found page at `/admin` and a 404 from `/api/admin/overview`, and so
  * does a visitor who is not signed in. Signing in adds sessions that tests/e2e-real/sign-in-out.spec.ts
  * would count, so these tests run after the others (playwright.real.config.ts).
@@ -111,7 +112,13 @@ test('an admin signs in, sees Admin in the header and reads the overview the ser
   await expect(fact('NTSB snapshot')).toHaveText(formatDate(dataset?.snapshotDate ?? null));
   await expect(fact('Ranking')).toHaveText('The question as asked; AI reranks the top 50er-q-h50-v1');
   await expect(fact('Automatic filters')).toHaveText('None: every filter AI suggests stays a suggestionnone');
-  await expect(fact('Next snapshot check')).toHaveText('Not set up yet');
+  await expect(fact('Schedule')).toHaveText('Off');
+  await expect(fact('Last check')).toHaveText('None yet');
+  // A review notice, and the line at the head of the page, exactly when the server's status asks for
+  // one (the shared test database may hold importer state from other tests, or a restore latch).
+  const attention = overview.system.imports.attentionRequired;
+  await expect(page.locator('[data-import-notice="attention"]')).toHaveCount(attention ? 1 : 0);
+  await expect(page.locator('[data-import-pointer]')).toHaveCount(attention || overview.system.imports.overdue ? 1 : 0);
   await expect(fact('Environment')).toHaveText('Dev');
 
   // Usage and costs come from the same overview: the 30-day chart's rows and the four budgets.

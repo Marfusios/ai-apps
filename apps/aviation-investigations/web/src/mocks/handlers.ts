@@ -24,7 +24,8 @@
  * once they are over and its progress read under its idempotency key; the owner can rate a search
  * (`POST /api/evidence/:id/feedback`); and the signed-in mock account can be an admin (`admin`, or
  * session storage `MOCK_ADMIN_KEY`), for whom alone `GET /api/admin/overview` answers
- * (web/mock/admin.ts).
+ * (web/mock/admin.ts). Task 26: the overview's automatic importer is in one of five synthetic
+ * states (`imports`, or session storage `MOCK_ADMIN_IMPORTS_KEY`; web/mock/imports.ts).
  */
 import { delay, http, HttpResponse } from 'msw';
 import type { AiStatusResponse } from '../../../shared/contracts/ai';
@@ -50,6 +51,7 @@ import index from '../../mock/search-index.json';
 import { AI_STATUS_SAMPLES, MOCK_AI_LIMITS } from '../../mock/ai-status';
 import { MockBriefs, type MockReader, type MockReply } from '../../mock/briefs';
 import { mockAdminOverview } from '../../mock/admin';
+import { parseMockImportState, type MockImportState } from '../../mock/imports';
 import { MOCK_EVIDENCE_CONFIG_KEY, MockEvidence, parseMockEvidenceConfig, type MockEvidenceConfig, type MockEvidenceReply } from '../../mock/evidence';
 import { MockEvidenceProgress } from '../../mock/evidence-progress';
 import { searchCorpus, type MockCorpus } from '../../mock/engine';
@@ -103,6 +105,8 @@ export interface HandlerOptions {
   evidenceTiming?: number;
   /** The signed-in mock account is an admin (`isAdmin`, the admin overview); default: this tab's session storage says so. */
   admin?: boolean;
+  /** The automatic importer's state in the admin overview (web/mock/imports.ts); default: this tab's session storage, else `healthy`. */
+  imports?: MockImportState;
 }
 
 /** The mock's Google account: synthetic, with a fixed application id (`user.id`, the identity the page compares). */
@@ -122,6 +126,13 @@ export const MOCK_EVIDENCE_TIMING_KEY = 'casebook-mock-evidence-timing';
 
 /** This tab's session storage: `1` makes the signed-in mock account an admin. */
 export const MOCK_ADMIN_KEY = 'casebook-mock-admin';
+
+/**
+ * This tab's session storage (dev mock mode, end-to-end tests): the automatic importer's state in
+ * the admin overview, one of `MOCK_IMPORT_STATES` (`healthy`, `published`, `needs_review`, `overdue`,
+ * `disabled`).
+ */
+export const MOCK_ADMIN_IMPORTS_KEY = 'casebook-mock-admin-imports';
 
 interface MockAccountState {
   signedIn: boolean;
@@ -168,6 +179,14 @@ function adminFlag(): boolean {
     return window.sessionStorage.getItem(MOCK_ADMIN_KEY) === '1';
   } catch {
     return false;
+  }
+}
+
+function importsFlag(): MockImportState {
+  try {
+    return parseMockImportState(window.sessionStorage.getItem(MOCK_ADMIN_IMPORTS_KEY));
+  } catch {
+    return 'healthy';
   }
 }
 
@@ -225,6 +244,7 @@ export function createHandlers({
   aiAutomaticFilters = evidenceConfig.autoFilters === 'state-explicit.v1.3' ? ['state'] : [],
   evidenceTiming = 0,
   admin = adminFlag(),
+  imports = importsFlag(),
 }: HandlerOptions = {}) {
   const wait = async (): Promise<void> => {
     if (latencyMs > 0) await delay(latencyMs);
@@ -423,7 +443,7 @@ export function createHandlers({
       await wait();
       // Only the signed-in admin; everyone else gets the same 404 as a route that does not exist.
       if (!signIn.signedIn || !admin) return notFound();
-      return HttpResponse.json(mockAdminOverview({ now: new Date(), evidence: evidenceConfig, ratings: evidence.ratingCounts(), admin: MOCK_USER }), { headers: NO_STORE });
+      return HttpResponse.json(mockAdminOverview({ now: new Date(), evidence: evidenceConfig, ratings: evidence.ratingCounts(), admin: MOCK_USER, imports }), { headers: NO_STORE });
     }),
     http.get('*/api/evidence/:id/cases/:ntsbNo', async ({ params }) => {
       await wait();

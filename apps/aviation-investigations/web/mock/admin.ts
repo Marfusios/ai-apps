@@ -9,6 +9,7 @@
  */
 import type { AdminOverview, AdminStageCost, AdminUsageDay, AdminUser } from '../../shared/contracts/admin.js';
 import type { MockEvidenceConfig } from './evidence.js';
+import { mockImports, type MockImportState } from './imports.js';
 import config from './config.json' with { type: 'json' };
 
 const DAY_MS = 86_400_000;
@@ -38,6 +39,8 @@ export interface MockAdminOptions {
   ratings: { useful: number; notUseful: number };
   /** The signed-in mock account, which is an admin. */
   admin: { name: string; email: string };
+  /** The automatic importer's state (web/mock/imports.ts); default `healthy`. */
+  imports?: MockImportState;
 }
 
 function users(now: number, admin: MockAdminOptions['admin']): AdminUser[] {
@@ -119,8 +122,9 @@ function stages(interactive: number, indexing: number, evaluation: number, searc
 }
 
 /** `GET /api/admin/overview` for the signed-in admin of the mock API. */
-export function mockAdminOverview({ now, evidence, ratings, admin }: MockAdminOptions): AdminOverview {
+export function mockAdminOverview({ now, evidence, ratings, admin, imports: importState = 'healthy' }: MockAdminOptions): AdminOverview {
   const list = users(now.getTime(), admin);
+  const imports = mockImports(importState, now);
   const usage = days(now);
   const month = now.toISOString().slice(0, 7);
   const thisMonth = usage.filter((d) => d.day.startsWith(month));
@@ -166,6 +170,7 @@ export function mockAdminOverview({ now, evidence, ratings, admin }: MockAdminOp
       automaticFilters: evidence.autoFilters,
       ai: { enabled: true, anonymousEnabled: true, accountCheck: 'suspicious' },
       tracing: { enabled: true, lastExportOkAt: new Date(now.getTime() - 42_000).toISOString(), failedExports: 0 },
+      // The serving dataset: as the importer's state left it (its last import), or as loaded by hand.
       dataset: {
         generationId: 7,
         snapshotDate: config.snapshotDate,
@@ -173,13 +178,9 @@ export function mockAdminOverview({ now, evidence, ratings, admin }: MockAdminOp
         publishedAt: '2026-10-17T03:41:09.000Z',
         cases: config.coverage.defaultCohort + config.coverage.otherRecords,
         eligibleCases: config.coverage.defaultCohort,
+        ...imports.dataset,
       },
-      imports: {
-        enabled: false,
-        schedule: { localTime: '05:30', timeZone: 'Europe/Prague', nextCheckAt: null },
-        lastCheck: null, lastSuccessfulImport: null,
-        attentionRequired: false, overdue: false, recentRuns: [],
-      },
+      imports: imports.imports,
     },
   };
 }
