@@ -109,68 +109,75 @@ for (const [width, theme] of [
   });
 }
 
-/** Each state of the mock importer (web/mock/imports.ts): what its block must say first. */
+/** Each state of the mock importer (web/mock/imports.ts): words its block must hold. */
 const IMPORT_STATES = [
-  ['needs_review', 'Import needs a review'],
-  ['overdue', 'The daily snapshot check is overdue'],
+  ['needs_review', 'the new file differs from the current data in a way the automatic checks do not accept'],
+  ['blocked', 'Blocked: an earlier run is waiting for review'],
+  ['after_switch', 'The new data may already be live'],
+  ['restore_hold', 'Paid operations after a restore'],
+  ['retired', 'Automatic imports have ended'],
+  ['unreadable', 'could not be read'],
+  ['overdue', 'No check has completed for over 36 hours.'],
   ['healthy', 'No new file (NTSB still lists the 16 Oct 2026 file)'],
   ['published', 'Imported generation 8'],
   ['disabled', 'Off'],
 ] as const;
+
+/** The admin overview the page itself reads (the mock's, through its service worker): the importer's flags. */
+async function importFlags(page: Page): Promise<{ attentionRequired: boolean; overdue: boolean }> {
+  return (await page.evaluate("fetch('/api/admin/overview').then((r) => r.json()).then((o) => o.system.imports)")) as { attentionRequired: boolean; overdue: boolean };
+}
 
 for (const [width, theme] of [
   [1280, 'day'],
   [390, 'night'],
 ] as const) {
   test(`the automatic import, state by state: a stop for review first, then the facts and the recent runs (${width}px, ${theme})`, async ({ page }) => {
+    // Ten states, each its own page load (and screenshot).
+    test.setTimeout(120_000);
     await signIn(page, { width, theme });
-    for (const [state, first] of IMPORT_STATES) {
+    for (const [state, words] of IMPORT_STATES) {
       await page.evaluate(`sessionStorage.setItem('casebook-mock-admin-imports', '${state}')`);
       await page.goto('/admin');
       const system = page.getByRole('region', { name: 'System' });
       const block = system.locator('[data-imports]');
-      await expect(block).toContainText(first);
-      const notices = block.locator('[data-import-notice]');
+      await expect(block).toContainText(words);
+      // The notices and the line at the head of the page follow the server's flags, attention first.
+      const flags = await importFlags(page);
       const pointer = page.locator('[data-import-pointer]');
-      if (state === 'needs_review') {
-        // At the head of the page a line says so; in the block, attention comes first, with the reason in words and the way to resolve it.
-        await expect(pointer).toHaveText('The automatic import needs a review.');
-        await expect(notices).toHaveCount(1);
-        await expect(block.locator(':scope > *').first()).toHaveAttribute('data-import-notice', 'attention');
-        await expect(notices.first()).toContainText('the new file differs from the current data by more than the automatic limits allow');
-        await expect(notices.first()).toContainText('pnpm importer approve, rebaseline or rollback');
-      } else if (state === 'overdue') {
-        await expect(pointer).toHaveText('The daily snapshot check is overdue.');
-        await expect(notices).toHaveCount(1);
-        await expect(notices.first()).toContainText('It has not succeeded for over 36 hours.');
-      } else {
-        await expect(pointer).toHaveCount(0);
-        await expect(notices).toHaveCount(0);
-      }
-      // The runs: a table on a desktop, blocks on a phone; none while nothing has run.
+      await expect(block.locator('[data-import-notice="attention"]')).toHaveCount(flags.attentionRequired ? 1 : 0);
+      await expect(block.locator('[data-import-notice="overdue"]')).toHaveCount(flags.overdue ? 1 : 0);
+      await expect(pointer).toHaveCount(flags.attentionRequired || flags.overdue ? 1 : 0);
+      if (flags.attentionRequired) await expect(block.locator(':scope > *').first()).toHaveAttribute('data-import-notice', 'attention');
+      // The runs: a table where there is room, blocks on a phone; none while nothing has run.
       const table = block.getByRole('table', { name: 'Recent import runs, newest first' });
       const list = block.getByRole('list', { name: 'Recent import runs, newest first' });
-      if (state === 'disabled') {
+      if (state === 'disabled' || state === 'unreadable') {
         await expect(block).toContainText('No runs yet.');
       } else if (width >= 640) {
         await expect(table).toBeVisible();
         await expect(list).toBeHidden();
+        // The table fits its column beside Costs: nothing scrolls inside it.
+        const wrap = block.locator('[data-import-runs-wrap]');
+        expect(await wrap.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
       } else {
         await expect(list).toBeVisible();
         await expect(table).toBeHidden();
       }
-      // No identifier with an underscore shows outside the secondary code lines.
-      const words = String(
-        await block.evaluate('(el) => { const copy = el.cloneNode(true); for (const code of copy.querySelectorAll("[data-code]")) code.remove(); return copy.textContent || ""; }'),
+      // No identifier with an underscore shows outside the secondary code lines and the commands.
+      const text = String(
+        await block.evaluate(
+          '(el) => { const copy = el.cloneNode(true); for (const code of copy.querySelectorAll("[data-code], [data-import-commands]")) code.remove(); return copy.textContent || ""; }',
+        ),
       );
-      expect(words).not.toMatch(/\b[a-z]+_[a-z_]+\b/);
+      expect(text).not.toMatch(/\b[a-z]+_[a-z_]+\b/);
       await fitsTheWidth(page);
       await block.scrollIntoViewIfNeeded();
       await page.evaluate('document.activeElement && document.activeElement.blur()');
       await blockShot(page, block, `admin-imports-${state}-${width}-${theme}`);
     }
     // The line at the head of the page takes the reader to the notice, at the foot of the page.
-    await page.evaluate("sessionStorage.setItem('casebook-mock-admin-imports', 'needs_review')");
+    await page.evaluate("sessionStorage.setItem('casebook-mock-admin-imports', 'blocked')");
     await page.goto('/admin');
     await expect(page.locator('[data-import-pointer]')).toBeVisible();
     await expect(page.getByRole('region', { name: 'System' }).locator('[data-imports]')).toBeVisible();
@@ -182,6 +189,18 @@ for (const [width, theme] of [
     await expect(notice).toBeInViewport();
   });
 }
+
+test('beside Costs below 1280px the recent runs are blocks, not a squeezed table (1024px)', async ({ page }) => {
+  await signIn(page, { width: 1024, theme: 'day' });
+  await page.evaluate("sessionStorage.setItem('casebook-mock-admin-imports', 'blocked')");
+  await page.goto('/admin');
+  const block = page.getByRole('region', { name: 'System' }).locator('[data-imports]');
+  await expect(block.getByRole('list', { name: 'Recent import runs, newest first' })).toBeVisible();
+  await expect(block.getByRole('table', { name: 'Recent import runs, newest first' })).toBeHidden();
+  await fitsTheWidth(page);
+  await block.scrollIntoViewIfNeeded();
+  await blockShot(page, block, 'admin-imports-blocked-1024-day');
+});
 
 /** A screenshot of one block, under `E2E_SCREENSHOTS` when set. */
 async function blockShot(page: Page, block: ReturnType<Page['locator']>, name: string): Promise<void> {

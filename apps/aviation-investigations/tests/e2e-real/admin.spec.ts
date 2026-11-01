@@ -113,7 +113,7 @@ test('an admin signs in, sees Admin in the header and reads the overview the ser
   await expect(fact('Ranking')).toHaveText('The question as asked; AI reranks the top 50er-q-h50-v1');
   await expect(fact('Automatic filters')).toHaveText('None: every filter AI suggests stays a suggestionnone');
   await expect(fact('Schedule')).toHaveText('Off');
-  await expect(fact('Last check')).toHaveText('None yet');
+  await expect(fact('Last completed check')).toHaveText('None yet');
   // A review notice, and the line at the head of the page, exactly when the server's status asks for
   // one (the shared test database may hold importer state from other tests, or a restore latch).
   const attention = overview.system.imports.attentionRequired;
