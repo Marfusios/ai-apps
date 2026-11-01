@@ -53,8 +53,8 @@ function recordOverviewReads(): string[] {
 }
 
 /** An overview served instead of the mock's, validated with the contract first. */
-function serve(change: (o: AdminOverview) => AdminOverview): AdminOverview {
-  const base = mockAdminOverview({ now: new Date(), evidence: MOCK_EVIDENCE_RELEASE, ratings: { useful: 0, notUseful: 0 }, admin: MOCK_USER });
+function serve(change: (o: AdminOverview) => AdminOverview, now = new Date()): AdminOverview {
+  const base = mockAdminOverview({ now, evidence: MOCK_EVIDENCE_RELEASE, ratings: { useful: 0, notUseful: 0 }, admin: MOCK_USER });
   const overview = AdminOverviewSchema.parse(change(base));
   server.use(http.get('*/api/admin/overview', () => HttpResponse.json(overview, { headers: { 'cache-control': 'private, no-store' } })));
   return overview;
@@ -204,10 +204,13 @@ describe('the admin page', { timeout: 20_000 }, () => {
     expect(within(ratings).getAllByRole('row').map((r) => r.textContent)).toEqual(['All timeLast 30 days', 'Useful4117', 'Not useful136', 'Rated useful76%74%']);
   });
 
-  it('costs: today, the month and the last, per search, uncertain charges, each budget with how much is used, by category and by stage', async () => {
+  it.each([
+    { at: '2026-10-31T12:00:00Z', firstStage: 'rerank', firstLabel: 'Ordering rerank' },
+    { at: '2026-11-01T12:00:00Z', firstStage: 'index', firstLabel: 'index' },
+  ])('costs at $at: today, the month and the last, per search, uncertain charges, each budget with how much is used, by category and by stage', async ({ at, firstStage, firstLabel }) => {
     signedIn();
     // Today also had an indexing run: the daily interactive cap reads the interactive part only.
-    const overview = serve((o) => ({ ...o, costs: { ...o.costs, today: o.costs.interactiveToday + 0.92 } }));
+    const overview = serve((o) => ({ ...o, costs: { ...o.costs, today: o.costs.interactiveToday + 0.92 } }), new Date(at));
     expect(overview.costs.interactiveToday).toBeLessThan(overview.costs.today);
     await openAdmin();
     const costs = region(ADMIN_COPY.costs);
@@ -231,7 +234,9 @@ describe('the admin page', { timeout: 20_000 }, () => {
     ]);
     const stages = within(costs).getByRole('table', { name: /by stage, provider and model/ });
     const first = overview.costs.byStage[0] as AdminOverview['costs']['byStage'][number];
-    expect(within(stages).getAllByRole('row')[1]?.textContent).toBe(`Ordering rerank${first.provider} · ${first.model}${first.calls.toLocaleString('en-US')}${formatUsd(first.usd)}`);
+    // The cost-ordered first stage changes when the UTC month rolls over.
+    expect(first.stage).toBe(firstStage);
+    expect(within(stages).getAllByRole('row')[1]?.textContent).toBe(`${firstLabel}${first.provider} · ${first.model}${first.calls.toLocaleString('en-US')}${formatUsd(first.usd)}`);
   });
 
   it('system: the app, the AI search in plain words with each identifier, tracing, the dataset, and an import not set up yet', async () => {
