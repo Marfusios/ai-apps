@@ -1257,7 +1257,11 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   (`AdminOverviewSchema`; the private `admin` query), times in the viewer's own zone. Everyone else,
   and an admin the API answers 404, sees the ordinary not-found page; when who is signed in cannot
   be read (the account read and its retry failed), the page says it didn't load, with Try again. The
-  page is not indexed.
+  page is not indexed. Its System section's "Automatic import" (Task 26) is the automatic NTSB
+  importer's notification channel: a stop for review or an overdue daily check comes first, as a
+  notice with what to do (docs/IMPORTER.md) and a line at the head of the page; then the schedule,
+  the last check and the last successful import in words, and the recent runs
+  (`web/src/features/admin/ImportStatus.tsx`).
 - **Briefs that exist**: the interface starts none. While the server has briefs off
   (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
   failed step offers New search, not Try again.
@@ -1387,8 +1391,11 @@ the owner's latest rating on the mock's search (a question with "rating fails" f
 this tab's session storage `casebook-mock-admin` (`1`) says so, and `GET /api/admin/overview`
 (`web/mock/admin.ts`) answers that admin, and only that admin, with a synthetic overview: 37 made-up
 accounts at the example domains, 30 days of use with a weekly rhythm, a small beta's costs, the
-ratings the mock was given and the configuration it stands in for. `tests/unit/evidence-progress-mock.test.ts`
-checks them against the contracts.
+ratings the mock was given and the configuration it stands in for. Its automatic importer
+(`web/mock/imports.ts`) is in one of five synthetic states, from `createHandlers({ imports })` or
+this tab's session storage `casebook-mock-admin-imports`: `healthy` (the default), `published`,
+`needs_review`, `overdue` or `disabled`. `tests/unit/evidence-progress-mock.test.ts` and
+`tests/unit/import-status-mock.test.ts` check them against the contracts.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
