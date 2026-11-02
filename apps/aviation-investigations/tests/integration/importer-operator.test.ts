@@ -37,11 +37,11 @@ async function isolated(body: (db: Db, owner: Db, app: Db, space: ManagedSpace) 
 }
 it('contains status SQL failure inside a savepoint so the overview snapshot remains usable', async () =>
   isolated(async (_db, owner, app) => {
-    await owner.execute(sql`create or replace function import_status_attention() returns boolean language plpgsql
+    await owner.execute(sql`create or replace function import_status_health() returns jsonb language plpgsql
     security definer set search_path=public,pg_temp as $$ begin raise exception 'PRIVATE_SENTINEL_SQL'; end $$`);
     await app.transaction(
       async (tx) => {
-        expect((await readImportStatus(tx, null)).attentionRequired).toBe(true);
+        expect((await readImportStatus(tx, {enabled:true,localTime:'05:30',timeZone:'Europe/Prague'})).alert?.cause).toBe('status_unavailable');
         expect((await tx.execute(sql`select 42 as answer`)).rows[0]?.answer).toBe(42);
       },
       { isolationLevel: 'repeatable read' },

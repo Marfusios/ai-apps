@@ -204,10 +204,7 @@ describe('policy/certificate identity and redacted output', () => {
         true,
       ),
     ).toMatchObject({
-      attentionRequired: true,
-      overdue: true,
-      lastCheck: null,
-      lastSuccessfulImport: null,
+      status:'fix',alert:{cause:'status_unavailable'},lastCheck:null,lastGoodCheck:null,
     });
   });
   it('defers an unknown alias for bounded reconciliation without treating it as confirmed bad data', () => {

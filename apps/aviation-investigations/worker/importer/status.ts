@@ -78,42 +78,56 @@ export interface StatusRow {
   public: AdminImportRun;
   sourceCheckSucceeded: boolean;
   canaryPassed: boolean;
-  unresolved: boolean;
+  goodCheck?: boolean;
+  unresolved?: boolean; // historical rows only; never authorizes or blocks work
   recertification?: boolean;
 }
-/** Pure projection. Busy/failure rows cannot refresh lastCheck; latched review survives later checks. */
-export function projectImports(
-  rows: readonly StatusRow[],
-  schedule: ImportSchedule | null,
-  now: Date,
-  unresolved = false,
-): AdminImports {
-  const sorted = [...rows].sort((a, b) =>
-    b.public.checkedAt.localeCompare(a.public.checkedAt),
-  );
-  const lastCheck =
-    sorted.find((r) => r.sourceCheckSucceeded && r.public.finishedAt !== null)?.public ?? null;
-  const lastSuccess =
-    sorted.find((r) => r.canaryPassed && r.public.result === 'published')?.public ?? null;
-  const enabled = schedule?.enabled === true;
-  return AdminImportsSchema.parse({
-    enabled,
-    schedule: schedule
-      ? {
-          localTime: schedule.localTime,
-          timeZone: schedule.timeZone,
-          nextCheckAt: nextCheck(now, schedule),
-        }
-      : null,
-    lastCheck,
-    lastSuccessfulImport: lastSuccess,
-    attentionRequired: unresolved || sorted.some((r) => r.unresolved),
-    overdue:
-      enabled &&
-      (!lastCheck || now.getTime() - Date.parse(lastCheck.checkedAt) > 36 * 3_600_000),
-    recentRuns: sorted
-      .filter((r) => !(r.recertification && r.public.result === 'unchanged'))
-      .slice(0, 20)
-      .map((r) => r.public),
-  });
+export interface ImportHealth {
+  automaticSince: string;
+  restoreHeld: boolean;
+  switchHeld: boolean;
+  temporaryDays: number;
+  serving: AdminImports['serving'];
+  lastGood: AdminImportRun|null;
+  waiting: {source:AdminImportRun['source'];since:string}|null;
+  issue: {reason:AdminImportRun['reason'];fixed:boolean;since:string;origin:'dev'|'live'|'host';
+    siteState:'unchanged'|'restored'|'uncertain';postSuccess:boolean;details:AdminImportRun|null;originRunId:string|null}|null;
+}
+/** Severity and retry policy are server owned. Incidents outlive the recent-run window. */
+export function projectImports(rows: readonly StatusRow[], schedule: ImportSchedule|null, now:Date,
+ health?:ImportHealth|boolean):AdminImports {
+  const sorted=[...rows].sort((a,b)=>b.public.checkedAt.localeCompare(a.public.checkedAt));
+  const known=typeof health==='object' ? health : null;
+  const unknown=health===true;
+  const enabled=schedule?.enabled===true;
+  const lastStartedAt=sorted[0]?.public.checkedAt??null;
+  const lastCheck=sorted.find(r=>r.public.finishedAt!==null&&!r.recertification)?.public??null;
+  const lastGoodCheck=known?.lastGood??sorted.find(r=>r.goodCheck)?.public??null;
+  const since=lastStartedAt??known?.automaticSince??now.toISOString();
+  const overdue=now.getTime()-Date.parse(since)>36*3_600_000;
+  const issue=known?.issue;
+  const days=known?.temporaryDays??0;
+  let alert:AdminImports['alert']=null;
+  const retry=issue?.siteState==='uncertain'?'release':issue?.fixed&&!issue.postSuccess?'new_file_or_release':'daily';
+  if(enabled) {
+    const cause=known?.restoreHeld?'restore_hold':known?.switchHeld?(issue?.reason??'alias_unknown'):
+      unknown?'status_unavailable':issue?.fixed?(issue.reason??'unclassified'):overdue?'overdue':days>=3?(issue?.reason??'interrupted'):null;
+    if(cause) {
+      const level=issue?.fixed||known?.restoreHeld||known?.switchHeld||unknown||overdue||days>=7?'fix':'delayed';
+      const issueSelected=cause!=='overdue'&&cause!=='status_unavailable';
+      alert={level,cause,since:cause==='overdue'?since:issue?.since??now.toISOString(),failedDays:days,
+        origin:issueSelected?issue?.origin??'host':'host',siteState:known?.switchHeld?'uncertain':issueSelected?issue?.siteState??'unchanged':'unchanged',
+        nextAction:cause==='overdue'||cause==='status_unavailable'?'release':known?.restoreHeld?'release':retry,
+        retryAt:cause==='monthly_budget'?new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+1,1)).toISOString():null,
+        postSuccess:issueSelected&&issue?.postSuccess===true,
+        devAdvanced:cause==='shrunk'&&issue?.origin==='live',details:issueSelected?issue?.details??null:null,
+        originRunId:issueSelected?issue?.originRunId??null:null};
+    }
+  }
+  const waiting=known?.waiting??(issue&&!issue.postSuccess&&issue.details?.source?{source:issue.details.source,since:issue.since}:null);
+  return AdminImportsSchema.parse({enabled,status:!enabled?'off':alert?.level??'working',
+    schedule:schedule?{localTime:schedule.localTime,timeZone:schedule.timeZone,nextCheckAt:nextCheck(now,schedule)}:null,
+    serving:known?.serving??null,lastStartedAt,lastCheck,lastGoodCheck,
+    waiting:waiting?{...waiting,reason:issue?.reason??null,retry}:null,alert,
+    recentRuns:sorted.filter(r=>!(r.recertification&&r.public.result==='unchanged')).slice(0,20).map(r=>r.public)});
 }

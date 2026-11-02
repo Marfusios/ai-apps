@@ -179,7 +179,7 @@ it('defers the monthly allowance without a review and resumes under the same art
     const pending = (await control(fixture.resources.db)).pending!;
     expect(provider.calls).toBe(0);
     expect((await fixture.resources.db.execute(sql`select fixed from import_issues where resolved_at is null`)).rows.every(r=>!r.fixed)).toBe(true);
-    expect((await readImportStatus(fixture.app, null)).attentionRequired).toBe(false);
+    expect((await readImportStatus(fixture.app, null)).alert).toBeNull();
     fixture.resources.appConfig.ai.budgets.ingestionMonthlyUsd = 20;
     expect(
       await fixture.run({ paidEmbedder: fakePaid(provider) }, { cacheOnly: false }),

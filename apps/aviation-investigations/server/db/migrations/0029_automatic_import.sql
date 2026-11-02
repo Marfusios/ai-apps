@@ -277,3 +277,72 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+--> statement-breakpoint
+-- Narrow projections: the HTTP role still cannot SELECT the worker's tables or certificates.
+CREATE OR REPLACE FUNCTION import_status_time(p_time timestamptz) RETURNS text
+LANGUAGE sql IMMUTABLE SET search_path=public,pg_temp AS $$
+ SELECT to_char(p_time at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+$$;
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION import_public_run(p_id uuid) RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+ SELECT jsonb_build_object(
+  'runId',r.id,'checkedAt',import_status_time(r.checked_at),'finishedAt',import_status_time(r.finished_at),
+  'code',r.code,'image',r.image,'origin',r.origin,'workKind',r.work_kind,'suppressed',r.suppressed,
+  'changes',r.changes,'restoration',CASE WHEN r.restoration IS NULL THEN NULL ELSE jsonb_build_object(
+    'sourceDate',left(r.restoration->'source'->>'advertisedAtLocal',10),'restoredAt',r.restoration->>'checkedAt') END,
+  'mode',r.mode,'source',r.source,'archiveSha256',coalesce(r.observed_sha256,a.archive_sha256),
+  'generationId',coalesce((r.success_publication->>'generationId')::bigint,p.generation_id,a.generation_id),
+  'step',r.step,'result',r.result,'reason',r.reason,'costUsd',
+   CASE WHEN a.first_reservation_at IS NOT NULL AND clock_timestamp() >= a.first_reservation_at+interval '2136 hours'
+    THEN coalesce((SELECT rr.reported_cost_usd FROM import_runs rr WHERE rr.artifact_id=a.id ORDER BY rr.checked_at DESC LIMIT 1),0)
+    ELSE coalesce((SELECT sum(CASE WHEN status='open' THEN usd ELSE charged_usd END) FROM reservations WHERE import_artifact_id=a.id),0) END
+ ) FROM import_runs r LEFT JOIN import_artifacts a ON a.id=r.artifact_id
+ LEFT JOIN import_processing p ON p.artifact_id=a.id AND p.active WHERE r.id=p_id
+$$;
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION import_status_rows() RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+ SELECT coalesce(jsonb_agg(v.value ORDER BY v.checked_at DESC),'[]'::jsonb) FROM (
+  SELECT r.checked_at,jsonb_build_object('public',import_public_run(r.id),'sourceCheckSucceeded',r.source_check_succeeded,
+    'canaryPassed',r.canary_passed,'goodCheck',r.good_check,'recertification',r.work_kind='recertification') value
+  FROM import_runs r ORDER BY r.checked_at DESC LIMIT 200
+ ) v
+$$;
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION import_status_health() RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+ WITH latest AS (SELECT * FROM import_issues WHERE resolved_at IS NULL ORDER BY fixed DESC,last_at DESC LIMIT 1),
+ serving AS (SELECT m.generation_id,m.published_at,
+   CASE WHEN (c.accepted->'manifest'->>'generationId')::bigint=m.generation_id
+     AND c.accepted->'manifest'->>'casesIndex'=m.cases_index AND c.accepted->'manifest'->>'passagesIndex'=m.passages_index
+     AND (c.accepted->'manifest'->>'publishedAt')::timestamptz=m.published_at
+    THEN left(c.accepted->'observation'->>'advertisedAtLocal',10) ELSE NULL END source_date,
+   (SELECT r.restoration->>'checkedAt' FROM import_runs r WHERE (r.restoration->'publication'->>'publishedAt')::timestamptz=m.published_at
+      AND (r.restoration->'publication'->>'generationId')::bigint=m.generation_id ORDER BY r.checked_at DESC LIMIT 1) restored_at
+  FROM dataset_manifests m CROSS JOIN import_control c WHERE m.active AND c.id=1)
+ SELECT jsonb_build_object(
+   'automaticSince',import_status_time(c.automatic_since),
+   'restoreHeld',c.restore_required OR coalesce((SELECT held_at IS NOT NULL FROM paid_operations_hold WHERE id=1),true),
+   'switchHeld',c.switch_hold IS NOT NULL OR EXISTS(SELECT 1 FROM import_index_refs r JOIN index_switch_attempts a ON a.index_name=r.index_name
+      WHERE r.released_at IS NULL AND a.outcome IN ('pending','unknown')),
+   'temporaryDays',least(7,(SELECT count(distinct failure_day)::int FROM import_issues WHERE resolved_at IS NULL AND NOT fixed)),
+   'lastGood',(SELECT import_public_run(id) FROM import_runs WHERE good_check ORDER BY checked_at DESC LIMIT 1),
+   'serving',(SELECT jsonb_build_object('generationId',generation_id,'sourceDate',source_date,'importedAt',import_status_time(published_at),'restoredAt',restored_at) FROM serving),
+   'waiting',CASE WHEN c.pending IS NULL THEN NULL ELSE jsonb_build_object('source',c.pending->'observation','since',c.pending->>'fetchedAt') END,
+   'issue',(SELECT jsonb_build_object('reason',reason,'fixed',fixed,'since',import_status_time(created_at),'origin',origin,'originRunId',origin_run_id,
+      'siteState',site_state,'postSuccess',post_success,'details',CASE WHEN run_id IS NULL THEN NULL ELSE import_public_run(run_id)||jsonb_build_object(
+        'code',code,'image',image,'origin',origin,'source',source,'reason',reason,'step',step) END) FROM latest)
+ ) FROM import_control c WHERE c.id=1
+$$;
+--> statement-breakpoint
+-- Compatibility reader, with no historical review logic. No worker uses it for admission.
+CREATE OR REPLACE FUNCTION import_status_attention() RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
+ SELECT coalesce((SELECT restore_required OR switch_hold IS NOT NULL FROM import_control WHERE id=1),true)
+   OR EXISTS(SELECT 1 FROM import_issues WHERE resolved_at IS NULL AND fixed)
+$$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION import_status_time(timestamptz),import_public_run(uuid),import_status_health() FROM PUBLIC,aviation_app,aviation_ingest;
+GRANT EXECUTE ON FUNCTION import_status_health() TO aviation_app,aviation_ingest;

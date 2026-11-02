@@ -252,11 +252,11 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
         await db.execute(
           sql`insert into index_switch_attempts(alias,index_name,build_id) values('test-alias','test-index','testone')`,
         );
-        expect((await readImportStatus(db, null)).attentionRequired).toBe(true);
+        expect((await readImportStatus(db, {enabled:true,localTime:'05:30',timeZone:'Europe/Prague'})).alert?.siteState).toBe('uncertain');
         await db.execute(
           sql`update index_switch_attempts set outcome='committed',resolved_at=clock_timestamp() where index_name='test-index'`,
         );
-        expect((await readImportStatus(db, null)).attentionRequired).toBe(false);
+        expect((await readImportStatus(db, null)).alert).toBeNull();
         await expect(
           owner.execute(
             sql`update index_builds set deletion_requested_at=clock_timestamp() where build_id='testone'`,
@@ -414,7 +414,7 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
         expect(await deletion).toBe(true);
       });
     }));
-  it('projects only the trimmed status and keeps review latched across later successful checks', async () =>
+  it('projects only trimmed status and ignores historical review flags', async () =>
     scratch(async (db, owner) => {
       await withImportSession(db, async (s) => {
         const a = await registered(db, s),
@@ -436,8 +436,8 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
           timeZone: 'Europe/Prague',
         });
         expect(status.lastCheck?.result).toBe('unchanged');
-        expect(status.overdue).toBe(false);
-        expect(status.attentionRequired).toBe(true);
+        expect(status.status).toBe('working');
+        expect(status.alert).toBeNull();
         expect(JSON.stringify(status)).not.toContain('PRIVATE_SENTINEL');
         const privileges =
           await owner.execute(sql`select has_table_privilege('aviation_app','import_artifacts','select') as readable,

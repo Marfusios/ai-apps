@@ -435,29 +435,6 @@ describe('strict ES certification, status and journal boundaries', () => {
     expect(inBackupWindow(new Date('2026-10-31T03:40:00Z'))).toBe(true);
     expect(nextCheck(at, { ...s, enabled: false })).toBeNull();
   });
-  it('busy rows cannot reset overdue or erase review, and only a canary is successful', () => {
-    const row = {
-      checkedAt: at.toISOString(),
-      finishedAt: at.toISOString(),
-      mode: 'automatic' as const,
-      source: null,
-      archiveSha256: null,
-      generationId: null,
-      step: 'check' as const,
-      result: 'deferred' as const,
-      reason: 'busy' as const,
-      costUsd: 0,
-    };
-    const s = projectImports(
-      [{ public: row, sourceCheckSucceeded: false, canaryPassed: false, unresolved: true }],
-      { enabled: true, localTime: '05:30', timeZone: 'Europe/Prague' },
-      at,
-    );
-    expect(s.lastCheck).toBeNull();
-    expect(s.lastSuccessfulImport).toBeNull();
-    expect(s.overdue).toBe(true);
-    expect(s.attentionRequired).toBe(true);
-  });
   it('enforces managed-space bytes and refuses symlink reuse/cleanup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'import-space-'));
     try {
