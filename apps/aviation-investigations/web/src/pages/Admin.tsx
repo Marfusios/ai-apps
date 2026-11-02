@@ -16,7 +16,7 @@ import {
   rankingInWords,
   viewerTimeZone,
 } from '../features/admin/format';
-import { ImportPointer, ImportStatus } from '../features/admin/ImportStatus';
+import { ImportAlert, ImportStatus } from '../features/admin/ImportStatus';
 import { Fact, Id, Missing } from '../features/admin/parts';
 import { UsageChart, USAGE_CHART_TITLE } from '../features/admin/UsageChart';
 import { accountQuery } from '../features/auth/api';
@@ -565,7 +565,7 @@ export function Admin() {
               </a>
             ))}
           </nav>
-          <ImportPointer imports={data.system.imports} />
+          <ImportAlert imports={data.system.imports} environment={data.system.appEnv} timeZone={tz} />
           <div className="space-y-3.5">
             <Users users={data.users} />
             <Usage usage={data.usage} />
