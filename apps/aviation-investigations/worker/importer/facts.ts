@@ -136,7 +136,7 @@ export async function readHostFacts(
     // Keep the query inside this try: finally closes the pool.
     if (request.kind === 'retention') return await retainedArchives(db);
     const before = await manifest(db);
-    if (request.kind === 'serving') return readServingFacts(db);
+    if (request.kind === 'serving') return await readServingFacts(db);
     const canary = await latestCanary(db, request.content);
     const observedImage = await deployedImage(config.dev);
     if (!sameManifest(before, await manifest(db))) throw new ImportFailure('dev_failed');

@@ -14,6 +14,7 @@ import { readImportStatus } from '../../server/db/import-status.js';
 import { ImportFailure } from '../../worker/importer/contracts.js';
 import { recordHostCleanup } from '../../worker/importer/host-status.js';
 import { readFile } from 'node:fs/promises';
+import { editTable } from '../support/extract-dir.js';
 
 const schedule = { enabled: true, localTime: '05:30', timeZone: 'Europe/Prague' };
 
@@ -309,7 +310,13 @@ it('a repackaged unresolved live file keeps its original monetary identity and h
     const history = (
       await live.owner.execute(sql`select * from import_runs order by checked_at`)
     ).rows;
-    const repacked = await dev.snapshot('live-repacked-fix1');
+    const edit = (dir: string) =>
+      editTable(dir, 'events', (rows) => {
+        rows[0]!.lchg_date = '2026-10-30T00:00:00';
+        return rows;
+      });
+    const repacked = await dev.snapshot('live-repacked-fix1', edit);
+    await live.snapshot('live-repacked-fix1', edit);
     dev.setRemote(repacked, { advertisedAtLocal: '2026-11-02T07:30:00', bytes: 12 });
     // Same canonical corpus, different archive bytes; dev has proved this exact archive.
     expect((await dev.run()).result).toBe('unchanged');
