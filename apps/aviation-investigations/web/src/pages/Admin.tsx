@@ -565,7 +565,7 @@ export function Admin() {
               </a>
             ))}
           </nav>
-          <ImportAlert imports={data.system.imports} environment={data.system.appEnv} timeZone={tz} />
+          <ImportAlert key={overview.dataUpdatedAt} imports={data.system.imports} environment={data.system.appEnv} timeZone={tz} />
           <div className="space-y-3.5">
             <Users users={data.users} />
             <Usage usage={data.usage} />
