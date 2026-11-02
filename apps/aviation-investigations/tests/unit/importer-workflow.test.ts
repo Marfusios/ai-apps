@@ -7,7 +7,7 @@ import { AvallSource, LISTING_URL, ARCHIVE_URL } from '../../worker/importer/sou
 import { ManagedSpace, FILE_LIMITS } from '../../worker/importer/files.js';
 import { hostLock, journalLine } from '../../worker/importer/host.js';
 import { ImportFailure, safeLog } from '../../worker/importer/contracts.js';
-import { checkApproval, checkDevCanary } from '../../worker/importer/approval.js';
+import { checkDevCanary } from '../../worker/importer/facts.js';
 import { certificationClient } from '../../worker/importer/strict-es.js';
 import { runCanary } from '../../worker/importer/probes.js';
 import { unchangedDecision, classify } from '../../worker/importer/run.js';
@@ -112,51 +112,6 @@ describe('bounded acquisition and host recovery boundary', () => {
 });
 
 describe('policy/certificate identity and redacted output', () => {
-  const comparison = {
-    policy: 'snapshot-monthly.v1',
-    baseline: 'd'.repeat(64),
-    candidate: content,
-    ok: false,
-    failures: ['changed'],
-    changed: [],
-    added: [],
-    removed: [],
-    reassociated: [],
-    usMembershipLost: [],
-    cases: [],
-    counts: {},
-    hash: 'e'.repeat(64),
-  } satisfies Comparison;
-  const approval = {
-    archive,
-    environment: 'dev' as const,
-    baseline: manifest,
-    policy: 'snapshot-monthly.v1',
-    code,
-    report: comparison.hash,
-    reasons: ['changed'],
-    cases: [],
-  };
-  it('approves only the exact report, named deviations and full manifest; integrity is never waivable', () => {
-    const a = { archive_sha256: archive, environment: 'dev' as const };
-    expect(checkApproval(approval, a, manifest, code, comparison)).toEqual(['changed']);
-    expect(() => checkApproval(approval, a, freshManifest, code, comparison)).toThrow();
-    expect(() =>
-      checkApproval(
-        { ...approval, reasons: ['changed', 'dictionary'] },
-        a,
-        manifest,
-        code,
-        comparison,
-      ),
-    ).toThrow();
-    expect(() =>
-      checkApproval({ ...approval, reasons: ['quarantine'] }, a, manifest, code, {
-        ...comparison,
-        failures: ['quarantine'],
-      }),
-    ).toThrow();
-  });
   it('a matching archive is insufficient without the exact recent dev publication and code/image identities', () => {
     const candidate = { archive, content, code, deployedCode: 'sha256:' + 'f'.repeat(64) };
     const c = {
@@ -258,7 +213,7 @@ describe('policy/certificate identity and redacted output', () => {
   it('defers an unknown alias for bounded reconciliation without treating it as confirmed bad data', () => {
     const error = new Error('PRIVATE_SENTINEL');
     error.name = 'AliasSwitchError';
-    expect(classify(error)).toMatchObject({ reason: 'alias_unknown', review: false });
+    expect(classify(error)).toMatchObject({ reason: 'alias_unknown', fix: true });
   });
   it('rejects incomplete pages and capped aggregation buckets despite HTTP success', async () => {
     const response = {

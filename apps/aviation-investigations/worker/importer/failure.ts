@@ -9,9 +9,16 @@ export function classify(error: unknown): ImportFailure {
       name?: string;
       cause?: unknown;
       reason?: string;
+      status?: number; providerKind?: string;
     };
     if (['NormalizationError', 'ExtractDirError', 'CsvError'].includes(current.name ?? '')) {
       return new ImportFailure('schema');
+    }
+    if(current.name==='EmbeddingRequestError') {
+      if(current.providerKind==='connection'||current.providerKind==='aborted'||current.status===408||current.status===429||
+        (typeof current.status==='number'&&current.status>=500)) return new ImportFailure('interrupted');
+      if(current.status===401||current.status===403) return new ImportFailure('configuration');
+      if(current.status===200) return new ImportFailure('integrity');
     }
     if (current.name === 'LoadValueError') return new ImportFailure('integrity');
     if (current.code === 'P2601') return new ImportFailure('lock_lost', false, 'cancelled');

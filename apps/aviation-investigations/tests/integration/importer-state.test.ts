@@ -7,6 +7,7 @@ import { holdPaidOperations, reconcileRestore } from '../../server/quota/hold.js
 import {
   withImportSession,
   registerArtifact,
+  artifact,
   budgetRemaining,
   fenced,
   resumeArtifact,
@@ -94,7 +95,7 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
       expect(result.costs.interactiveToday).toBe(0);
       expect(JSON.stringify(result)).not.toContain('PRIVATE_SENTINEL');
     }));
-  it('reconciles an outage without refreshing lastCheck, and keeps the original artifact review latched', async () =>
+  it('replays a failure once and retains automatic incident evidence without a review latch', async () =>
     scratch(async (db) => {
       const root = await mkdtemp(join(tmpdir(), 'import-spool-')),
         space = new ManagedSpace(root, { ...FILE_LIMITS, reserve: 0 });
@@ -102,7 +103,7 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
         await withImportSession(db, async (s) => {
           const a = await registered(db, s),
             id = await beginRun(db, s, 'automatic');
-          await spoolFailure(space, 'dev', new ImportFailure('integrity'), 'extract', id, a.id);
+          await spoolFailure(space, 'dev', new ImportFailure('integrity'), 'extract', id, a.id,{code:'a'.repeat(40),image:'sha256:'+'b'.repeat(64),archive:a.archive_sha256,source:null});
           await replayOutage(db, s, space, 'dev');
           await replayOutage(db, s, space, 'dev');
           const status = await readImportStatus(db, {
@@ -110,7 +111,7 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
             localTime: '05:30',
             timeZone: 'Europe/Prague',
           });
-          expect(status).toMatchObject({ lastCheck: null, attentionRequired: true, overdue: true });
+          expect((await db.execute(sql`select reason,fixed from import_issues where resolved_at is null`)).rows).toEqual([{reason:'integrity',fixed:true}]);
           expect(status.recentRuns).toHaveLength(1);
           expect(status.recentRuns[0]?.reason).toBe('integrity');
           expect(await readdir(root)).toEqual([]);
@@ -126,20 +127,20 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
           tag = { artifactId: a.id, fence: s.fence };
         const attempts = await Promise.allSettled(
           [1, 2, 3].map(() =>
-            reserveSpend(db, { import: tag, category: 'indexing', usd: 0.2, request, budgets }),
+            reserveSpend(db, { import: tag, category: 'indexing', usd: 0.8, request, budgets }),
           ),
         );
         const accepted = attempts.flatMap((r) =>
           r.status === 'fulfilled' && r.value.ok ? [r.value] : [],
         );
         expect(accepted).toHaveLength(2);
-        expect(await budgetRemaining(db, s, a.id)).toBeCloseTo(0.1);
+        expect(await budgetRemaining(db, s, a.id)).toBeCloseTo(0.4);
         const first = accepted[0]!,
           second = accepted[1]!;
         await settleSpend(
           db,
           { reservationId: first.reservationId },
-          { lines: [{ usd: 0.1, ...request }] },
+          { lines: [{ usd: 0.4, ...request }] },
           first.fencingToken,
         );
         await settleSpend(
@@ -148,9 +149,10 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
           'uncertain',
           second.fencingToken,
         );
-        expect(await budgetRemaining(db, s, a.id)).toBeCloseTo(0.2);
+        expect(await budgetRemaining(db, s, a.id)).toBeCloseTo(0.8);
         for (let i = 0; i < 4; i++) await resumeArtifact(db, s, a.id);
-        await expect(resumeArtifact(db, s, a.id)).rejects.toThrow();
+        await resumeArtifact(db,s,a.id);
+        expect((await artifact(db,a.id)).attempts).toBe(5);
         const counts = await db.execute(
           sql`select count(*)::int as n from reservations where import_artifact_id=${a.id}::uuid`,
         );
@@ -214,7 +216,7 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
         const r = await reserveSpend(db, {
           import: { artifactId: a.id, fence: s.fence },
           category: 'indexing',
-          usd: 0.3,
+          usd: 1.2,
           request,
           budgets,
           ttlMs: 1,
@@ -227,12 +229,12 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
           sql`update reservations set accounting_day=(current_date-interval '1 month')::date where import_artifact_id=${a.id}::uuid`,
         );
         await owner.execute(sql`alter table reservations enable trigger user`);
-        expect(await budgetRemaining(db, s, a.id)).toBeCloseTo(0.2);
+        expect(await budgetRemaining(db, s, a.id)).toBeCloseTo(0.8);
         await expect(
           reserveSpend(db, {
             import: { artifactId: a.id, fence: s.fence },
             category: 'indexing',
-            usd: 0.21,
+            usd: 0.81,
             request,
             budgets,
           }),
@@ -304,7 +306,7 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
         expect(rows.rows[0]?.n).toBe(3);
         expect(rows.rows[0]?.correct).toBe(true);
         expect(await budgetRemaining(db, s, a.id)).toBeCloseTo(
-          0.5 - Number(rows.rows[0]?.charged),
+          2 - Number(rows.rows[0]?.charged),
           6,
         );
       });

@@ -15,6 +15,7 @@ import {
   type Certificate,
   type ImportSession,
 } from './store.js';
+import { servingCounts, checkShrink } from './automatic.js';
 import { certificationClient } from './strict-es.js';
 
 /** Pin the exact previous pair too: a later same-generation operator publication may replace its manifest row. */
@@ -45,6 +46,7 @@ export async function activate(
     if (!a.rollback && sameManifest(a.publication, await manifest(db))) return a.publication;
     throw new ImportFailure('baseline_changed');
   }
+  await fenced(db,s,tx=>tx.execute(sql`update import_processing set phase='switching' where artifact_id=${certificate.artifactId}::uuid and active`));
   try {
     await publishGeneration(certificationClient(es), db, {
       ...certificate.candidate,
@@ -52,14 +54,32 @@ export async function activate(
       importGuard: {
         lockKey: IMPORT_TRANSACTION_LOCK,
         async validate(tx) {
+          await assertFence(tx,s);
+          const before=await manifest(tx);
+          if(!before) throw new ImportFailure('configuration');
+          checkShrink(await servingCounts(tx,{...before,generationId:certificate.candidate.generationId}),await servingCounts(tx,before));
+          if(!sameManifest(before,certificate.baseline)) {
+            // The lifecycle lock is held. A legitimate external publication becomes the
+            // rollback target; informational comparisons never require permission.
+            await pinGeneration(tx,before.generationId,`import-previous:${certificate.artifactId}`);
+            for(const index of [before.casesIndex,before.passagesIndex]) {
+              const r=await tx.execute(sql`select build_id from index_builds where index_name=${index} and generation_id=${before.generationId} and deletion_requested_at is null and deleted_at is null`);
+              if(r.rows.length!==1) throw new ImportFailure('integrity');
+              await tx.execute(sql`insert into import_index_refs(index_name,artifact_id,build_id,generation_id)
+                values(${index},${certificate.artifactId}::uuid,${String(r.rows[0]!.build_id)},${before.generationId}) on conflict do nothing`);
+            }
+            certificate={...certificate,baseline:before};
+            await tx.execute(sql`update import_processing set baseline=${JSON.stringify(before)}::jsonb,certificate=${JSON.stringify(certificate)}::jsonb
+              where artifact_id=${certificate.artifactId}::uuid and active and publication is null`);
+          }
           await checkCertificate(tx, s, certificate);
           await validateDev?.();
         },
         async record(tx) {
           const current = await manifest(tx);
           if (!current) throw new ImportFailure('integrity');
-          await tx.execute(sql`update import_artifacts set publication=${JSON.stringify(current)}::jsonb
-          where id=${certificate.artifactId}::uuid and publication is null`);
+          await tx.execute(sql`update import_processing set publication=${JSON.stringify(current)}::jsonb,phase='published'
+          where artifact_id=${certificate.artifactId}::uuid and active and publication is null`);
         },
       },
     });
@@ -89,6 +109,7 @@ export async function rollback(
   if (a.rollback && sameManifest(a.rollback, await manifest(db))) return a.rollback; // lost acknowledgement
   if (!a.baseline || !sameManifest(a.publication, expected) || a.rollback)
     throw new ImportFailure('baseline_changed');
+  await fenced(db,s,tx=>tx.execute(sql`update import_processing set phase='rolling_back' where artifact_id=${id}::uuid and active`));
   try {
     await publishGeneration(certificationClient(es), db, {
       ...a.baseline,
@@ -113,10 +134,9 @@ export async function rollback(
         },
         async record(tx) {
           const current = await manifest(tx);
-          await tx.execute(sql`update import_artifacts set rollback=${JSON.stringify(current)}::jsonb,
-          canary=null,needs_review=true,reason='probe' where id=${id}::uuid`);
-          await tx.execute(sql`update import_runs set result='rolled_back',canary_passed=false,
-          reason='probe',finished_at=clock_timestamp() where artifact_id=${id}::uuid and result in ('running','published','needs_review')`);
+          await tx.execute(sql`update import_processing set rollback=${JSON.stringify(current)}::jsonb,
+          canary=null,phase='rolling_back',reason='site_check' where artifact_id=${id}::uuid and active`);
+
         },
       },
     });

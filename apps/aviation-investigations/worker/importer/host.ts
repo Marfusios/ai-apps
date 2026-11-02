@@ -19,6 +19,8 @@ import { ManagedSpace, privateDirectory } from './files.js';
 import { recoverExtraction } from './extraction.js';
 import { workerIdentity } from './application.js';
 import { classify } from './failure.js';
+import { readDevOutcome } from './outcome.js';
+import { SkipSchema, type Skip } from './recovery.js';
 import { FactMessageSchema, readHostFacts } from './facts.js';
 
 /** Includes lock acquisition, recovery, both environments and final daemon cleanup. */
@@ -105,6 +107,7 @@ export async function boundedChild(
   deadline: number,
   locks: readonly FileHandle[],
   config: ImporterConfig,
+  skip?: Skip,
 ): Promise<number> {
   return new Promise<number>((done) => {
     const environment = Object.fromEntries(
@@ -170,6 +173,7 @@ export async function boundedChild(
     child.stderr!.on('data', () => {});
     const ownEnvironment = args[args.indexOf('--env') + 1];
     serveChildFacts(child, config, ownEnvironment);
+    child.on('message',m=>{if(skip && (m as {type?:string})?.type==='skip-ready') child.send(skip);});
     const finish = (code: number | null) => {
       clearTimeout(soft);
       clearTimeout(hard);
@@ -196,12 +200,8 @@ async function main(args: string[], deadline: number): Promise<number> {
       'seed-archive': { type: 'string' },
       sha256: { type: 'string' },
       'seed-advertised-at': { type: 'string' },
-      approval: { type: 'string' },
       artifact: { type: 'string' },
       'publication-sha256': { type: 'string' },
-      run: { type: 'string' },
-      'evidence-sha256': { type: 'string' },
-      apply: { type: 'boolean' },
     },
   });
   if (
@@ -210,11 +210,8 @@ async function main(args: string[], deadline: number): Promise<number> {
     ![
       'run',
       'cycle',
-      'approve',
       'rollback',
       'recertify',
-      'rebaseline',
-      'acknowledge-preartifact',
     ].includes(positionals[0]!)
   ) {
     throw new ImportFailure('configuration');
@@ -234,7 +231,7 @@ async function main(args: string[], deadline: number): Promise<number> {
     await workerIdentity(config.code, resolve(dirname(fileURLToPath(import.meta.url)), '../../..'));
     await privateDirectory(config.root);
     await space.check();
-    if (command !== 'acknowledge-preartifact') await recoverExtraction(space);
+    await recoverExtraction(space);
     try {
       if (command !== 'cycle') return await boundedChild(args, deadline, locks, config);
       const common = [
@@ -252,6 +249,7 @@ async function main(args: string[], deadline: number): Promise<number> {
             deadline,
             locks,
             config,
+            await readDevOutcome(config),
           );
         return dev;
       }
@@ -259,7 +257,7 @@ async function main(args: string[], deadline: number): Promise<number> {
         ? await boundedChild([...common, '--env', 'live'], deadline, locks, config)
         : 0;
     } finally {
-      if (command !== 'acknowledge-preartifact') await recoverExtraction(space);
+      await recoverExtraction(space);
     }
   } finally {
     for (const lock of locks.reverse()) await lock.close();

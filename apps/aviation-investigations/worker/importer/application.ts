@@ -74,7 +74,7 @@ export async function workerIdentity(expected: string, cwd: string): Promise<voi
 export function applicationProbe(
   config: ImporterConfig['dev'],
   indexVersion: string,
-  expectedCounts: { cases: number; eligible: number },
+  expectedCounts: { cases: number; eligible: number; sample?: string },
   http: typeof fetch = globalThis.fetch,
 ): ApplicationProbe {
   async function read(path: string): Promise<string> {
@@ -128,7 +128,7 @@ export function applicationProbe(
         const dashboard = DashboardResponseSchema.parse(
           JSON.parse(await read('/api/dashboard')),
         );
-        const detail = CaseDetailSchema.parse(JSON.parse(await read('/api/cases/DFW08TA066')));
+        const detail = CaseDetailSchema.parse(JSON.parse(await read(`/api/cases/${encodeURIComponent(expectedCounts.sample ?? '')}`)));
         if (
           [
             search.dataset.revision,
@@ -143,10 +143,10 @@ export function applicationProbe(
           dashboard.total !== expectedCounts.eligible
         )
           throw new ImportFailure('probe');
-        const page = await read('/cases/DFW08TA066'),
+        const page = await read(`/cases/${encodeURIComponent(expectedCounts.sample ?? '')}`),
           sitemap = await read('/sitemap.xml');
         if (
-          !page.includes('DFW08TA066') ||
+          !page.includes(expectedCounts.sample ?? '') ||
           !page.includes('<title>') ||
           !sitemap.includes('<sitemapindex')
         )
@@ -177,7 +177,7 @@ export async function propagate(
       await app.read(expected);
       return;
     } catch (e) {
-      if (!(e instanceof ImportFailure) || e.review || now() >= deadline) throw e;
+      if (!(e instanceof ImportFailure) || e.fix || now() >= deadline) throw e;
       await sleep(10_000);
     }
   }

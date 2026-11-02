@@ -23,10 +23,10 @@ export const Sha256 = z.string().regex(/^[0-9a-f]{64}$/);
 export const SourceSchema = AdminImportRunSchema.shape.source.unwrap();
 export type SourceObservation = z.infer<typeof SourceSchema>;
 
-export const POLICY_VERSION = 'snapshot-monthly.v1';
+export const POLICY_VERSION = 'snapshot-automatic.v2';
 export const ADAPTER_VERSION = 'ntsb-avall.v1';
 export const DIGEST_VERSION = 'projected-source.v1';
-export const IMPORT_CAP_MICROS = 500_000;
+export const IMPORT_CAP_MICROS = 2_000_000;
 export const SOURCE_CUTOFF = Date.parse('2027-04-05T00:00:00Z');
 export const SOURCE_REMINDER = Date.parse('2027-03-01T00:00:00Z');
 export function sourceReminder(now: Date): string | null {
@@ -36,8 +36,10 @@ export function sourceReminder(now: Date): string | null {
 }
 export const REMOTE_REFRESH_MS = 7 * 24 * 60 * 60_000;
 
-const TEMPORARY_REASONS = new Set<ImportReason>([
+export const TEMPORARY_REASONS = new Set<ImportReason>([
   'source_unavailable',
+  'source_changed_during_download',
+  'post_success',
   'cache_miss',
   'monthly_budget',
   'busy',
@@ -51,21 +53,18 @@ const TEMPORARY_REASONS = new Set<ImportReason>([
 /** Error messages and causes deliberately cannot carry upstream data. */
 export class ImportFailure extends Error {
   logged = false;
-  constructor(
-    readonly reason: ImportReason,
-    readonly review = !TEMPORARY_REASONS.has(reason),
-    readonly result: 'needs_review' | 'deferred' | 'failed' | 'cancelled' = review
-      ? 'needs_review'
-      : 'deferred',
-  ) {
+  readonly fix: boolean;
+  readonly result: 'deferred' | 'failed' | 'cancelled';
+  constructor(readonly reason: ImportReason, _legacy?: boolean,
+    result?: 'deferred' | 'failed' | 'cancelled') {
     super(reason);
     this.name = 'ImportFailure';
+    this.fix = !TEMPORARY_REASONS.has(reason);
+    this.result = result ?? (this.fix ? 'failed' : 'deferred');
   }
 }
 export function safeFailure(error: unknown): ImportFailure {
-  return error instanceof ImportFailure
-    ? error
-    : new ImportFailure('interrupted', false, 'failed');
+  return error instanceof ImportFailure ? error : new ImportFailure('unclassified');
 }
 export function safeLog(
   step: ImportStep,

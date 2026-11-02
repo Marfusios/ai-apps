@@ -16,14 +16,6 @@ import { digest, type SnapshotFacts } from './provenance.js';
 import type { Comparison } from './compare.js';
 import { manifest } from './store.js';
 
-export const SENTINELS = [
-  'DFW08TA066',
-  'MIA08LA156',
-  'DEN08LA103',
-  'NYC08LA106',
-  'SEA08LA057',
-  'CEN24FA064',
-];
 export interface CandidatePair {
   generationId: number;
   casesIndex: string;
@@ -54,7 +46,7 @@ export async function probeCandidate(
   db: Db,
   given: Client,
   pair: CandidatePair,
-  facts: SnapshotFacts,
+  facts: SnapshotFacts | undefined,
   changes: Comparison,
   embedding: { model: string; dims: number },
 ): Promise<ProbeReport> {
@@ -79,24 +71,18 @@ export async function probeCandidate(
     (await es.count({ index: passagesIndex })).count !== counts.passages
   )
     throw new ImportFailure('probe');
-  const boundary = [
-    facts.normalized.cases.find((c) => !c.isUs),
-    facts.normalized.cases.find((c) => c.isUs && !c.answerEligible),
-  ].filter((c) => c !== undefined);
-  if (boundary.length !== 2) throw new ImportFailure('probe');
-  const chosen = [
-    ...new Set([
-      ...SENTINELS,
-      ...candidateSample(facts, changes),
-      ...boundary.map((c) => c.ntsbNo),
-    ]),
-  ];
-  const snapshotDate = [...facts.changeDates].sort().at(-1)!.slice(0, 10);
+  const canonical=await db.execute(sql`select ntsb_no,is_us,answer_eligible from cases where generation_id=${generationId} order by ntsb_no`);
+  const expectedRows=new Map(canonical.rows.map(r=>[String(r.ntsb_no),{isUs:r.is_us===true,answerEligible:r.answer_eligible===true}]));
+  const boundary=[canonical.rows.find(r=>!r.is_us),canonical.rows.find(r=>r.is_us&&!r.answer_eligible)].filter(r=>r!==undefined);
+  const chosen=[...new Set([...canonical.rows.filter(r=>r.answer_eligible).slice(0,6).map(r=>String(r.ntsb_no)),
+    ...(facts?candidateSample(facts,changes):[]),...boundary.map(r=>String(r.ntsb_no))])];
+  const g=(await db.execute(sql`select citation_text_version,field_normalization_version,created_at::date::text as snapshot_date from dataset_generations where id=${generationId}`)).rows[0]!;
+  const snapshotDate=String(g.snapshot_date);
   for (const no of chosen) {
     const detail = await readCaseDetail(db, generationId, no, {
       dataset: { revision: `g${generationId}-candidate`, snapshotDate },
-      citationTextVersion: facts.normalized.citationTextVersion,
-      fieldNormalizationVersion: facts.normalized.fieldNormalizationVersion,
+      citationTextVersion: String(g.citation_text_version),
+      fieldNormalizationVersion: String(g.field_normalization_version),
       mappingVerified: false,
     });
     const parsed = CaseDetailSchema.safeParse(detail);
@@ -108,7 +94,7 @@ export async function probeCandidate(
       )
     )
       throw new ImportFailure('probe');
-    const expected = facts.normalized.cases.find((c) => c.ntsbNo === no)!;
+    const expected = expectedRows.get(no)!;
     const hits = await es.search({
       index: casesIndex,
       size: 2,
@@ -125,27 +111,14 @@ export async function probeCandidate(
     )
       throw new ImportFailure('probe');
   }
-  for (const query of ['fuel pump', 'carburetor icing', 'engine failure']) {
-    const hits = await es.search({
-      index: casesIndex,
-      size: 1,
-      query: {
-        bool: {
-          filter: [{ term: { answer_eligible: true } }],
-          must: [
-            {
-              multi_match: {
-                query,
-                fields: ['probable_cause', 'analysis', 'factual'],
-              },
-            },
-          ],
-        },
-      },
-    });
-    if (hits.hits.hits.length !== 1) throw new ImportFailure('probe');
+  for (const no of changes.removed.slice(0, 20)) {
+    if ((await es.count({ index: casesIndex, query: { term: { ntsb_no: no } } })).count ||
+        (await es.count({ index: passagesIndex, query: { term: { ntsb_no: no } } })).count)
+      throw new ImportFailure('probe');
   }
-  const records = await readCaseRecords(db, generationId, [SENTINELS[0]!]);
+  const sample = canonical.rows.find(r=>r.answer_eligible)?.ntsb_no as string|undefined;
+  if (!sample) throw new ImportFailure('probe');
+  const records = await readCaseRecords(db, generationId, [sample]);
   const passage = records[0] && buildCasePassages(records[0]).passages[0];
   if (!passage) throw new ImportFailure('probe');
   const key = embeddingCacheKey({

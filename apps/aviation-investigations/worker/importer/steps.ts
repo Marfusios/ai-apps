@@ -1,33 +1,32 @@
 /** State path: baseline → detect/acquire → extract/register → compare → load/verify → plan/index
  * → validate/publish → canary/accept → retention. A latch or pending fetch always precedes detection. */
+import { sql } from 'drizzle-orm';
 import { join } from 'node:path';
 import { APP_DIR } from '../config.js';
 import { CASES_INDEX_VERSION } from '../index/cases-index.js';
 import { cacheOnlyEmbedder, embeddingUsdPerMillion } from '../index/embed.js';
 import { createDryRunSpendGate, createLedgerSpendGate } from '../index/spend-gate.js';
 import { reconcileAlias } from '../index/publications.js';
-import { compareSnapshots } from './compare.js';
-import { checkApproval } from './approval.js';
+import { compareSnapshots, type Comparison } from './compare.js';
+import { adoptServing, servingCounts, checkShrink, compareServing, suppressed, resolveIssues, runMetadata, checkSwitchHold } from './automatic.js';
 import { ImportFailure, POLICY_VERSION, safeLog, sameManifest } from './contracts.js';
-import { checkExtraction, privateDirectory } from './files.js';
+import { checkExtraction, privateDirectory, fileDigest } from './files.js';
 import { recoverExtraction, seedArchive } from './extraction.js';
 import { digest } from './provenance.js';
 import { refreshOwed, sameObservation } from './source.js';
 import { matchingDev } from './facts.js';
 import {
-  observePending,
   PendingSchema,
   recordSuccess,
   setPending,
-  recordLegacy,
   linkPendingArtifact,
-  resolveAbandonedFetch,
 } from './durable.js';
 import {
   accept,
   artifact,
   beginRun,
   budgetRemaining,
+  fenced,
   control,
   findContent,
   linkGeneration,
@@ -37,8 +36,6 @@ import {
   admitArtifact,
   startAttempt,
   startRecertification,
-  unresolvedArtifacts,
-  unresolvedPreartifactReviews,
   outstandingArtifacts,
   originalFetch,
   reusableReference,
@@ -74,319 +71,162 @@ export async function stage(context: ImportContext, step: ImportStep): Promise<v
 }
 
 export async function initialize(context: ImportContext): Promise<void> {
-  requireState(context, 'session');
-  await privateDirectory(context.space.root);
-  await privateDirectory(context.reports);
-  await replayOutage(context.db, context.session, context.space, context.options.environment);
-  context.runId = await beginRun(
-    context.db,
-    context.session,
-    context.options.forcedDev ? 'forced_dev' : 'automatic',
-  );
+  requireState(context,'session');
+  await privateDirectory(context.space.root); await privateDirectory(context.reports);
+  await replayOutage(context.db,context.session,context.space,context.options.environment,context.config.schedule.timeZone);
+  context.runId=await beginRun(context.db,context.session,context.options.forcedDev?'forced_dev':'automatic',context.config.schedule.timeZone);
+  await runMetadata(context);
   await recoverExtraction(context.space);
-  const state = await control(context.db);
-  context.pending = state.pending ? PendingSchema.parse(state.pending) : null;
-  const latched = await unresolvedArtifacts(context.db);
-  const prior = await unresolvedPreartifactReviews(context.db);
-  if (latched.length || context.pending?.needsReview || prior.length) {
-    context.blocked = true;
-    context.artifact = latched[0] ?? null;
-    // A newer upstream advertisement is recorded without downloading or moving the candidate.
-    try {
-      await observePending(context.db, context.session, await context.source.inspect());
-    } catch {
-      /* original review remains authoritative */
-    }
-    throw new ImportFailure(
-      context.artifact?.reason ??
-        context.pending?.reason ??
-        prior[0]?.reason ??
-        'verification',
-    );
-  }
+  const state=await control(context.db);
+  context.pending=state.pending?PendingSchema.parse(state.pending):null;
+  if(context.pending) context.pending.needsReview=false;
+  if(context.pending?.artifactId) context.artifact=await artifact(context.db,context.pending.artifactId);
 }
-
-/** Availability precedes extraction/builds and does not create a source-data review. */
 export async function preflight(context: ImportContext): Promise<void> {
-  if (context.options.noChange) return;
+  if(context.options.noChange) return;
   await context.effects.deployedImage(context.config[context.options.environment]!);
   await context.effects.applicationAvailable(context.config[context.options.environment]!);
 }
-
 export async function establishBaseline(context: ImportContext): Promise<void> {
-  requireState(context, 'session');
-  const state = await control(context.db);
-  const current = await manifest(context.db);
-  if (!current) throw new ImportFailure('baseline_required');
-  context.current = current;
-  if (!state.accepted) {
-    const seed = context.options.seed;
-    if (!seed) throw new ImportFailure('baseline_required');
-    await seedArchive(context.space, seed.path, seed.sha256);
-    context.baseline = await context.effects.extractSnapshot(
-      context.space,
-      seed.sha256,
-      context.options.environment,
-      context.session.assertLocked,
-    );
-    await context.effects.verifyBaseline(context.db, context.baseline, current);
-    context.accepted = {
-      archive: seed.sha256,
-      content: context.baseline.facts.digest,
-      csvHash: context.baseline.csvHash,
-      manifest: current,
-      observation: seed.observation,
-      code: context.config.code,
-    };
-    await recordLegacy(context.db, context.session, context.accepted);
-  } else {
-    context.accepted = state.accepted;
-    context.baseline = await context.effects.readSnapshot(
-      context.space,
-      state.accepted.archive,
-    );
-    if (
-      context.baseline.csvHash !== state.accepted.csvHash ||
-      context.baseline.facts.digest !== state.accepted.content
-    ) {
-      throw new ImportFailure('integrity');
-    }
-    await context.effects.verifyBaseline(
-      context.db,
-      context.baseline,
-      state.accepted.manifest,
-      false,
-    );
-  }
-  // Upgrade recovery for 0027 candidates: preserve their original identity and never fetch a replacement first.
-  if (!context.pending) {
-    const outstanding = await outstandingArtifacts(context.db, context.options.environment);
-    if (outstanding.length > 1) throw new ImportFailure('accounting');
-    if (outstanding[0]) {
-      const saved = outstanding[0];
-      const original = await originalFetch(context.db, saved.id);
-      context.pending = PendingSchema.parse({
-        archive: saved.archive_sha256,
-        content: saved.content_sha256,
-        artifactId: saved.id,
-        runId: original.id,
-        observation: original.source,
-        fetchedAt: original.checked,
-        attempts: 0,
-        needsReview: false,
-        reason: null,
-      });
-      await setPending(context.db, context.session, context.pending);
+  requireState(context,'session');
+  context.current=(await manifest(context.db))??undefined;
+  if(!context.current) throw new ImportFailure('configuration');
+  const unfinished=await outstandingArtifacts(context.db,context.options.environment);
+  if(unfinished.length>1) throw new ImportFailure('accounting');
+  if(unfinished[0] && !context.options.recertify) {
+    context.artifact=unfinished[0];
+    if(!context.pending || context.pending.artifactId!==context.artifact.id) {
+      const original=await originalFetch(context.db,context.artifact.id);
+      context.pending={archive:context.artifact.archive_sha256,content:context.artifact.content_sha256,
+        artifactId:context.artifact.id,runId:original.id,observation:original.source,fetchedAt:original.checked,
+        attempts:0,needsReview:false,reason:null};
+      await setPending(context.db,context.session,context.pending);
     }
   }
-  if (context.pending?.artifactId)
-    context.artifact = await artifact(context.db, context.pending.artifactId);
-  if (
-    !sameManifest(current, context.accepted.manifest) &&
-    !sameManifest(current, context.artifact?.publication ?? null)
-  )
-    throw new ImportFailure('baseline_changed');
+  // While a switch awaits its canary, accepted still describes the protected previous data.
+  const state=await control(context.db);
+  const recovering=context.artifact && ['switching','published','rolling_back'].includes(context.artifact.phase) && !context.options.recertify;
+  context.accepted=recovering && state.accepted ? state.accepted : await adoptServing(context.db,context.session,context.config.code);
+  if(context.options.seed) {
+    await seedArchive(context.space,context.options.seed.path,context.options.seed.sha256);
+  }
+  try { context.baseline=await context.effects.readSnapshot(context.space,context.accepted.archive); }
+  catch { context.baseline=undefined; } // The canonical serving corpus is sufficient; no old ZIP is required.
+  if(context.baseline && context.accepted.csvHash && context.baseline.csvHash!==context.accepted.csvHash) throw new ImportFailure('integrity');
 }
-
-export async function detect(
-  context: ImportContext,
-): Promise<'pending' | 'unchanged' | 'acquire'> {
-  requireState(context, 'session', 'accepted');
-  if (context.pending) {
-    if (context.options.noChange || context.options.recertify)
-      throw new ImportFailure('interrupted', false);
-    context.observation = context.pending.observation;
-    context.sourceChecked = false;
-    return 'pending';
+export async function detect(context: ImportContext): Promise<'pending'|'unchanged'|'acquire'|'waiting'> {
+  requireState(context,'session','accepted');
+  if(context.options.recertify) return 'unchanged';
+  await checkSwitchHold(context);
+  if(context.artifact && ['switching','published','rolling_back'].includes(context.artifact.phase)) return 'pending';
+  if(context.options.forcedDev) return 'acquire';
+  if(context.options.environment==='live' && context.config.live) {
+    if(!context.hostFacts.serving) throw new ImportFailure('configuration');
+    const dev=await context.hostFacts.serving('dev');
+    // Do not independently fetch a moving upstream file after dev has certified its bytes.
+    await matchingDev(context.config,{archive_sha256:dev.archive,content_sha256:dev.content},context.hostFacts,context.effects.deployedImage,context.effects.now());
+    if(dev.archive===context.accepted.archive && dev.content===context.accepted.content) return 'unchanged';
+    if(!dev.observation) throw new ImportFailure('configuration');
+    context.promotion=dev;
+    context.observation=dev.observation;
+    if(await suppressed(context,dev.archive,dev.observation)) return 'waiting';
+    if(context.pending?.archive===dev.archive) return 'pending';
+    return 'acquire';
   }
-  if (context.options.forcedDev) {
-    const completed = await findContent(
-      context.db,
-      context.options.environment,
-      context.accepted.content,
-    );
-    if (completed?.canary) throw new ImportFailure('configuration', false);
+  context.observation=await context.source.inspect(); context.sourceChecked=true;
+  await updateRun(context.db,context.session,context.runId,{step:'check',result:'running',source:context.observation});
+  const state=await control(context.db);
+  if(context.pending) {
+    const same=sameObservation(context.observation,context.pending.observation);
+    if(!same || refreshOwed(state.lastRemoteFetchAt,context.effects.now())) return 'acquire';
+    return await suppressed(context,context.pending.archive,context.pending.observation)?'waiting':'pending';
   }
-  if (context.options.recertify) {
-    context.observation = context.accepted.observation;
-    context.sourceChecked = false;
-    return 'unchanged';
-  }
-  context.observation = await context.source.inspect();
-  context.sourceChecked = true;
-  await updateRun(context.db, context.session, context.runId, {
-    step: 'check',
-    result: 'running',
-    source: context.observation,
-  });
-  if (context.options.noChange) {
-    if (!sameObservation(context.observation, context.accepted.observation))
-      throw new ImportFailure('source_reissued', false);
-    return 'unchanged';
-  }
-  const state = await control(context.db);
-  if (
-    !context.options.forcedDev &&
-    state.lastFetched?.state === 'reviewed_abandoned' &&
-    sameObservation(context.observation, state.lastFetched.observation)
-  )
-    return 'unchanged';
-  if (
-    !context.options.forcedDev &&
-    sameObservation(context.observation, context.accepted.observation) &&
-    !refreshOwed(state.lastRemoteFetchAt, context.effects.now())
-  )
-    return 'unchanged';
+  if(context.accepted.observation && sameObservation(context.observation,context.accepted.observation)
+    && !refreshOwed(state.lastRemoteFetchAt,context.effects.now())) return 'unchanged';
   return 'acquire';
 }
-
-export async function acquire(context: ImportContext): Promise<'pending' | 'unchanged'> {
-  requireState(context, 'session', 'accepted', 'observation');
-  if (context.pending) return 'pending';
-  await stage(context, 'acquire');
-  const acquired = context.options.forcedDev
-    ? { sha256: context.accepted.archive, fetchedAt: context.effects.now().toISOString() }
-    : await context.source.acquire(context.observation, context.space);
-  context.pending = {
-    archive: acquired.sha256,
-    observation: context.options.forcedDev
-      ? context.accepted.observation
-      : context.observation,
-    fetchedAt: acquired.fetchedAt,
-    runId: context.runId,
-    artifactId: null,
-    content: null,
-    attempts: 0,
-    needsReview: false,
-    reason: null,
-  };
-  // No refresh clock can advance without the fetched identity that must be resolved next.
-  await setPending(context.db, context.session, context.pending, !context.options.forcedDev);
-  await context.effects.fault('fetched');
-  if (await resolveAbandonedFetch(context.db, context.session)) {
-    context.pending = null;
-    return 'unchanged';
+export async function acquire(context: ImportContext):Promise<'pending'|'unchanged'|'waiting'> {
+  requireState(context,'session','accepted');
+  const previousPending=context.pending,previousArtifact=context.artifact;
+  context.pending=null; context.artifact=null;
+  await stage(context,'acquire');
+  const target=context.options.forcedDev?context.accepted.archive:context.promotion?.archive;
+  context.observation ??= context.accepted.observation??undefined;
+  requireState(context,'observation');
+  let fetchedAt=context.effects.now().toISOString(), archive:string;
+  if(target) {
+    const path=join(context.space.root,'archives',target);
+    try { if(await fileDigest(path)!==target) throw new ImportFailure('integrity'); }
+    catch {
+      if(context.options.forcedDev) throw new ImportFailure('cache_miss');
+      const got=await context.source.acquire(context.observation,context.space);
+      if(got.sha256!==target) throw new ImportFailure('source_changed_during_download');
+      fetchedAt=got.fetchedAt;
+    }
+    archive=target;
+  } else {
+    const got=await context.source.acquire(context.observation,context.space); archive=got.sha256; fetchedAt=got.fetchedAt;
   }
+  context.pending=previousPending;
+  if(context.pending?.archive!==archive) {
+    if(previousArtifact?.processingId && !previousArtifact.publication)
+      await fenced(context.db,context.session,tx=>tx.execute(sql`update import_processing set phase='abandoned' where id=${previousArtifact.processingId}::uuid`));
+    context.artifact=null;
+    context.pending={archive,observation:context.observation,fetchedAt,runId:context.runId,artifactId:null,content:null,attempts:0,needsReview:false,reason:null};
+  } else context.pending={...context.pending,observation:context.observation,fetchedAt,needsReview:false};
+  await setPending(context.db,context.session,context.pending,!target);
+  await context.effects.fault('fetched');
+  if(await suppressed(context,archive,context.observation)) return 'waiting';
   return 'pending';
 }
-
-export async function extract(context: ImportContext): Promise<void> {
-  requireState(context, 'session', 'pending');
-  await stage(context, 'extract');
-  const pending = context.pending!;
-  if (!pending.artifactId) {
-    if (pending.attempts >= 4) throw new ImportFailure('interrupted', true);
-    pending.attempts++;
-    await setPending(context.db, context.session, pending);
-  }
-  context.candidate = await context.effects.extractSnapshot(
-    context.space,
-    pending.archive,
-    context.options.environment,
-    context.session.assertLocked,
-  );
-  if (pending.content && pending.content !== context.candidate.facts.digest)
-    throw new ImportFailure('integrity');
-  pending.content = context.candidate.facts.digest;
-  await setPending(context.db, context.session, pending);
-  await context.effects.fault('extracted');
+export async function waiting(context:ImportContext):Promise<RunReport> {
+  requireState(context,'session');
+  context.blocked=true;
+  await updateRun(context.db,context.session,context.runId,{step:'check',result:'waiting',source:context.observation??context.pending?.observation,
+    artifactId:context.pending?.artifactId??undefined,observedSha256:context.pending?.archive,sourceCheckSucceeded:false});
+  await fenced(context.db,context.session,tx=>tx.execute(sql`update import_runs set suppressed=true where id=${context.runId}::uuid`));
+  return report(context,'waiting',null);
 }
-
-export async function register(
-  context: ImportContext,
-): Promise<'same_archive' | 'same_content' | 'candidate'> {
-  requireState(context, 'session', 'candidate', 'accepted', 'current');
-  const { db, session, options, pending } = context;
-  if (!pending) throw new ImportFailure('integrity');
-  let saved = await findContent(db, options.environment, context.candidate.facts.digest);
-  if (
-    !options.forcedDev &&
-    context.candidate.facts.digest === context.accepted.content &&
-    sameManifest(context.current, context.accepted.manifest) &&
-    (!saved || saved.canary || saved.resolved_at)
-  ) {
-    // Packaging alone updates the advertisement, not the corpus identity or original artifact allowance.
-    await accept(db, session, { ...context.accepted, observation: pending!.observation });
-    context.accepted = { ...context.accepted, observation: pending!.observation };
-    context.pending = null;
-    return context.candidate.archive === context.accepted.archive
-      ? 'same_archive'
-      : 'same_content';
+export async function extract(context:ImportContext):Promise<void> {
+  requireState(context,'session','pending'); await stage(context,'extract');
+  context.pending.attempts++; await setPending(context.db,context.session,context.pending);
+  context.candidate=await context.effects.extractSnapshot(context.space,context.pending.archive,context.options.environment,context.session.assertLocked);
+  // Digests include normalization versions, so a code upgrade may legitimately change them.
+  context.pending.content=context.candidate.facts.digest;
+  await setPending(context.db,context.session,context.pending); await context.effects.fault('extracted');
+}
+export async function register(context:ImportContext):Promise<'same_archive'|'same_content'|'candidate'> {
+  requireState(context,'session','candidate','accepted','current','pending');
+  const {db,session,options,pending}=context;
+  if(!options.forcedDev && context.candidate.facts.digest===context.accepted.content && sameManifest(context.current,context.accepted.manifest)) {
+    await accept(db,session,{...context.accepted,observation:pending.observation}); (context as ImportContext).pending=null;
+    return context.candidate.archive===context.accepted.archive?'same_archive':'same_content';
   }
-  if (await resolveAbandonedFetch(db, session)) {
-    context.pending = null;
-    return 'same_content';
+  const before=await servingCounts(db,context.accepted.manifest);
+  const candidate={total:context.candidate.facts.normalized.cases.length,eligible:context.candidate.facts.normalized.cases.filter(c=>c.answerEligible).length};
+  checkShrink(candidate,before);
+  if(options.environment==='dev' && context.config.live) {
+    if(!context.hostFacts.serving) throw new ImportFailure('configuration');
+    checkShrink(candidate,(await context.hostFacts.serving('live')).counts);
   }
-  if (saved?.resolved_at || saved?.rollback || saved?.needs_review)
-    throw new ImportFailure(saved.reason ?? 'baseline_changed');
-  if (saved?.archive_sha256 && saved.archive_sha256 !== context.candidate.archive) {
-    context.candidate = await context.effects.readSnapshot(
-      context.space,
-      saved.archive_sha256,
-    );
-  }
-  saved ??= await registerArtifact(
-    db,
-    session,
-    options.environment,
-    context.candidate.archive,
-    context.candidate.facts.digest,
-    context.accepted.manifest,
-  );
-  context.artifact = saved;
-  pending!.artifactId = saved.id;
-  await linkPendingArtifact(db, session, pending, context.runId, saved.id);
+  const recovering=context.artifact && ['switching','published','rolling_back'].includes(context.artifact.phase);
+  const saved=recovering?context.artifact!:await registerArtifact(db,session,options.environment,context.candidate.archive,
+    context.candidate.facts.digest,context.accepted.manifest,{code:context.config.code,image:context.config[options.environment]!.image});
+  context.artifact=saved; pending.artifactId=saved.id;
+  await linkPendingArtifact(db,session,pending,context.runId,saved.id);
   await context.effects.fault('registered');
-  if (
-    saved.canary ||
-    !sameManifest(saved.baseline, context.accepted.manifest) ||
-    !(
-      sameManifest(context.current, context.accepted.manifest) ||
-      sameManifest(context.current, saved.publication)
-    )
-  ) {
-    throw new ImportFailure('baseline_changed');
-  }
-  if (options.environment === 'live')
-    await matchingDev(
-      context.config,
-      saved,
-      context.hostFacts,
-      context.effects.deployedImage,
-      context.effects.now(),
-    );
-  await admitArtifact(db, session, saved.id);
-  await protectBaseline(db, session, saved.id, context.accepted.manifest);
+  if(options.environment==='live') await matchingDev(context.config,saved,context.hostFacts,context.effects.deployedImage,context.effects.now());
+  await admitArtifact(db,session,saved.id);
+  await protectBaseline(db,session,saved.id,saved.baseline??context.accepted.manifest);
   return 'candidate';
 }
-
-export async function compare(context: ImportContext): Promise<void> {
-  requireState(context, 'session', 'baseline', 'candidate', 'accepted', 'pending');
-  const saved = currentArtifact(context);
-  context.comparison = compareSnapshots(
-    context.baseline.facts,
-    context.candidate.facts,
-    context.effects.now(),
-    {
-      accepted: context.accepted.observation,
-      candidate: context.pending!.observation,
-    },
-  );
-  await context.space.json(
-    join(context.reports, `${saved.id}-comparison.json`),
-    context.comparison,
-  );
-  await context.space.json(
-    join(context.reports, `comparison-${context.comparison.hash}.json`),
-    context.comparison,
-  );
-  context.approvedReasons = checkApproval(
-    saved.approved,
-    saved,
-    context.accepted.manifest,
-    context.config.code,
-    context.comparison,
-  );
+export async function compare(context:ImportContext):Promise<void> {
+  requireState(context,'session','candidate','accepted'); const saved=currentArtifact(context);
+  context.comparison=await compareServing(context.db,context.accepted.manifest,context.candidate.facts);
+  const raw=context.baseline ? compareSnapshots(context.baseline.facts,context.candidate.facts,context.effects.now(),
+    context.accepted.observation && context.pending ? {accepted:context.accepted.observation,candidate:context.pending.observation}:undefined) : null;
+  await context.space.json(join(context.reports,`${saved.id}-comparison.json`),{...context.comparison,raw});
+  await fenced(context.db,context.session,tx=>tx.execute(sql`update import_runs set changes=${JSON.stringify({new:context.comparison!.added.length,updated:context.comparison!.changed.length,removed:context.comparison!.removed.length})}::jsonb where id=${context.runId}::uuid`));
 }
 
 export async function load(context: ImportContext): Promise<void> {
@@ -557,7 +397,6 @@ export async function validate(context: ImportContext): Promise<void> {
     'embedding',
     'accepted',
     'genericReport',
-    'approvedReasons',
   );
   await stage(context, 'validate');
   const saved = currentArtifact(context);
@@ -585,7 +424,7 @@ export async function validate(context: ImportContext): Promise<void> {
         )
       : null;
   context.certificate = {
-    version: 'import-certificate.v1',
+    version: 'import-certificate.v2',
     artifactId: saved.id,
     archive: saved.archive_sha256,
     content: saved.content_sha256,
@@ -602,7 +441,6 @@ export async function validate(context: ImportContext): Promise<void> {
     genericReport: context.genericReport,
     comparison: context.comparison.hash,
     probes: probes.hash,
-    approvedReasons: context.approvedReasons,
     dev,
   };
   await context.space.json(
@@ -642,28 +480,17 @@ export async function publish(context: ImportContext): Promise<void> {
 }
 /** A publication committed before an interruption is revalidated under the running worker before canary acceptance. */
 export async function resumePublished(context: ImportContext): Promise<void> {
-  requireState(context, 'session', 'candidate', 'comparison');
-  await startAttempt(context.db, context.session, context.runId, currentArtifact(context).id);
-  context.publication = currentArtifact(context).publication!;
-  context.generation = context.publication.generationId;
+  requireState(context,'session'); const a=currentArtifact(context);
+  if(!a.publication) throw new ImportFailure('integrity');
+  context.publication=a.publication; context.generation=a.publication.generationId;
   await verify(context);
-  await context.effects.verifyBaseline(context.db, context.candidate, context.publication);
-  await context.effects.probeCandidate(
-    context.db,
-    context.es,
-    context.publication,
-    context.candidate.facts,
-    context.comparison,
-    {
-      model: context.appConfig.ai.openai.embeddingModel,
-      dims: context.appConfig.ai.openai.embeddingDimensions,
-    },
-  );
+  const comparison:Comparison={policy:POLICY_VERSION,baseline:a.content_sha256,candidate:a.content_sha256,ok:true,failures:[],changed:[],added:[],removed:[],reassociated:[],usMembershipLost:[],cases:[],counts:{},hash:digest([])};
+  await context.effects.probeCandidate(context.db,context.es,a.publication,undefined,comparison,
+    {model:context.appConfig.ai.openai.embeddingModel,dims:context.appConfig.ai.openai.embeddingDimensions});
 }
 export async function canary(context: ImportContext, recertification = false): Promise<void> {
   requireState(context, 'session', 'accepted');
-  if (recertification) requireState(context, 'baseline');
-  else requireState(context, 'candidate', 'publication');
+  if (!recertification) requireState(context, 'publication');
   await stage(context, 'canary');
   const snapshot = recertification ? context.baseline : context.candidate;
   const publication = recertification ? context.accepted.manifest : context.publication;
@@ -676,22 +503,16 @@ export async function canary(context: ImportContext, recertification = false): P
       },
     );
   }
-  if (!snapshot || !publication) throw new ImportFailure('integrity');
-  const rows = snapshot.facts.normalized.cases;
-  const app = context.effects.applicationProbe(
-    context.config[context.options.environment]!,
-    CASES_INDEX_VERSION,
-    {
-      cases: rows.filter((row) => row.isUs).length,
-      eligible: rows.filter((row) => row.answerEligible).length,
-    },
-  );
+  if (!publication) throw new ImportFailure('integrity');
+  const counts=await servingCounts(context.db,publication);
+  const app=context.effects.applicationProbe(context.config[context.options.environment]!,CASES_INDEX_VERSION,
+    {cases:counts.us,eligible:counts.eligible,sample:counts.sample});
   await context.effects.propagate(app, publication);
   const probes = await context.effects.runCanary(context.db, publication, app);
   const evidence: Canary = {
     publication,
-    archive: snapshot.archive,
-    content: snapshot.facts.digest,
+    archive: recertification?context.accepted.archive:context.artifact!.archive_sha256,
+    content: recertification?context.accepted.content:context.artifact!.content_sha256,
     code: context.config.code,
     deployedCode: app.deployedCode,
     probes,
@@ -703,69 +524,33 @@ export async function canary(context: ImportContext, recertification = false): P
     kind: recertification ? 'recertification' : 'publication',
     canary: evidence,
     accepted: {
-      archive: snapshot.archive,
-      content: snapshot.facts.digest,
-      csvHash: snapshot.csvHash,
+      archive: recertification?context.accepted.archive:context.artifact!.archive_sha256,
+      content: recertification?context.accepted.content:context.artifact!.content_sha256,
+      csvHash: snapshot?.csvHash??context.accepted.csvHash,
       manifest: publication,
-      observation: context.pending?.observation ?? context.accepted.observation,
+      observation: recertification ? context.accepted.observation : context.pending?.observation ?? context.accepted.observation,
       code: context.config.code,
     },
     evidence: digest([evidence, context.genericReport ?? null, context.certificate ?? null]),
     sourceChecked: context.sourceChecked,
   });
-  context.pending = null;
+  if(!recertification) context.pending = null;
   await context.effects.fault('accepted');
 }
 
 /** Free re-certification validates the serving pair without a load, provider, attempt increment or cap reset. */
 export async function recertify(context: ImportContext): Promise<void> {
-  requireState(context, 'session', 'accepted', 'baseline');
-  context.recertifying = true;
-  await startRecertification(
-    context.db,
-    context.session,
-    context.runId,
-    context.accepted.archive,
-  );
-  const saved = await findContent(
-    context.db,
-    context.options.environment,
-    context.accepted.content,
-  );
-  if (saved?.needs_review && !saved.resolved_at)
-    throw new ImportFailure(saved.reason ?? 'verification');
-  context.artifact =
-    saved &&
-    !saved.resolved_at &&
-    !saved.rollback &&
-    sameManifest(saved.publication, context.accepted.manifest)
-      ? saved
-      : null;
-  context.generation = context.accepted.manifest.generationId;
+  requireState(context,'session','accepted'); context.recertifying=true;
+  await startRecertification(context.db,context.session,context.runId,context.accepted.archive);
+  // Keep the waiting artifact out of the serving-data attestation.
+  context.artifact=null;
+  context.generation=context.accepted.manifest.generationId;
   await verify(context);
-  await context.effects.verifyBaseline(
-    context.db,
-    context.baseline,
-    context.accepted.manifest,
-    false,
-  );
-  const comparison = compareSnapshots(
-    context.baseline.facts,
-    context.baseline.facts,
-    context.effects.now(),
-  );
-  await context.effects.probeCandidate(
-    context.db,
-    context.es,
-    context.accepted.manifest,
-    context.baseline.facts,
-    comparison,
-    {
-      model: context.appConfig.ai.openai.embeddingModel,
-      dims: context.appConfig.ai.openai.embeddingDimensions,
-    },
-  );
-  await canary(context, true);
+  const empty:Comparison={policy:POLICY_VERSION,baseline:context.accepted.content,candidate:context.accepted.content,
+    ok:true,failures:[],changed:[],added:[],removed:[],reassociated:[],usMembershipLost:[],cases:[],counts:{},hash:digest([])};
+  await context.effects.probeCandidate(context.db,context.es,context.accepted.manifest,undefined,empty,
+    {model:context.appConfig.ai.openai.embeddingModel,dims:context.appConfig.ai.openai.embeddingDimensions});
+  await canary(context,true);
 }
 export async function cleanup(context: ImportContext): Promise<void> {
   requireState(context, 'session');
@@ -825,9 +610,17 @@ export async function unchanged(
   if (refresh) {
     await recertify(context);
     await cleanup(context);
+    if(!context.options.recertify && !context.pending) {
+      await resolveIssues(context.db,context.session,true);
+      await fenced(context.db,context.session,tx=>tx.execute(sql`update import_runs set good_check=true where id=${context.runId}::uuid`));
+    }
     return report(context, 'unchanged', reason);
   }
   if (!context.options.noChange) await cleanup(context);
+  if(!context.pending) {
+    await resolveIssues(context.db,context.session,true);
+    await fenced(context.db,context.session,tx=>tx.execute(sql`update import_runs set good_check=true where id=${context.runId}::uuid`));
+  }
   await updateRun(context.db, context.session, context.runId, {
     step: 'complete',
     result: 'unchanged',

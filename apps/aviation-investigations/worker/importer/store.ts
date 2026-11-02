@@ -1,7 +1,7 @@
 import pg from 'pg';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { ApprovalSchema } from './approval.js';
+
 import type { Db, DbOrTx } from '../../server/db/client.js';
 import {
   LIFECYCLE_LOCK_KEY,
@@ -11,6 +11,7 @@ import {
 import { digest } from './provenance.js';
 import {
   ImportFailure,
+  IMPORT_CAP_MICROS,
   ManifestSchema,
   CanarySchema,
   Sha256,
@@ -35,7 +36,10 @@ export interface Artifact {
   environment: 'dev' | 'live';
   archive_sha256: string;
   content_sha256: string;
-  needs_review: boolean;
+  processingId: string | null;
+  phase: string;
+  code: string;
+  image: string;
   reason: ImportReason | null;
   generation_id: string | null;
   attempts: number;
@@ -43,12 +47,12 @@ export interface Artifact {
   publication: ManifestIdentity | null;
   certificate: Certificate | null;
   canary: Canary | null;
-  approved: Approval | null;
+
   rollback: ManifestIdentity | null;
-  resolved_at: string | null;
+
 }
 export interface Certificate {
-  version: 'import-certificate.v1';
+  version: 'import-certificate.v2';
   artifactId: string;
   archive: string;
   content: string;
@@ -63,11 +67,11 @@ export interface Certificate {
   };
   code: string;
   deployedCode: string;
-  policy: 'snapshot-monthly.v1';
+  policy: 'snapshot-automatic.v2';
   genericReport: string;
   comparison: string;
   probes: string;
-  approvedReasons: string[];
+
   dev: Canary | null;
 }
 export interface Canary {
@@ -79,19 +83,8 @@ export interface Canary {
   probes: string;
   checkedAt: string;
 }
-export interface Approval {
-  archive: string;
-  environment: 'dev' | 'live';
-  baseline: ManifestIdentity;
-  policy: string;
-  code: string;
-  report: string;
-  reasons: string[];
-  cases: string[];
-}
-
 const CertificateSchema = z.object({
-  version: z.literal('import-certificate.v1'),
+  version: z.enum(['import-certificate.v1', 'import-certificate.v2']),
   artifactId: z.uuid(),
   archive: Sha256,
   content: Sha256,
@@ -106,11 +99,11 @@ const CertificateSchema = z.object({
   }),
   code: z.string(),
   deployedCode: z.string(),
-  policy: z.literal('snapshot-monthly.v1'),
+  policy: z.enum(['snapshot-monthly.v1', 'snapshot-automatic.v2']),
   genericReport: Sha256,
   comparison: Sha256,
   probes: Sha256,
-  approvedReasons: z.array(z.string()),
+
   dev: CanarySchema.nullable(),
 });
 const ArtifactSchema = z.object({
@@ -118,7 +111,8 @@ const ArtifactSchema = z.object({
   environment: z.enum(['dev', 'live']),
   archive_sha256: Sha256,
   content_sha256: Sha256,
-  needs_review: z.boolean(),
+  processingId: z.uuid().nullable(),
+  phase: z.string(), code: z.string(), image: z.string(),
   reason: z.enum(IMPORT_REASONS).nullable(),
   generation_id: z
     .union([z.string().regex(/^\d+$/), z.number().int().positive()])
@@ -129,16 +123,14 @@ const ArtifactSchema = z.object({
   publication: ManifestSchema.nullable(),
   certificate: CertificateSchema.nullable(),
   canary: CanarySchema.nullable(),
-  approved: ApprovalSchema.nullable(),
+
   rollback: ManifestSchema.nullable(),
-  resolved_at: z
-    .union([z.string(), z.date().transform((date) => date.toISOString())])
-    .nullable(),
+
 });
 function parseArtifact(row: unknown): Artifact {
   const parsed = ArtifactSchema.safeParse(row);
   if (!parsed.success) throw new ImportFailure('integrity');
-  return parsed.data;
+  return parsed.data as Artifact;
 }
 
 export async function withImportSession<T>(
@@ -215,29 +207,42 @@ export async function manifest(db: DbOrTx): Promise<ManifestIdentity | null> {
     : null;
 }
 export async function artifact(db: DbOrTx, id: string): Promise<Artifact> {
-  const r = await db.execute(sql`select * from import_artifacts where id=${id}::uuid`);
+  const r = await db.execute(sql`select a.id,a.environment,a.attempts,
+    coalesce(p.archive_sha256,a.archive_sha256) as archive_sha256,
+    coalesce(p.content_sha256,a.content_sha256) as content_sha256,
+    p.id as "processingId",coalesce(p.phase,'building') as phase,coalesce(p.code,'') as code,coalesce(p.image,'') as image,
+    p.reason,p.generation_id,coalesce(p.baseline,a.baseline) as baseline,p.publication,p.certificate,p.canary,p.rollback
+    from import_artifacts a left join import_processing p on p.artifact_id=a.id and p.active where a.id=${id}::uuid`);
   if (!r.rows[0]) throw new ImportFailure('integrity');
   return parseArtifact(r.rows[0]);
 }
-export async function registerArtifact(
-  db: Db,
-  session: ImportSession,
-  environment: 'dev' | 'live',
-  archive: string,
-  content: string,
-  baseline: ManifestIdentity,
-): Promise<Artifact> {
-  return fenced(db, session, async (tx) => {
-    await tx.execute(sql`insert into import_artifacts(environment,archive_sha256,content_sha256,baseline)
-      values(${environment},${archive},${content},${JSON.stringify(baseline)}::jsonb)
-      on conflict(environment,archive_sha256) do nothing`);
-    const r = await tx.execute(
-      sql`select * from import_artifacts where environment=${environment} and archive_sha256=${archive}`,
-    );
-    const a = parseArtifact(r.rows[0]);
-    if (a.content_sha256 !== content) throw new ImportFailure('integrity');
-    return a;
+export async function startProcessing(db: Db, session: ImportSession, id: string,
+  value: { archive: string; content: string; baseline: ManifestIdentity; code: string; image: string }): Promise<Artifact> {
+  return fenced(db, session, async tx => {
+    const a = await artifact(tx,id);
+    if (a.processingId && a.code === value.code && a.image === value.image &&
+        a.archive_sha256 === value.archive && a.content_sha256 === value.content && a.phase !== 'abandoned') return a;
+    if (a.processingId && ['switching','published','rolling_back'].includes(a.phase))
+      throw new ImportFailure('alias_unknown');
+    await tx.execute(sql`update import_processing set active=false where artifact_id=${id}::uuid and active`);
+    await tx.execute(sql`insert into import_processing(artifact_id,archive_sha256,content_sha256,baseline,code,image)
+      values(${id}::uuid,${value.archive},${value.content},${JSON.stringify(value.baseline)}::jsonb,${value.code},${value.image})`);
+    return artifact(tx,id);
   });
+}
+export async function registerArtifact(db: Db, session: ImportSession, environment: 'dev'|'live',
+  archive: string, content: string, baseline: ManifestIdentity,
+  identity = { code: '0'.repeat(40), image: 'sha256:'+'0'.repeat(64) }): Promise<Artifact> {
+  const id = await fenced(db,session,async tx => {
+    // Same bytes or repackaged identical content keep the original monetary identity.
+    let r = await tx.execute(sql`select id from import_artifacts where environment=${environment}
+      and (archive_sha256=${archive} or content_sha256=${content}
+        or exists(select 1 from import_processing p where p.artifact_id=import_artifacts.id and (p.archive_sha256=${archive} or p.content_sha256=${content}))) order by created_at limit 1`);
+    if (!r.rows[0]) r = await tx.execute(sql`insert into import_artifacts(environment,archive_sha256,content_sha256,baseline)
+      values(${environment},${archive},${content},${JSON.stringify(baseline)}::jsonb) returning id`);
+    return String(r.rows[0]!.id);
+  });
+  return startProcessing(db,session,id,{archive,content,baseline,...identity});
 }
 /** Checks age even for cache-only resumes, while locks prevent spending/publication races. */
 export async function resumeArtifact(
@@ -250,7 +255,7 @@ export async function resumeArtifact(
       sql`select import_check_budget(${id}::uuid,${session.fence}::uuid,0::bigint)`,
     );
     const r = await tx.execute(
-      sql`update import_artifacts set attempts=attempts+1 where id=${id}::uuid and attempts<4 returning id`,
+      sql`update import_artifacts set attempts=attempts+1 where id=${id}::uuid returning id`,
     );
     if (r.rows.length !== 1) throw new ImportFailure('interrupted', true);
   });
@@ -264,7 +269,7 @@ export async function budgetRemaining(
     const r = await tx.execute(
       sql`select import_check_budget(${id}::uuid,${session.fence}::uuid,0::bigint) as charged`,
     );
-    return (500_000 - Number(r.rows[0]?.charged)) / 1e6;
+    return (IMPORT_CAP_MICROS - Number(r.rows[0]?.charged)) / 1e6;
   });
 }
 /** Private bounded evidence only, never admission state. No request text, keys, lease tokens or account identifiers. */
@@ -292,8 +297,8 @@ export async function linkGeneration(
   generation: number,
 ): Promise<void> {
   await assertFence(tx, session);
-  const r = await tx.execute(sql`update import_artifacts set generation_id=${generation}
-    where id=${id}::uuid and generation_id is null returning id`);
+  const r = await tx.execute(sql`update import_processing set generation_id=${generation}
+    where artifact_id=${id}::uuid and active and generation_id is null returning id`);
   if (r.rows.length !== 1) throw new ImportFailure('integrity');
   await pinGeneration(tx, generation, `import:${id}`);
 }
@@ -316,28 +321,23 @@ export async function registerCandidate(
     if (r.rows.length !== 1) throw new ImportFailure('integrity');
   });
 }
-export async function review(
-  db: Db,
-  session: ImportSession,
-  id: string,
-  reason: ImportReason,
-): Promise<void> {
-  await fenced(db, session, async (tx) => {
-    await tx.execute(
-      sql`update import_artifacts set needs_review=true,reason=${reason} where id=${id}::uuid`,
-    );
-  });
-}
 export async function beginRun(
   db: Db,
   session: ImportSession,
   mode: 'automatic' | 'forced_dev',
+  zone = 'Europe/Prague',
 ): Promise<string> {
   return fenced(db, session, async (tx) => {
     // Claiming this fence proves the former lock session is gone. Keep failed daily checks bounded too.
-    await tx.execute(sql`update import_runs set result=case when attempt_started then 'failed' else 'deferred' end,
+    const stopped=await tx.execute(sql`update import_runs set result=case when attempt_started then 'failed' else 'deferred' end,
       reason='interrupted',finished_at=clock_timestamp(),
-      source_check_succeeded=false where result='running'`);
+      source_check_succeeded=false where result='running' returning *,to_char(checked_at at time zone ${zone},'YYYY-MM-DD') as failure_day`);
+    for(const row of stopped.rows) {
+      await tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,source,reason,step,origin,fixed,failure_day)
+        values(${digest([row.id,'interrupted'])},${String(row.id)}::uuid,${row.artifact_id as string|null}::uuid,
+        ${row.code as string|null??'0'.repeat(40)},${row.image as string|null??'sha256:'+'0'.repeat(64)},${row.observed_sha256 as string|null},
+        ${row.source?JSON.stringify(row.source):null}::jsonb,'interrupted',${String(row.step)},${row.origin as string|null??'host'},false,${String(row.failure_day)}) on conflict do nothing`);
+    }
     const r = await tx.execute(
       sql`insert into import_runs(mode) values(${mode}) returning id`,
     );
@@ -397,7 +397,7 @@ export async function saveCertificate(
 ): Promise<void> {
   await fenced(db, session, async (tx) => {
     await tx.execute(
-      sql`update import_artifacts set certificate=${JSON.stringify(certificate)}::jsonb where id=${certificate.artifactId}::uuid`,
+      sql`update import_processing set certificate=${JSON.stringify(certificate)}::jsonb where artifact_id=${certificate.artifactId}::uuid and active`,
     );
   });
 }
@@ -405,13 +405,11 @@ export async function saveCertificate(
 export interface AcceptedSnapshot {
   archive: string;
   content: string;
-  csvHash: string;
+  csvHash: string | null;
   manifest: ManifestIdentity;
-  observation: SourceObservation;
+  observation: SourceObservation | null;
   code: string;
-  resolvedPendingRun?: string;
-  resolvedReviews?: ReviewIdentity[];
-  abandonedFetch?: PendingFetch;
+
   validation?: { genericReport: string; verifier: string; probes: string };
 }
 export interface PendingFetch {
@@ -469,10 +467,9 @@ export async function findContent(
   environment: 'dev' | 'live',
   content: string,
 ): Promise<Artifact | null> {
-  const r =
-    await db.execute(sql`select * from import_artifacts where environment=${environment} and content_sha256=${content}
-    order by created_at limit 1`);
-  return r.rows[0] ? parseArtifact(r.rows[0]) : null;
+  const r = await db.execute(sql`select a.id from import_artifacts a left join import_processing p on p.artifact_id=a.id and p.active
+    where a.environment=${environment} and (a.content_sha256=${content} or p.content_sha256=${content}) order by a.created_at limit 1`);
+  return r.rows[0] ? artifact(db, String(r.rows[0].id)) : null;
 }
 /** Executes ON the publication connection, from before validation through the guarded activation transaction. */
 export async function checkCertificate(
@@ -499,10 +496,9 @@ export async function checkCertificate(
   }
   if (
     !a.certificate ||
-    a.needs_review ||
     Number(a.generation_id) !== expected.candidate.generationId ||
-    expected.policy !== 'snapshot-monthly.v1' ||
-    expected.version !== 'import-certificate.v1' ||
+    expected.policy !== 'snapshot-automatic.v2' ||
+    expected.version !== 'import-certificate.v2' ||
     a.archive_sha256 !== expected.archive ||
     a.content_sha256 !== expected.content ||
     a.environment !== expected.environment ||
@@ -537,48 +533,15 @@ export async function checkCertificate(
 }
 
 /** Explicit, parsed recovery queries; no raw database rows escape into step state. */
-export async function unresolvedArtifacts(db: Db): Promise<Artifact[]> {
-  const result = await db.execute(sql`select * from import_artifacts
-    where needs_review and resolved_at is null order by created_at limit 2`);
-  return result.rows.map(parseArtifact);
-}
-export async function outstandingArtifacts(
-  db: Db,
-  environment: 'dev' | 'live',
-): Promise<Artifact[]> {
-  const result = await db.execute(sql`select * from import_artifacts
-    where environment=${environment} and canary is null and resolved_at is null order by created_at limit 2`);
-  return result.rows.map(parseArtifact);
+export async function outstandingArtifacts(db: Db, environment: 'dev'|'live'): Promise<Artifact[]> {
+  const r = await db.execute(sql`select a.id from import_artifacts a join import_processing p on p.artifact_id=a.id
+    where a.environment=${environment} and p.active and p.phase in ('switching','published','rolling_back') order by p.created_at`);
+  return Promise.all(r.rows.map(r=>artifact(db,String(r.id))));
 }
 export async function originalFetch(db: Db, id: string) {
-  const result = await db.execute(sql`select id,source,to_char(checked_at at time zone 'UTC',
-    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as checked from import_runs where artifact_id=${id}::uuid order by checked_at limit 1`);
-  const parsed = z
-    .object({ id: z.uuid(), source: SourceSchema, checked: z.iso.datetime() })
-    .safeParse(result.rows[0]);
-  if (!parsed.success) throw new ImportFailure('accounting');
-  return parsed.data;
-}
-export interface ReviewIdentity {
-  id: string;
-  fingerprint: string;
-}
-export async function unresolvedPreartifactReviews(
-  db: Db,
-): Promise<(ReviewIdentity & { reason: ImportReason })[]> {
-  const rows = await db.execute(sql`select r.id,r.reason,encode(sha256(convert_to(
-    (to_jsonb(r)-'acknowledged_at'-'acknowledgement_sha256')::text,'UTF8')),'hex') as fingerprint
-    from import_runs r where r.result='needs_review' and r.artifact_id is null and r.acknowledged_at is null
-      and not exists(select 1 from import_attestations t where t.kind='rebaseline'
-        and (t.accepted->>'resolvedPendingRun' in (r.id::text,r.pending_run_id::text)
-          or exists(select 1 from jsonb_array_elements(t.accepted->'resolvedReviews') v where v->>'id'=r.id::text)))
-    order by r.checked_at limit 201`);
-  const result = z
-    .array(z.object({ id: z.uuid(), reason: z.enum(IMPORT_REASONS), fingerprint: Sha256 }))
-    .max(200)
-    .safeParse(rows.rows);
-  if (!result.success) throw new ImportFailure('integrity');
-  return result.data;
+  const r = await db.execute(sql`select id,source,checked_at::text as checked from import_runs where artifact_id=${id}::uuid and source is not null order by checked_at limit 1`);
+  if (!r.rows[0]) throw new ImportFailure('accounting');
+  return {id:String(r.rows[0].id),source:SourceSchema.parse(r.rows[0].source),checked:new Date(String(r.rows[0].checked)).toISOString()};
 }
 export async function reusableReference(
   db: Db,
@@ -603,7 +566,7 @@ export async function latestCanary(db: Db, content: string): Promise<Canary | nu
   const result = await db.execute(sql`select t.canary from import_attestations t
     left join import_artifacts a on a.id=t.artifact_id
     where t.canary->>'content'=${content}
-      and (a.id is null or (not a.needs_review and a.resolved_at is null and a.rollback is null))
+      and not exists(select 1 from import_processing p where p.artifact_id=a.id and p.publication=t.publication and p.rollback is not null)
       and not exists(select 1 from import_runs r where r.work_kind='recertification'
         and r.observed_sha256=t.canary->>'archive' and r.checked_at>t.created_at
         and not exists(select 1 from import_attestations newer where newer.run_id=r.id and newer.kind='recertification'))
@@ -617,7 +580,7 @@ export async function admitArtifact(
   id: string,
 ): Promise<void> {
   await budgetRemaining(db, session, id);
-  if ((await artifact(db, id)).attempts >= 4) throw new ImportFailure('interrupted', true);
+
 }
 export async function startAttempt(
   db: Db,

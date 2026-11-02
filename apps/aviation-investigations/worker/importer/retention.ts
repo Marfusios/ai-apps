@@ -18,8 +18,6 @@ export async function retainDatabase(db: Db, es: Client, s: ImportSession): Prom
     await tx.execute(sql`select pg_advisory_xact_lock(7311905022)`);
     const current = await manifest(tx);
     if (!current) throw new ImportFailure('baseline_required');
-    await tx.execute(sql`update import_artifacts set superseded_at=clock_timestamp()
-      where publication is not null and superseded_at is null and publication<>${JSON.stringify(current)}::jsonb`);
     // Existing manual publications also get a full grace window, observed under the same lifecycle lock.
     const retired = await tx.execute(
       sql`select generation_id,published_at::text from dataset_manifests where not active`,
@@ -37,18 +35,21 @@ export async function retainDatabase(db: Db, es: Client, s: ImportSession): Prom
           new Date(Date.now() + 48 * 3_600_000),
         );
     }
-    const old = await tx.execute(sql`select id,generation_id,baseline from import_artifacts
-      where ((canary is not null and not needs_review and rollback is null) or resolved_at is not null)
-        and coalesce(superseded_at,resolved_at)<clock_timestamp()-interval '48 hours'
-        and generation_id not in (select generation_id from dataset_manifests order by active desc,published_at desc limit 2)
-        and exists (select 1 from import_index_refs r where r.artifact_id=import_artifacts.id and released_at is null)`);
-    for (const a of old.rows) {
-      await tx.execute(
-        sql`update import_index_refs set released_at=clock_timestamp() where artifact_id=${String(a.id)}::uuid and released_at is null`,
-      );
-      await unpinGeneration(tx, Number(a.generation_id), `import:${a.id}`);
-      const baseline = a.baseline as { generationId: number };
-      await unpinGeneration(tx, baseline.generationId, `import-previous:${a.id}`);
+    const old = await tx.execute(sql`select r.index_name,r.artifact_id,r.generation_id from import_index_refs r
+      where r.released_at is null and r.created_at < clock_timestamp()-interval '48 hours'
+        and r.generation_id not in (select generation_id from dataset_manifests order by active desc,published_at desc limit 2)
+        and not exists(select 1 from import_processing p where p.artifact_id=r.artifact_id
+          and (p.updated_at>=clock_timestamp()-interval '48 hours'
+            or (p.active and p.phase in ('building','switching','published','rolling_back'))))`);
+    for (const ref of old.rows) {
+      await tx.execute(sql`update import_index_refs set released_at=clock_timestamp()
+        where artifact_id=${String(ref.artifact_id)}::uuid and index_name=${String(ref.index_name)} and released_at is null`);
+      const remaining=await tx.execute(sql`select 1 from import_index_refs where artifact_id=${String(ref.artifact_id)}::uuid
+        and generation_id=${Number(ref.generation_id)} and released_at is null`);
+      if(!remaining.rows.length) {
+        await unpinGeneration(tx,Number(ref.generation_id),`import:${ref.artifact_id}`);
+        await unpinGeneration(tx,Number(ref.generation_id),`import-previous:${ref.artifact_id}`);
+      }
     }
     await tx.execute(sql`select import_prune_runs(${s.fence}::uuid)`);
   });

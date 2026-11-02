@@ -30,6 +30,7 @@ export const IMPORT_STEPS = [
 ] as const;
 export const IMPORT_RESULTS = [
   'running',
+  'waiting',
   'unchanged',
   'published',
   'needs_review',
@@ -71,6 +72,12 @@ export const IMPORT_REASONS = [
   'dev_failed',
   'configuration',
   'cleanup',
+  'shrunk',
+  'unclassified',
+  'site_check',
+  'rollback_failed',
+  'post_success',
+  'manual_rollback',
 ] as const;
 
 export const AdminImportRunSchema = z.strictObject({

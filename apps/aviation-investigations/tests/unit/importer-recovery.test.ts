@@ -37,7 +37,7 @@ describe('real cross-environment matching orchestration', () => {
     expect(await matchingDev(config, candidate, facts, async () => image, now)).toEqual(canary);
     await expect(
       matchingDev(config, candidate, facts, async () => 'sha256:' + 'f'.repeat(64), now),
-    ).rejects.toMatchObject({ reason: 'dev_failed', review: false });
+    ).rejects.toMatchObject({ reason: 'dev_failed', fix: false });
     for (const unavailable of ['missing', 'stopped']) {
       await expect(
         matchingDev(
@@ -49,7 +49,7 @@ describe('real cross-environment matching orchestration', () => {
           },
           now,
         ),
-      ).rejects.toMatchObject({ review: false });
+      ).rejects.toMatchObject({ fix: false });
     }
   });
   it('refuses same-generation republication during the image inspection', async () => {
@@ -69,15 +69,15 @@ describe('real cross-environment matching orchestration', () => {
         },
         now,
       ),
-    ).rejects.toMatchObject({ reason: 'dev_failed', review: false });
+    ).rejects.toMatchObject({ reason: 'dev_failed', fix: false });
   });
 });
 
 it.each([
   ['P2601', 'lock_lost', 'cancelled'],
-  ['P2602', 'restore_hold', 'needs_review'],
-  ['P2603', 'import_cap', 'needs_review'],
-  ['P2604', 'accounting', 'needs_review'],
+  ['P2602', 'restore_hold', 'failed'],
+  ['P2603', 'import_cap', 'failed'],
+  ['P2604', 'accounting', 'failed'],
   ['ECONNRESET', 'interrupted', 'deferred'],
 ])('classifies %s without reading diagnostics', (code, reason, result) => {
   const failure = classify(
@@ -90,9 +90,9 @@ it.each([
 });
 it('keeps unknown failures distinct from temporary admission refusals', () => {
   expect(classify(new Error('PRIVATE_SENTINEL'))).toMatchObject({
-    reason: 'interrupted',
+    reason: 'unclassified',
     result: 'failed',
-    review: false,
+    fix: true,
   });
   expect(classify(new SpendRefusedError('PRIVATE_SENTINEL', 'busy'))).toMatchObject({
     reason: 'busy',
@@ -110,7 +110,7 @@ it('treats unavailable apps and non-200 listings as availability, with bounded j
         throw new Error('PRIVATE_SENTINEL');
       },
     ),
-  ).rejects.toMatchObject({ review: false, reason: 'source_unavailable' });
+  ).rejects.toMatchObject({ fix: false, reason: 'source_unavailable' });
   const sleeps: number[] = [];
   const source = new AvallSource({
     fetch: async () => new Response('PRIVATE_SENTINEL', { status: 503 }),
@@ -121,7 +121,7 @@ it('treats unavailable apps and non-200 listings as availability, with bounded j
     },
   });
   await expect(source.inspect()).rejects.toMatchObject({
-    review: false,
+    fix: false,
     reason: 'source_unavailable',
   });
   expect(sleeps).toEqual([1500, 2500]);
@@ -131,7 +131,7 @@ it('treats unavailable apps and non-200 listings as availability, with bounded j
     sleep: async () => {},
   });
   await expect(forbidden.inspect()).rejects.toMatchObject({
-    review: false,
+    fix: false,
     reason: 'source_unavailable',
   });
 });

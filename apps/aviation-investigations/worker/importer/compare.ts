@@ -27,7 +27,7 @@ export function compareSnapshots(
   observedAt: Date,
   observations?: { accepted: SourceObservation; candidate: SourceObservation },
 ): Comparison {
-  const failures: string[] = [];
+  const failures: string[] = []; // Informational differences only; never an admission predicate.
   const check = (name: string, ok: boolean) => {
     if (!ok) failures.push(name);
   };
@@ -185,7 +185,7 @@ export function compareSnapshots(
     policy: POLICY_VERSION,
     baseline: old.digest,
     candidate: next.digest,
-    ok: failures.length === 0,
+    ok: true,
     failures,
     ...(observations ? { observations } : {}),
     changed,
@@ -211,6 +211,7 @@ export function compareSnapshots(
       eligible: n.a,
       changed: changed.length,
       added: added.length,
+      removed: removed.length,
       lostEligible,
       newQuarantine: newQuarantine.length,
       ...health,

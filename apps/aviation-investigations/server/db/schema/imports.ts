@@ -29,6 +29,8 @@ export const importControl = pgTable(
     lastFetched: jsonb('last_fetched'),
     pendingObservation: jsonb('pending_observation'),
     lastRemoteFetchAt: ts('last_remote_fetch_at'),
+    automaticSince: ts('automatic_since').notNull().defaultNow(),
+    switchHold: jsonb('switch_hold'),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
   (t) => [check('import_control_singleton', sql`${t.id} = 1`)],
@@ -72,6 +74,8 @@ export const importRuns = pgTable('import_runs', {
   finishedAt: ts('finished_at'),
   heartbeatAt: ts('heartbeat_at').notNull().defaultNow(),
   mode: text('mode').notNull(),
+  code: text('code'), image: text('image'), origin: text('origin'), changes: jsonb('changes'), restoration: jsonb('restoration'),
+  goodCheck: boolean('good_check').notNull().default(false), suppressed: boolean('suppressed').notNull().default(false),
   source: jsonb('source'),
   step: text('step').notNull().default('check'),
   result: text('result').notNull().default('running'),
@@ -129,3 +133,28 @@ export const importIndexRefs = pgTable(
   },
   (t) => [primaryKey({ columns: [t.indexName, t.artifactId] })],
 );
+
+/** A rebuild never creates a new monetary identity. Historical artifact fields stay intact. */
+export const importProcessing = pgTable('import_processing', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  artifactId: uuid('artifact_id').notNull().references(() => importArtifacts.id),
+  code: text('code').notNull(), image: text('image').notNull(),
+  archiveSha256: text('archive_sha256').notNull(), contentSha256: text('content_sha256').notNull(),
+  active: boolean('active').notNull().default(true),
+  phase: text('phase').notNull().default('building'), reason: text('reason'),
+  generationId: bigint('generation_id', { mode: 'number' }),
+  baseline: jsonb('baseline').notNull(), certificate: jsonb('certificate'),
+  publication: jsonb('publication'), canary: jsonb('canary'), rollback: jsonb('rollback'),
+  createdAt: ts('created_at').notNull().defaultNow(), updatedAt: ts('updated_at').notNull().defaultNow(),
+});
+export const importIssues = pgTable('import_issues', {
+  key: text('key').primaryKey(), runId: uuid('run_id').references(() => importRuns.id),
+  artifactId: uuid('artifact_id').references(() => importArtifacts.id),
+  code: text('code').notNull(), image: text('image').notNull(), archiveSha256: text('archive_sha256'),
+  source: jsonb('source'), reason: text('reason').notNull(), step: text('step').notNull(),
+  origin: text('origin').notNull(), originRunId: uuid('origin_run_id'), fixed: boolean('fixed').notNull(),
+  siteState: text('site_state').notNull().default('unchanged'),
+  postSuccess: boolean('post_success').notNull().default(false),
+  failureDay: text('failure_day').notNull(), createdAt: ts('created_at').notNull().defaultNow(),
+  lastAt: ts('last_at').notNull().defaultNow(), resolvedAt: ts('resolved_at'),
+});

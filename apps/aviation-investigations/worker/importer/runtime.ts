@@ -47,7 +47,7 @@ export interface RunOptions {
   seed?: { path: string; sha256: string; observation: SourceObservation };
 }
 export interface RunReport {
-  result: 'unchanged' | 'published';
+  result: 'unchanged' | 'published' | 'waiting';
   reason: 'same_archive' | 'same_content' | 'metadata_unchanged' | null;
   archive: string;
   content: string;
@@ -134,7 +134,7 @@ export interface ImportContext extends ImportResources {
   observation?: SourceObservation;
   current?: ManifestIdentity;
   comparison?: Comparison;
-  approvedReasons?: string[];
+  promotion?: import('./facts.js').ServingFacts;
   generation?: number;
   genericReport?: string;
   plan?: Awaited<ReturnType<typeof planPassages>>;
