@@ -113,9 +113,10 @@ it('runs the complete ordered plan with fresh environments and unlocks before re
   const ordered = ['install', 'dev-migrate', 'dev-privileges', 'live-migrate', 'live-privileges', 'preflight', 'live-up', 'dev-up', `write:${f.config.importerConfig}`, `unlock:${f.importer.maintenanceLock}`, `unlock:${f.importer.hostLock}`, 'recertify'];
   const actual = f.events.filter((e) => ordered.includes(e)); expect(actual).toEqual(ordered);
   const afterUp = f.events.indexOf('dev-up');
-  expect(f.events.slice(afterUp, f.events.indexOf(`write:${f.config.importerConfig}`)).filter((v) => v === 'docker:inspect')).toHaveLength(4);
+  expect(f.events.slice(afterUp, f.events.indexOf(`write:${f.config.importerConfig}`)).filter((v) => v === 'docker:inspect')).toHaveLength(3);
   for (const command of f.commands) {
-    expect(Object.keys(command.env).sort()).toEqual(command.env.AVIATION_ENV_FILES ? ['AVIATION_ENV_FILES', 'HOME', 'PATH'] : ['HOME', 'PATH']);
+    expect(Object.keys(command.env).sort()).toEqual(command.args.includes('recertify') ? ['DOCKER_CONTEXT', 'HOME', 'PATH', 'TZ', 'USER'] :
+      command.env.AVIATION_ENV_FILES ? ['AVIATION_ENV_FILES', 'HOME', 'PATH'] : ['HOME', 'PATH']);
     expect(JSON.stringify(command.env)).not.toContain('PRIVATE_LEAK');
   }
   expect(f.commands.find((c) => c.args.includes('recertify'))!.locks).toEqual([]);
@@ -170,13 +171,13 @@ it('concurrent importer config change is not overwritten', async () => {
   };
   expect(await runRelease(f.args, f.fx)).toBe(1); expect(f.writes).not.toContain(f.config.importerConfig);
 });
-it.each([40, 50])('startup level %i fails before starting dev', async (level) => {
-  const f = fakeRelease(); f.behavior.startupLogs = JSON.stringify({ level, msg: 'PRIVATE_WARNING_SENTINEL' });
+it.each([40, 50, 60])('startup level %i fails before starting dev', async (level) => {
+  const f = fakeRelease(); f.behavior.startupLogs.set(f.importer.live!.container, JSON.stringify({ level, msg: 'PRIVATE_WARNING_SENTINEL' }));
   expect(await runRelease(f.args, f.fx)).toBe(1); expect(f.events).not.toContain('dev-up');
   expect(f.output.join('\n')).not.toContain('PRIVATE_WARNING_SENTINEL');
 });
 it('retrying a release checks the same container startup instead of forgetting its warning', async () => {
-  const f = fakeRelease(); f.behavior.startupLogs = '{"level":40,"msg":"startup warning"}';
+  const f = fakeRelease(); f.behavior.startupLogs.set(f.importer.live!.container, '{"level":40,"msg":"startup warning"}');
   expect(await runRelease(f.args, f.fx)).toBe(1);
   f.behavior.clock += 3_600_000;
   expect(await runRelease(f.args, f.fx)).toBe(1);
@@ -186,7 +187,7 @@ it('retrying a release checks the same container startup instead of forgetting i
   expect(f.events).not.toContain('dev-up');
 });
 it('ignores request log lines when checking startup warnings', () => {
-  expect(hasStartupWarning('{"level":50,"msg":"api request"}\nnot json\n{"level":30,"msg":"started"}')).toBe(false);
+  expect(hasStartupWarning('{"level":50,"reqId":"r1","msg":"api request"}\nnot json\n{"level":30,"msg":"started"}')).toBe(false);
 });
 it('bounds health polling and refuses an unexpected signed-out status', async () => {
   const f = fakeRelease(); f.behavior.health = 503; const start = f.behavior.clock;

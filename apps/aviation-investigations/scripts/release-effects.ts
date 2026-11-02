@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readImporterConfig } from '../worker/importer/config.js';
 import { hostLock } from '../worker/importer/host.js';
-import { atomicPrivateReplace, privateLogDirectory, readPrivateFile, ReleaseError } from './release-config.js';
-import type { Command, CommandResult, ReleaseEffects } from './release-runner.js';
+import { atomicPrivateReplace, privateLogDirectory, readPrivateFile, ReleaseError, validateLogDirectory, validatePrivateParent } from './release-config.js';
+import { importerChildEnvironment, type Command, type CommandResult, type ReleaseEffects } from './release-runner.js';
 
 const OUTPUT_LIMIT = 16 * 1024 * 1024;
 async function openLog(path: string): Promise<FileHandle> {
@@ -20,10 +20,10 @@ async function openLog(path: string): Promise<FileHandle> {
 }
 
 /** No shell and no inherited environment. Raw child diagnostics have only a private file destination. */
-export async function runReleaseChild(spec: Command, signal?: AbortSignal): Promise<CommandResult> {
+export async function runReleaseChild(spec: Command, signal?: AbortSignal, forceSignal?: AbortSignal): Promise<CommandResult> {
   const log = spec.log ? await openLog(spec.log) : undefined;
   try {
-    if (signal?.aborted) throw new ReleaseError(1, 'release interrupted');
+    if (signal?.aborted || forceSignal?.aborted) throw new ReleaseError(1, 'release interrupted');
     return await new Promise<CommandResult>((resolve, reject) => {
       const child = spawn(spec.command, spec.args, {
         cwd: spec.cwd, env: spec.env, detached: true,
@@ -43,8 +43,13 @@ export async function runReleaseChild(spec: Command, signal?: AbortSignal): Prom
         kill('SIGTERM');
         hard = setTimeout(() => kill('SIGKILL'), 5000);
       };
+      const force = () => {
+        failure = true;
+        if (!closed) kill('SIGKILL');
+      };
       const timeout = setTimeout(stop, spec.timeoutMs);
       signal?.addEventListener('abort', stop, { once: true });
+      forceSignal?.addEventListener('abort', force, { once: true });
       const receive = (chunk: Buffer, stream: Buffer[], name: 'stdout' | 'stderr') => {
         bytes += chunk.length;
         if (bytes > OUTPUT_LIMIT) { stop(); return; }
@@ -67,6 +72,7 @@ export async function runReleaseChild(spec: Command, signal?: AbortSignal): Prom
         if (failure) kill('SIGKILL');
         clearTimeout(timeout);
         signal?.removeEventListener('abort', stop);
+        forceSignal?.removeEventListener('abort', force);
         if (hard) clearTimeout(hard);
         void writes.then(async () => {
           for (const line of Object.values(pending)) if (line) spec.importerLine?.(line);
@@ -78,21 +84,23 @@ export async function runReleaseChild(spec: Command, signal?: AbortSignal): Prom
   } finally { await log?.close(); }
 }
 
-export function releaseEffects(signal?: AbortSignal): ReleaseEffects {
+export function releaseEffects(signal?: AbortSignal, forceSignal?: AbortSignal): ReleaseEffects {
   const PATH = process.env.PATH, HOME = process.env.HOME;
   if (!PATH || !HOME) throw new ReleaseError(2, 'PATH and HOME must be set');
   return {
     ownCheckout: fileURLToPath(new URL('../../..', import.meta.url)),
-    environment: { PATH, HOME }, now: () => new Date(), realpath,
+    environment: { PATH, HOME }, importerEnvironment: importerChildEnvironment({ PATH, HOME }, process.env), signal,
+    now: () => new Date(), realpath,
     readPrivate: readPrivateFile, readImporter: readImporterConfig,
     lock: (path, env) => hostLock(path, env, false),
+    validateParent: validatePrivateParent, validateLogs: validateLogDirectory,
     prepareLogs: privateLogDirectory,
     async log(path, bytes) {
       const file = await openLog(path);
       try { await file.writeFile(bytes); await file.sync(); } finally { await file.close(); }
     },
     replace: atomicPrivateReplace,
-    run: (spec) => runReleaseChild(spec, signal),
+    run: (spec) => runReleaseChild(spec, signal, forceSignal),
     async httpStatus(url, timeoutMs) {
       const response = await fetch(url, {
         redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),

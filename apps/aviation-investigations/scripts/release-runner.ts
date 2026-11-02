@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { ImporterConfigSchema, type ImporterConfig } from '../worker/importer/config.js';
 import { localClock } from '../worker/importer/status.js';
-import { journalLine } from '../worker/importer/host.js';
+import { IMPORT_DEADLINE_MS, IMPORT_HOST_ENVIRONMENT, journalLine } from '../worker/importer/host.js';
 import { checkDatabaseUrl } from './compose.js';
 import { ReleaseError, outsideCheckout, parseReleaseConfig, repin, versionEdit, type ReleaseConfig } from './release-config.js';
 
@@ -10,6 +10,7 @@ export const QUIET_TIME_ZONE = 'Europe/Prague';
 export const QUIET_START_MINUTE = 3 * 60 + 30;
 export const QUIET_END_MINUTE = 6 * 60;
 export const APP_HEALTH_TIMEOUT_MS = 180_000;
+export const RECERTIFY_TIMEOUT_MS = IMPORT_DEADLINE_MS + 15 * 60_000;
 export const IMAGE_ID = /^sha256:[0-9a-f]{64}$/;
 export const RELEASE_TAG = /^\d{4}\.\d{2}\.\d{2}-[0-9a-f]{7}$/;
 export const STEPS = [
@@ -20,7 +21,7 @@ export type ReleaseStep = typeof STEPS[number];
 const PLAN_STEPS = [
   'install', 'versions', 'dev-migrate; dev-privileges; live-migrate; live-privileges',
   'preflight', 'live-up; health, startup logs and public checks',
-  'dev-canary-up; health, startup logs and image comparison', 'importer-pins',
+  'dev-canary-up; health, version and image comparison', 'importer-pins',
   'release both locks; recertify',
 ];
 export interface ReleaseLock { fd: number; close(): Promise<void> }
@@ -38,14 +39,18 @@ export interface CommandResult { code: number; stdout: string; stderr: string }
 export interface ReleaseEffects {
   ownCheckout: string;
   environment: { PATH: string; HOME: string };
+  importerEnvironment: Record<string, string>;
+  signal?: AbortSignal;
   now(): Date;
   realpath(path: string): Promise<string>;
   readPrivate(path: string, exactMode?: boolean): Promise<Buffer>;
   readImporter(path: string): Promise<ImporterConfig>;
   lock(path: string, env: Record<string, string>): Promise<ReleaseLock>;
+  validateParent(path: string): Promise<void>;
+  validateLogs(path: string, checkout: string): Promise<void>;
   prepareLogs(path: string, checkout: string): Promise<void>;
   log(path: string, bytes: Buffer): Promise<void>;
-  replace(path: string, before: Buffer, after: Buffer, config?: boolean): Promise<void>;
+  replace(path: string, before: Buffer, after: Buffer): Promise<void>;
   run(command: Command): Promise<CommandResult>;
   httpStatus(url: string, timeoutMs: number): Promise<number>;
   sleep(ms: number): Promise<void>;
@@ -58,6 +63,10 @@ export function inReleaseQuietWindow(now: Date): boolean {
 export function childEnvironment(base: { PATH: string; HOME: string }, files?: string[]): Record<string, string> {
   return { PATH: base.PATH, HOME: base.HOME, ...(files ? { AVIATION_ENV_FILES: files.join(',') } : {}) };
 }
+/** Only recertify inherits the same host settings as the daily importer. Never provider/DB keys. */
+export function importerChildEnvironment(base: { PATH: string; HOME: string }, source: NodeJS.ProcessEnv): Record<string, string> {
+  return { ...Object.fromEntries(IMPORT_HOST_ENVIRONMENT.filter((key) => !!source[key]).map((key) => [key, source[key]!])), ...base };
+}
 export function releaseTag(head: string, refs: string): string {
   if (!/^[0-9a-f]{40}$/.test(head)) throw new ReleaseError(2, 'HEAD is not a full commit');
   const candidates = refs.trim().split('\n').filter(Boolean).map((line) => line.split('\t'))
@@ -69,8 +78,9 @@ export function releaseTag(head: string, refs: string): string {
 export function hasStartupWarning(output: string): boolean {
   return output.split('\n').some((line) => {
     try {
-      const value = JSON.parse(line) as { level?: unknown; msg?: unknown };
-      return [40, 50].includes(Number(value.level)) && value.msg !== 'api request';
+      const value: unknown = JSON.parse(line);
+      return typeof value === 'object' && value !== null && !Object.hasOwn(value, 'reqId') &&
+        'level' in value && Number(value.level) >= 40;
     } catch { return false; }
   });
 }
@@ -85,7 +95,11 @@ export function parseReleaseArgs(args: string[]): { config: string; dryRun: bool
 
 function mergedEnv(files: string[], snapshots: Map<string, Buffer>): Record<string, string> {
   const values: Record<string, string> = {};
-  for (const file of [...files].reverse()) Object.assign(values, parseEnv(snapshots.get(file)!.toString('utf8')));
+  for (const file of [...files].reverse()) {
+    for (const [key, value] of Object.entries(parseEnv(snapshots.get(file)!.toString('utf8')))) {
+      if (value !== undefined && value !== '') values[key] = value;
+    }
+  }
   return values;
 }
 function validateEnvironmentFiles(config: ReleaseConfig, snapshots: Map<string, Buffer>, tag: string): void {
@@ -117,6 +131,8 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
   let currentStep = 'config', config: ReleaseConfig | undefined, tag = '', head = '', logs = '';
   let image = '', recertification = 'not run', beforeLive = '?', beforeDev = '?';
   let pinnedCommit = 'not read';
+  let log: string | undefined;
+  const interrupted = () => { if (fx.signal?.aborted) throw new ReleaseError(1, 'release interrupted'); };
   const closeLocks = async () => {
     let failed = false;
     while (locks.length) try { await locks.pop()!.close(); } catch { failed = true; }
@@ -126,32 +142,38 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
     if (tag) fx.print(`summary: live ${beforeLive} -> ${tag}; dev ${beforeDev} -> ${tag}; image ${image ? image.slice(0, 19) : 'not verified'}; pinned commit ${pinnedCommit}; recertify ${recertification}; logs ${logs || 'not written'}`);
   };
   try {
+    interrupted();
     const options = parseReleaseArgs(args);
     config = parseReleaseConfig(await fx.readPrivate(options.config, false));
     const c = config;
     const env = childEnvironment(fx.environment);
     const appDir = join(c.checkout, 'apps/aviation-investigations');
     const precheckOutput: string[] = [];
-    let log: string | undefined;
-    const command = async (name: string, values: string[], files?: string[], timeoutMs = 30_000, importerLine?: (line: string) => void) => {
-      const r = await fx.run({ command: name, args: values, cwd: appDir, env: childEnvironment(fx.environment, files),
+    const command = async (name: string, values: string[], files?: string[], timeoutMs = 30_000, importerLine?: (line: string) => void, importerHost = false) => {
+      interrupted();
+      const r = await fx.run({ command: name, args: values, cwd: appDir,
+        env: importerHost ? importerChildEnvironment(fx.environment, fx.importerEnvironment) : childEnvironment(fx.environment, files),
         timeoutMs, log, locks, importerLine });
+      interrupted();
       if (!log) precheckOutput.push(r.stdout, r.stderr);
       return r;
     };
     const checked = async (name: string, values: string[], files?: string[], timeoutMs?: number) => {
       const r = await command(name, values, files, timeoutMs);
-      if (r.code !== 0) throw new ReleaseError(log ? 1 : 2, `${name} command failed; see the private step log if available`);
+      if (r.code !== 0) throw new ReleaseError(log ? 1 : 2, `${name} command failed${log ? '; see the private step log' : ''}`);
       return r.stdout.trim();
     };
-    const check = async (name: string, action: () => Promise<void>) => { currentStep = name; await action(); fx.print(`${name}: ok`); };
+    const check = async (name: string, action: () => Promise<void>) => { currentStep = name; interrupted(); await action(); interrupted(); fx.print(`${name}: ok`); };
     currentStep = 'checkout';
     await check('checkout', async () => {
-      if (await fx.realpath(fx.ownCheckout) !== await fx.realpath(c.checkout)) throw new ReleaseError(2, 'run from the configured checkout, not another worktree');
+      let own: string, configured: string;
+      try { own = await fx.realpath(fx.ownCheckout); configured = await fx.realpath(c.checkout); }
+      catch { throw new ReleaseError(2, 'checkout not found or inaccessible'); }
+      if (own !== configured) throw new ReleaseError(2, 'run from the configured checkout, not another worktree');
       if ((await checked('git', ['branch', '--show-current'])) !== c.branch) throw new ReleaseError(2, 'checkout branch does not match config');
       if (await checked('git', ['status', '--porcelain', '--untracked-files=normal'])) throw new ReleaseError(2, 'checkout has tracked or untracked changes');
       head = await checked('git', ['rev-parse', 'HEAD']);
-      tag = releaseTag(head, await checked('git', ['for-each-ref', '--points-at', 'HEAD', '--format=%(refname:short)\t%(objecttype)', 'refs/tags/']));
+      tag = releaseTag(head, await checked('git', ['for-each-ref', '--points-at', 'HEAD', '--format=%(refname:lstrip=2)\t%(objecttype)', 'refs/tags/']));
     });
     await check('quiet-window', async () => {
       if (inReleaseQuietWindow(fx.now())) throw new ReleaseError(75, 'releases pause from 03:30 to 06:00 Europe/Prague');
@@ -159,23 +181,32 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
     let importer!: ImporterConfig;
     let importerBytes!: Buffer;
     const snapshots = new Map<string, Buffer>();
+    const exactModes = new Map<string, boolean>();
     await check('files', async () => {
-      importerBytes = await fx.readPrivate(c.importerConfig, false);
-      importer = await fx.readImporter(c.importerConfig);
+      importerBytes = await fx.readPrivate(c.importerConfig);
+      let parsed: ImporterConfig;
+      try {
+        importer = await fx.readImporter(c.importerConfig);
+        parsed = ImporterConfigSchema.parse(JSON.parse(importerBytes.toString('utf8')));
+      } catch { throw new ReleaseError(2, 'importer config is invalid (readImporterConfig)'); }
       pinnedCommit = importer.code;
       if (!importer.live || importer.live.container === importer.dev.container) throw new ReleaseError(2, 'importer config must name distinct live and dev containers');
-      if (JSON.stringify(ImporterConfigSchema.parse(JSON.parse(importerBytes.toString('utf8')))) !== JSON.stringify(importer))
+      if (JSON.stringify(parsed) !== JSON.stringify(importer))
         throw new ReleaseError(2, 'importer config changed during checks');
       // Check the version/env files as well as the worker files recertify will read.
-      const paths = new Set([c.live.versionFile, c.dev.versionFile, ...c.live.composeEnvFiles,
+      for (const path of [...importer.dev.envFiles, ...importer.live.envFiles, importer.hostLock, importer.maintenanceLock]) exactModes.set(path, false);
+      // A file with both roles retains the stricter release-file rule.
+      for (const path of [c.live.versionFile, c.dev.versionFile, ...c.live.composeEnvFiles,
         ...c.live.preflightEnvFiles, c.live.migratorEnvFile, ...c.dev.migrateEnvFiles,
-        ...c.dev.canaryEnvFiles, c.dev.migratorEnvFile, ...importer.dev.envFiles, ...importer.live.envFiles,
-        importer.hostLock, importer.maintenanceLock]);
-      for (const path of paths) snapshots.set(path, await fx.readPrivate(path));
-      for (const path of [options.config, c.importerConfig, ...paths]) {
+        ...c.dev.canaryEnvFiles, c.dev.migratorEnvFile]) exactModes.set(path, true);
+      for (const [path, exact] of exactModes) snapshots.set(path, await fx.readPrivate(path, exact));
+      for (const path of [options.config, c.importerConfig, ...exactModes.keys()]) {
         if (!outsideCheckout(await fx.realpath(path), await fx.realpath(c.checkout))) throw new ReleaseError(2, 'private release files must be outside the checkout');
       }
       if (!outsideCheckout(resolve(c.logDir), resolve(c.checkout))) throw new ReleaseError(2, 'release logs must be outside the checkout');
+      for (const path of [c.live.versionFile, c.dev.versionFile, c.importerConfig]) await fx.validateParent(path);
+      await fx.validateLogs(c.logDir, c.checkout);
+      await fx.validateLogs(join(c.logDir, tag), c.checkout);
       beforeLive = versionEdit(snapshots.get(c.live.versionFile)!, tag).current;
       beforeDev = versionEdit(snapshots.get(c.dev.versionFile)!, tag).current;
       validateEnvironmentFiles(c, snapshots, tag);
@@ -190,8 +221,8 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
         throw new ReleaseError(2, 'could not acquire the importer locks');
       }
       // A competing invocation could have changed a config while these files were being checked.
-      if (!(await fx.readPrivate(c.importerConfig, false)).equals(importerBytes)) throw new ReleaseError(2, 'importer config changed during checks');
-      for (const [path, bytes] of snapshots) if (!(await fx.readPrivate(path)).equals(bytes)) throw new ReleaseError(2, 'env or lock file changed during checks');
+      if (!(await fx.readPrivate(c.importerConfig)).equals(importerBytes)) throw new ReleaseError(2, 'importer config changed during checks');
+      for (const [path, bytes] of snapshots) if (!(await fx.readPrivate(path, exactModes.get(path))).equals(bytes)) throw new ReleaseError(2, 'env or lock file changed during checks');
     });
     const inspectImage = async (container: string) => {
       const value = await checked('docker', ['inspect', '--type', 'container', '--format', '{{.Image}}', container]);
@@ -206,25 +237,35 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
       fx.print(`plan: live APP_VERSION ${beforeLive} -> ${tag}; dev APP_VERSION ${beforeDev} -> ${tag}`);
       fx.print(`plan: importer code ${importer.code} -> ${head}; image ${importer.dev.image} -> built in step 5 (live app:up; Compose may build it during migration)`);
       PLAN_STEPS.forEach((s, i) => fx.print(`plan ${i + 1}: ${s}`));
+      currentStep = 'release-locks';
+      await closeLocks();
+      interrupted();
       fx.print('dry-run: ok; no files written or deployment commands run');
       return 0;
     }
-    logs = join(c.logDir, tag);
     currentStep = 'logs';
-    await fx.prepareLogs(c.logDir, c.checkout);
-    await fx.prepareLogs(logs, c.checkout);
+    try {
+      await fx.prepareLogs(c.logDir, c.checkout);
+      await fx.prepareLogs(join(c.logDir, tag), c.checkout);
+    } catch (e) { throw e instanceof ReleaseError ? e : new ReleaseError(2, 'release log directory could not be prepared'); }
+    logs = join(c.logDir, tag);
     await fx.log(join(logs, '00-checks.log'), Buffer.from(precheckOutput.join('\n')));
     const step = async (name: ReleaseStep, action: () => Promise<void>) => {
       currentStep = name;
-      log = join(logs, `${String(STEPS.indexOf(name) + 1).padStart(2, '0')}-${name}.log`);
-      await fx.log(log, Buffer.from(`release ${tag}: ${name}\n`));
+      interrupted();
+      log = undefined;
+      const nextLog = join(logs, `${String(STEPS.indexOf(name) + 1).padStart(2, '0')}-${name}.log`);
+      await fx.log(nextLog, Buffer.from(`release ${tag}: ${name}\n`));
+      log = nextLog;
       await action();
+      interrupted();
       fx.print(`${name}: ok`);
     };
     const pnpm = (script: string, files?: string[]) => checked('pnpm', ['-s', script], files, 30 * 60_000);
     await step('install', async () => { await checked('pnpm', ['install', '--frozen-lockfile'], undefined, 15 * 60_000); });
     await step('versions', async () => {
       for (const path of [c.live.versionFile, c.dev.versionFile]) {
+        interrupted();
         const before = snapshots.get(path)!;
         await fx.replace(path, before, versionEdit(before, tag).bytes);
       }
@@ -238,6 +279,7 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
       await pnpm('app:up', files);
       const deadline = fx.now().getTime() + APP_HEALTH_TIMEOUT_MS;
       for (;;) {
+        interrupted();
         const remaining = deadline - fx.now().getTime();
         if (remaining <= 0) throw new ReleaseError(1, 'app health did not return 200 within 180 seconds');
         if (await fx.httpStatus(new URL('/api/config', target.applicationUrl).href, Math.min(10_000, remaining)).catch(() => 0) === 200) break;
@@ -246,16 +288,17 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
       const version = await checked('docker', ['inspect', '--type', 'container', '--format',
         '{{range .Config.Env}}{{if eq (index (split . "=") 0) "APP_VERSION"}}{{println .}}{{end}}{{end}}', target.container]);
       if (version && version !== `APP_VERSION=${tag}`) throw new ReleaseError(1, 'running APP_VERSION does not match the release tag');
-      // Check this container's startup even on a no-restart retry. Using release start time
-      // would silently forgive the warning that stopped the previous invocation.
-      const state = await checked('docker', ['inspect', '--type', 'container', '--format', '{{.State.Running}} {{.State.StartedAt}}', target.container]);
-      const since = /^true (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z)$/.exec(state)?.[1];
-      if (!since || !Number.isFinite(Date.parse(since))) throw new ReleaseError(1, 'container is not running with a valid startup time');
-      const until = new Date(Date.parse(since) + APP_HEALTH_TIMEOUT_MS).toISOString();
-      const r = await command('docker', ['logs', '--since', since, '--until', until, target.container]);
-      if (r.code !== 0) throw new ReleaseError(1, 'could not read startup logs');
-      if (hasStartupWarning(r.stdout + '\n' + r.stderr)) throw new ReleaseError(1, 'startup warning or error; see the private step log');
       if (publicChecks) {
+        // Only live has a startup-log gate: the private canary intentionally disables AI and sign-in.
+        // Check this container's startup even on a no-restart retry. Using release start time
+        // would silently forgive the warning that stopped the previous invocation.
+        const state = await checked('docker', ['inspect', '--type', 'container', '--format', '{{.State.Running}} {{.State.StartedAt}}', target.container]);
+        const since = /^true (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z)$/.exec(state)?.[1];
+        if (!since || !Number.isFinite(Date.parse(since))) throw new ReleaseError(1, 'container is not running with a valid startup time');
+        const until = new Date(Date.parse(since) + APP_HEALTH_TIMEOUT_MS).toISOString();
+        const r = await command('docker', ['logs', '--since', since, '--until', until, target.container]);
+        if (r.code !== 0) throw new ReleaseError(1, 'could not read startup logs');
+        if (hasStartupWarning(r.stdout + '\n' + r.stderr)) throw new ReleaseError(1, 'startup warning or error; see the private step log');
         for (const [path, expected] of [['/', 200], ['/privacy', 200], ['/api/admin/overview', 404], ['/admin', 404]] as const) {
           if (await fx.httpStatus(new URL(path, c.publicUrl).href, 15_000).catch(() => 0) !== expected)
             throw new ReleaseError(1, `signed-out public check failed: ${path} must return ${expected}`);
@@ -272,19 +315,22 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
       if (await checked('git', ['rev-parse', 'HEAD']) !== head ||
         await checked('git', ['status', '--porcelain', '--untracked-files=normal']) ||
         await checked('git', ['branch', '--show-current']) !== c.branch ||
-        releaseTag(head, await checked('git', ['for-each-ref', '--points-at', 'HEAD', '--format=%(refname:short)\t%(objecttype)', 'refs/tags/'])) !== tag)
+        releaseTag(head, await checked('git', ['for-each-ref', '--points-at', 'HEAD', '--format=%(refname:lstrip=2)\t%(objecttype)', 'refs/tags/'])) !== tag)
         throw new ReleaseError(1, 'checkout or release tag changed during release');
-      await fx.replace(c.importerConfig, importerBytes, repin(importerBytes, head, image), true);
+      interrupted();
+      await fx.replace(c.importerConfig, importerBytes, repin(importerBytes, head, image));
       pinnedCommit = head;
     });
+    currentStep = 'release-locks';
     await closeLocks();
+    fx.print('release-locks: ok');
     await step('recertify', async () => {
       let last: { step: string; result: string; reason: string | null } | undefined;
       const line = (raw: string) => {
         const safe = journalLine(raw);
         if (safe) { fx.print(safe); last = JSON.parse(safe) as typeof last; }
       };
-      const r = await command('pnpm', ['-s', 'importer', 'recertify', '--config', c.importerConfig, '--env', 'dev'], undefined, 20 * 60_000, line);
+      const r = await command('pnpm', ['-s', 'importer', 'recertify', '--config', c.importerConfig, '--env', 'dev'], undefined, RECERTIFY_TIMEOUT_MS, line, true);
       recertification = last ? `${last.result}/${last.reason ?? 'none'}` : 'no final step';
       if (r.code !== 0 || last?.step !== 'complete' || last.result !== 'unchanged') throw new ReleaseError(1, `recertification failed: ${recertification}`);
       recertification = 'unchanged';
@@ -292,10 +338,11 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
     summary();
     return 0;
   } catch (e) {
-    const error = e instanceof ReleaseError ? e : new ReleaseError(currentStep === 'config' || ['checkout', 'files', 'locks', 'docker'].includes(currentStep) ? 2 : 1, 'operation failed; inspect the private step log if available');
+    let error = e instanceof ReleaseError ? e : new ReleaseError(currentStep === 'config' || ['checkout', 'files', 'locks', 'docker', 'logs'].includes(currentStep) ? 2 : 1, `operation failed${log ? '; inspect the private step log' : ''}`);
+    try { await closeLocks(); } catch { currentStep = 'release-locks'; error = new ReleaseError(1, 'could not close a release lock'); }
     fx.print(`${currentStep}: failed; ${error.message}`);
     if (currentStep === 'recertify') fx.print('Recovery: every release step is idempotent. Fix the cause and rerun pnpm app:release; the daily importer also re-certifies on its own.');
     summary();
     return logs && error.exitCode === 2 ? 1 : error.exitCode;
-  } finally { await closeLocks(); }
+  }
 }

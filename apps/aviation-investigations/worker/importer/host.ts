@@ -21,6 +21,14 @@ import { workerIdentity } from './application.js';
 import { classify } from './failure.js';
 import { FactMessageSchema, readHostFacts } from './facts.js';
 
+/** Includes lock acquisition, recovery, both environments and final daemon cleanup. */
+export const IMPORT_DEADLINE_MS = 3 * 3_600_000;
+export const IMPORT_HOST_ENVIRONMENT = [
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR',
+  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'XDG_RUNTIME_DIR',
+  'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG',
+] as const;
+
 /**
  * flock on the inherited open file description: the parent retains it after the helper exits.
  * The release command supplies a fresh environment and create=false for read-only dry-run checks.
@@ -99,25 +107,8 @@ export async function boundedChild(
   config: ImporterConfig,
 ): Promise<number> {
   return new Promise<number>((done) => {
-    const names = [
-      'PATH',
-      'HOME',
-      'USER',
-      'LOGNAME',
-      'LANG',
-      'LC_ALL',
-      'TZ',
-      'TMPDIR',
-      'NODE_EXTRA_CA_CERTS',
-      'SSL_CERT_FILE',
-      'SSL_CERT_DIR',
-      'XDG_RUNTIME_DIR',
-      'DOCKER_HOST',
-      'DOCKER_CONTEXT',
-      'DOCKER_CONFIG',
-    ];
     const environment = Object.fromEntries(
-      names.filter((n) => Boolean(process.env[n])).map((n) => [n, process.env[n]!]),
+      IMPORT_HOST_ENVIRONMENT.filter((n) => Boolean(process.env[n])).map((n) => [n, process.env[n]!]),
     ) as NodeJS.ProcessEnv;
     const child = spawn(
       process.execPath,
@@ -276,11 +267,11 @@ async function main(args: string[], deadline: number): Promise<number> {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   // Includes lock acquisition, recovery, both environments and final daemon cleanup.
-  const deadline = Date.now() + 3 * 3_600_000;
+  const deadline = Date.now() + IMPORT_DEADLINE_MS;
   const final = setTimeout(() => {
     process.stderr.write(`${safeLog('cleanup', 'cancelled', 'timeout')}\n`);
     process.exit(124);
-  }, 3 * 3_600_000);
+  }, IMPORT_DEADLINE_MS);
   main(process.argv.slice(2), deadline)
     .then(
       (code) => {

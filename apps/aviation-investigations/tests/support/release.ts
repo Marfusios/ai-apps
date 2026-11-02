@@ -38,11 +38,15 @@ export function fakeRelease() {
   ]);
   const events: string[] = [], output: string[] = [], commands: Command[] = [], writes: string[] = [];
   const logs = new Map<string, string>();
+  const modes = new Map<string, number>();
   const images = new Map([[importer.dev.container, OLD_IMAGE], [importer.live!.container, OLD_IMAGE]]);
   const behavior = {
     branch: config.branch, dirty: '', head: RELEASE_HEAD, tags: `${RELEASE_VERSION}\ttag\n`,
-    fail: '', busy: '', badFile: '', clock: Date.parse('2026-11-01T11:00:00Z'),
-    startupLogs: '', recertify: { code: 0, line: '{"step":"complete","result":"unchanged","reason":null}' },
+    fail: '', busy: '', badFile: '', badParent: '', badLogs: '', prepareLogsFailure: '', closeFailure: '',
+    sameNameBranch: false, clock: Date.parse('2026-11-01T11:00:00Z'),
+    startupLogs: new Map([[importer.live!.container, ''], [importer.dev.container,
+      '{"level":40,"msg":"AI feature off"}\n{"level":40,"msg":"Google sign-in off"}']]),
+    recertify: { code: 0, line: '{"step":"complete","result":"unchanged","reason":null}' },
     devImage: RELEASE_IMAGE, runningVersion: '', health: 200,
     httpOverrides: new Map<string, number>(),
   };
@@ -53,15 +57,18 @@ export function fakeRelease() {
     if (spec.args.includes('recertify')) return 'recertify';
     if (spec.args.includes('ai-preflight')) return 'preflight';
     if (spec.args.includes('scripts/release-privileges.ts')) return `${spec.args.at(-1)}-privileges`;
-    const env = parseEnv(files.get(spec.env.AVIATION_ENV_FILES!.split(',')[0]!)!.toString()).APP_ENV;
+    const env = spec.env.AVIATION_ENV_FILES!.split(',')
+      .map((p) => parseEnv(files.get(p)!.toString()).APP_ENV).find(Boolean);
     return `${env}-${spec.args.includes('app:migrate') ? 'migrate' : 'up'}`;
   };
   const fx: ReleaseEffects = {
     ownCheckout: config.checkout, environment: { PATH: '/example/bin', HOME: '/example/home' },
+    importerEnvironment: { USER: 'operator', TZ: 'UTC', DOCKER_CONTEXT: 'offline-context' },
     now: () => new Date(behavior.clock), realpath: async (p) => p,
-    async readPrivate(p) {
+    async readPrivate(p, exactMode = true) {
       events.push(`read:${p}`);
-      if (p === behavior.badFile || !files.has(p)) throw new ReleaseError(2, 'private file refused');
+      const mode = modes.get(p) ?? 0o600;
+      if (p === behavior.badFile || !files.has(p) || (exactMode ? mode !== 0o600 : (mode & 0o077) !== 0)) throw new ReleaseError(2, 'private file refused');
       return Buffer.from(files.get(p)!);
     },
     async readImporter(p) { return ImporterConfigSchema.parse(JSON.parse((await fx.readPrivate(p)).toString())); },
@@ -69,9 +76,17 @@ export function fakeRelease() {
       if (JSON.stringify(env) !== JSON.stringify(fx.environment)) throw new Error('dirty lock environment');
       events.push(`lock:${p}`);
       if (behavior.busy === p) throw { reason: 'busy' };
-      return { fd: p === importer.hostLock ? 100 : 101, close: async () => { events.push(`unlock:${p}`); } };
+      return { fd: p === importer.hostLock ? 100 : 101, close: async () => {
+        events.push(`unlock:${p}`);
+        if (p === behavior.closeFailure) throw new Error('close failed');
+      } };
     },
-    async prepareLogs(p) { events.push(`mkdir:${p}`); },
+    async validateParent(p) { if (p === behavior.badParent) throw new ReleaseError(2, 'private file parent is unsafe'); },
+    async validateLogs(p) { if (p === behavior.badLogs) throw new ReleaseError(2, 'unsafe release log directory'); },
+    async prepareLogs(p) {
+      if (p === behavior.prepareLogsFailure) throw new Error('prepare failed');
+      events.push(`mkdir:${p}`);
+    },
     async log(p, bytes) { logs.set(p, (logs.get(p) ?? '') + bytes.toString()); },
     async replace(p, before, after) {
       if (!files.get(p)?.equals(before)) throw new ReleaseError(1, 'private file changed during release');
@@ -86,8 +101,10 @@ export function fakeRelease() {
       if (spec.command === 'git') {
         stdout = spec.args[0] === 'branch' ? behavior.branch : spec.args[0] === 'status' ? behavior.dirty :
           spec.args[0] === 'rev-parse' ? behavior.head : behavior.tags;
+        if (spec.args[0] === 'for-each-ref' && behavior.sameNameBranch && spec.args.some((a) => a.includes('refname:short')))
+          stdout = stdout.replace(RELEASE_VERSION, `tags/${RELEASE_VERSION}`);
       } else if (spec.command === 'docker') {
-        if (spec.args[0] === 'logs') stdout = behavior.startupLogs;
+        if (spec.args[0] === 'logs') stdout = behavior.startupLogs.get(spec.args.at(-1)!) ?? '';
         else if (spec.args.includes('{{.Image}}')) stdout = images.get(spec.args.at(-1)!) ?? '';
         else if (spec.args.some((a) => a.includes('.State.StartedAt'))) stdout = 'true 2026-11-01T10:59:00.000000000Z';
         else stdout = behavior.runningVersion || `APP_VERSION=${RELEASE_VERSION}`;
@@ -109,6 +126,6 @@ export function fakeRelease() {
     },
     async sleep(ms) { behavior.clock += ms; }, print: (line) => output.push(line),
   };
-  return { config, importer, files, fx, events, output, commands, writes, logs, behavior, images,
+  return { config, importer, files, fx, events, output, commands, writes, logs, behavior, images, modes,
     args: ['--config', '/example/private/release.json'] };
 }

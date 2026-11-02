@@ -52,7 +52,7 @@ export async function readPrivateFile(path: string, exactMode = true): Promise<B
       if (length > PRIVATE_FILE_LIMIT) throw new Error();
       return bytes.subarray(0, length);
     } finally { await file.close(); }
-  } catch { throw new ReleaseError(2, 'private file must be regular, owned by this user, not a symlink, and mode 0600 (config: owner-only)'); }
+  } catch { throw new ReleaseError(2, `private file must be regular, owned by this user, not a symlink, and ${exactMode ? 'mode 0600' : 'owner-only'}`); }
 }
 
 export function outsideCheckout(path: string, checkout: string): boolean {
@@ -87,26 +87,32 @@ export function repin(bytes: Buffer, code: string, image: string): Buffer {
 }
 
 /** Compare against the validated original before replacing, without silently overwriting an operator edit. */
-export async function atomicPrivateReplace(path: string, expected: Buffer, value: Buffer, config = false): Promise<void> {
-  if (!(await readPrivateFile(path, !config)).equals(expected)) throw new ReleaseError(1, 'private file changed during release');
+export async function atomicPrivateReplace(path: string, expected: Buffer, value: Buffer): Promise<void> {
+  if (!(await readPrivateFile(path)).equals(expected)) throw new ReleaseError(1, 'private file changed during release');
   if (expected.equals(value)) return;
-  const parent = await lstat(dirname(path));
-  if (!parent.isDirectory() || parent.uid !== process.getuid?.() || (parent.mode & 0o022) !== 0)
-    throw new ReleaseError(1, 'private file parent is not safely owned');
+  await validatePrivateParent(path, 1);
   const temp = resolve(dirname(path), `.release-${randomUUID()}.tmp`);
   try {
     const f = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try { await f.writeFile(value); await f.sync(); } finally { await f.close(); }
     if (!(await readPrivateFile(temp)).equals(value)) throw new ReleaseError(1, 'private file write verification failed');
-    if (!(await readPrivateFile(path, !config)).equals(expected)) throw new ReleaseError(1, 'private file changed during release');
+    if (!(await readPrivateFile(path)).equals(expected)) throw new ReleaseError(1, 'private file changed during release');
     await rename(temp, path);
     const dir = await open(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY);
     try { await dir.sync(); } finally { await dir.close(); }
   } finally { await unlink(temp).catch(() => undefined); }
 }
 
-/** Logs stay outside the checkout; do not traverse a symlink or fix unsafe existing directory permissions. */
-export async function privateLogDirectory(path: string, checkout: string): Promise<void> {
+/** The precheck and the actual atomic write use exactly the same parent rule. */
+export async function validatePrivateParent(path: string, exitCode: 1 | 2 = 2): Promise<void> {
+  try {
+    const parent = await lstat(dirname(path));
+    if (!parent.isDirectory() || parent.uid !== process.getuid?.() || (parent.mode & 0o022) !== 0) throw new Error();
+  } catch { throw new ReleaseError(exitCode, 'private file parent must be a directory owned by this user without group or other write permission'); }
+}
+
+/** Read-only plan: never traverse a symlink or repair unsafe directory permissions. */
+async function logDirectoryPlan(path: string, checkout: string): Promise<string[]> {
   if (!outsideCheckout(path, checkout)) throw new ReleaseError(2, 'release logs must be outside the checkout');
   const target = resolve(path);
   const missing: string[] = [];
@@ -114,16 +120,31 @@ export async function privateLogDirectory(path: string, checkout: string): Promi
   for (;;) {
     try {
       const s = await lstat(cursor);
-      if (!s.isDirectory() || await realpath(cursor) !== cursor || (s.mode & 0o022) !== 0)
+      if (!s.isDirectory() || s.uid !== process.getuid?.() || await realpath(cursor) !== cursor || (s.mode & 0o022) !== 0)
         throw new ReleaseError(2, 'unsafe release log directory');
       if (cursor === target && (s.uid !== process.getuid?.() || (s.mode & 0o7777) !== 0o700))
         throw new ReleaseError(2, 'release log directory must be owned by this user and mode 0700');
       break;
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        if (e instanceof ReleaseError) throw e;
+        throw new ReleaseError(2, 'release log directory cannot be inspected');
+      }
       missing.push(cursor);
       cursor = dirname(cursor);
     }
   }
-  for (const dir of missing.reverse()) await mkdir(dir, { mode: 0o700 });
+  return missing.reverse();
+}
+export async function validateLogDirectory(path: string, checkout: string): Promise<void> {
+  await logDirectoryPlan(path, checkout);
+}
+/** Revalidate immediately before creating the planned private directories. */
+export async function privateLogDirectory(path: string, checkout: string): Promise<void> {
+  try {
+    for (const dir of await logDirectoryPlan(path, checkout)) await mkdir(dir, { mode: 0o700 });
+  } catch (e) {
+    if (e instanceof ReleaseError) throw e;
+    throw new ReleaseError(2, 'release log directory could not be prepared');
+  }
 }

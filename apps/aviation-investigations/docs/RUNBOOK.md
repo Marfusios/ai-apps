@@ -540,7 +540,9 @@ pnpm app:release --config /abs/private/release.json
 ```
 
 The strict JSON config has these fields; all filesystem paths are absolute and outside
-the repository. Keep it owner-only, and every dotenv/version file at mode 0600:
+the repository. Keep this config owner-only. The importer config and the release's
+dotenv/version files must be mode 0600. The importer's worker env files and existing lock
+files need owner-only permissions (no group or other access); they are not rewritten:
 
 ```json
 {
@@ -565,7 +567,8 @@ the repository. Keep it owner-only, and every dotenv/version file at mode 0600:
 }
 ```
 
-File lists have the usual highest-priority-first ordering. Each version file contains
+File lists have the usual highest-priority-first ordering; empty values do not override
+a nonempty value in a lower-priority file. Each version file contains
 exactly one `APP_VERSION=` assignment and must supply the effective version to its
 Compose invocation. Dev migration settings select `APP_ENV=dev`, ordinary dev tools
 (`APP_VERSION` absent or `dev`, no release-image mode) and the dev migrator; this migration
@@ -584,7 +587,12 @@ The config and env reads reject symlinks, unsafe ownership/permissions and files
 and contain no tracked or untracked changes. Starts from **03:30 inclusive to 06:00
 exclusive Europe/Prague** are refused, including across DST. Both non-blocking importer
 locks are held through installation, migration, deployment and the pin update. The
-maintenance lock also excludes the actual AirCase backup commands.
+maintenance lock also excludes the actual AirCase backup commands. Before acquiring them,
+the command checks that both version files and the importer config have parent directories
+owned by this user without group or other write permission. It also checks the log path
+without creating it: the deepest existing ancestor must be safely owned and not a symlink,
+and an existing log directory (including the tag's directory) must be mode 0700. These
+checks apply to dry runs too; a log-directory problem exits 2.
 
 After those checks, the command:
 
@@ -595,23 +603,31 @@ After those checks, the command:
    migrates or restarts live; the version files may already hold the target tag.
 3. Runs the live host preflight, then starts live. Compose builds the release image at
    its first required use (normally the live migration) and subsequently reuses it.
-   Each app gets at most 180 seconds for `/api/config` to return 200. Log levels
-   40/50 from that container's first 180 seconds fail, except `api request` lines; a
-   no-restart retry rechecks that same startup window. Signed-out public `/` and `/privacy` must return
+   Each app gets at most 180 seconds for `/api/config` to return 200. **Live only:**
+   app-level log entries at level 40 or above (including 50 and 60) in the container's
+   first 180 seconds fail. Every request-scoped entry carrying `reqId` is ignored,
+   including `api request`. A no-restart retry rechecks the same window from `StartedAt`
+   to `StartedAt + 180 s`. Signed-out public `/` and `/privacy` must return
    200, and `/admin` and `/api/admin/overview` must return 404, without following redirects.
-4. Starts the private dev canary, checks health/startup logs, verifies a readable
-   `APP_VERSION`, and requires equal valid immutable live/dev image IDs.
+4. Starts the private dev canary, checks health, verifies a readable `APP_VERSION`, and
+   requires equal valid immutable live/dev image IDs. It has no startup-log gate:
+   `AI feature off` and `Google sign-in off` are expected on this private app.
 5. Validates and atomically writes the importer config with HEAD's full commit and that
    image in both environments. It preserves schedule, installation evidence and other
    settings, and refuses to overwrite a concurrent operator edit.
 6. Closes **both** locks, then runs the importer's own free dev re-certification, which
    acquires them itself and runs the full ten-minute canary. Success requires exit 0 and
    a final `complete/unchanged` step. Another maintenance job winning that handoff causes
-   a safe refusal, not a lock bypass.
+   a safe refusal, not a lock bypass. The release's recertification timeout is the importer's
+   own three-hour deadline plus a fifteen-minute cleanup margin.
 
-All release children receive a fresh environment containing only `PATH`, `HOME`, and
-the applicable `AVIATION_ENV_FILES`. Exported database, provider and Compose settings
-cannot override these files. Child diagnostics go to
+Release children receive a fresh environment containing only `PATH`, `HOME`, and
+the applicable `AVIATION_ENV_FILES`, with one exception: **recertify only** also receives
+the importer host's existing allowlist from the operator's environment (`USER`, `LOGNAME`,
+`LANG`, `LC_ALL`, `TZ`, `TMPDIR`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`,
+`XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`). This preserves the daily
+importer's CA and Docker settings. Neither path inherits provider keys, database URLs,
+`NODE_OPTIONS` or arbitrary exported application settings. Child diagnostics go to
 `<logDir>/<tag>/<NN>-<step>.log` (directory 0700, files 0600); repeated runs append.
 Treat those logs as private: deployment tooling can print sensitive diagnostics.
 The console has fixed step results, a version/image/pin summary and only validated
@@ -624,10 +640,20 @@ Exit codes: **0** success, **1** step failure, **2** usage/config, **75** busy/q
 There is no automatic rollback of earlier completed steps. **Fix the cause and run the
 same command again:** every step is idempotent, equal version/pin values are no-ops,
 migrations are no-ops when current, and Compose reuses the existing tagged image.
+A genuine live startup warning persists in the checked window: fix its cause, then recreate
+the live app before rerunning. From the application directory, set `LIVE_COMPOSE_ENV_FILES`
+to the comma-joined `live.composeEnvFiles` from the private release config and run:
+
+```sh
+env -i PATH="$PATH" HOME="$HOME" AVIATION_ENV_FILES="$LIVE_COMPOSE_ENV_FILES" pnpm app:up --force-recreate aviation-app
+```
+
 Re-certification failure leaves the new pins in place; rerun after repair, or let the
 daily importer perform its own re-certification. A long release can reach the importer's
-own backup exclusion window at the lock handoff; do not bypass it. SIGINT/SIGTERM stop
-the active child before releasing locks. A release cannot guarantee completion merely
+own backup exclusion window at the lock handoff; do not bypass it. SIGINT, SIGTERM and SIGHUP
+abort the release, stopping the active child before releasing locks. Another signal escalates
+that child to SIGKILL; the release process stays alive to close locks and print the failure
+and summary. A release cannot guarantee completion merely
 because it started before 03:30.
 
 ### Dev canary app
