@@ -323,7 +323,7 @@ async function reusable(
   const result = await reconcileAlias(context.es, context.db, alias, {
     lockTimeoutMs: 5000,
   });
-  if (result.unresolved.length) throw new ImportFailure('alias_unknown', false);
+  if (result.unresolved.length || result.targets.length > 1) throw new ImportFailure('alias_unknown', false);
   const saved = currentArtifact(context);
   return reusableReference(context.db, saved.id, Number(saved.generation_id), alias);
 }

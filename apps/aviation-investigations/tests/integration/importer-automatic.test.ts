@@ -167,3 +167,22 @@ it('emergency rollback is checked, exact and latch-free; its bytes wait for a re
  expect((await saved(f)).phase).toBe('restored');expect((await manifest(f.resources.db))!.generationId).toBe(f.baseline.manifest.generationId);
  expect((await f.run()).result).toBe('waiting');
 }));
+it('an external publication during canary is adopted without suppressing the candidate',async()=>importerFixture(async f=>{
+ await expect(f.run({fault:async point=>{if(point==='published'){
+  await publishManifest(f.resources.db,f.baseline.manifest.generationId,f.baseline.manifest.casesIndex,f.baseline.manifest.passagesIndex);
+  throw new ImportFailure('baseline_changed');
+ }}})).rejects.toMatchObject({reason:'interrupted',fix:false});
+ expect((await saved(f)).phase).toBe('abandoned');expect((await saved(f)).rollback).toBeNull();
+ expect((await control(f.resources.db)).accepted!.manifest).toEqual(await manifest(f.resources.db));
+ expect((await f.run()).result).toBe('published');
+}));
+it('an ambiguous alias stays fixed across days and releases until the exact request is reconciled',async()=>importerFixture(async f=>{
+ const alias=f.resources.appConfig.elasticsearch.indexPrefix+'-cases';
+ await f.resources.db.execute(sql`insert into index_switch_attempts(alias,index_name) values(${alias},'aviation-test-missing-pending')`);
+ await expect(f.run()).rejects.toMatchObject({reason:'alias_unknown'});
+ await expect(f.run()).rejects.toMatchObject({reason:'alias_unknown'});
+ f.config.code='e'.repeat(40);
+ await expect(f.run()).rejects.toMatchObject({reason:'alias_unknown'});
+ expect(await manifest(f.resources.db)).toEqual(f.baseline.manifest);expect(f.acquire).not.toHaveBeenCalled();
+ expect((await f.owner.execute(sql`select switch_hold from import_control`)).rows[0]!.switch_hold).not.toBeNull();
+}));

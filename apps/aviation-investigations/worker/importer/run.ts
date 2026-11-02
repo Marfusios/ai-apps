@@ -83,7 +83,7 @@ async function reconcile(context:ImportContext):Promise<void> {
   await checkSwitchHold(context);
   for(const kind of ['cases','passages']) {
     const state=await reconcileAlias(context.es,context.db,`${context.appConfig.elasticsearch.indexPrefix}-${kind}`,{lockTimeoutMs:5000});
-    if(state.unresolved.length) throw new ImportFailure('alias_unknown');
+    if(state.unresolved.length || state.targets.length>1) throw new ImportFailure('alias_unknown');
   }
   await fenced(context.db,context.session!,tx=>tx.execute(sql`select import_switch_hold(${context.session!.fence}::uuid,null::jsonb)`));
 }
@@ -185,6 +185,7 @@ export async function runWithResources(
           try { await switchBack(context); siteState=fresh.publication && sameManifest((await artifact(resources.db,fresh.id)).rollback,await manifest(resources.db))?'restored':'unchanged'; }
           catch { failure=new ImportFailure('rollback_failed');siteState='uncertain';await holdSwitch(context,failure.reason); }
           if(siteState==='restored') failure=new ImportFailure('site_check');
+          else if((await artifact(resources.db,fresh.id)).phase==='abandoned') failure=new ImportFailure('interrupted');
         }
       }
       if(failure.reason==='alias_unknown') {siteState='uncertain';await holdSwitch(context,'alias_unknown');}
