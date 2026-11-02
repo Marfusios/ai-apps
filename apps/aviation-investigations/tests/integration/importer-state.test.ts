@@ -252,11 +252,16 @@ describe('import ledger on an isolated migrated PostgreSQL database', () => {
         await db.execute(
           sql`insert into index_switch_attempts(alias,index_name,build_id) values('test-alias','test-index','testone')`,
         );
-        expect((await readImportStatus(db, {enabled:true,localTime:'05:30',timeZone:'Europe/Prague'})).alert?.siteState).toBe('uncertain');
+        const schedule = { enabled: true, localTime: '05:30', timeZone: 'Europe/Prague' };
+        expect((await readImportStatus(db, schedule)).alert).toBeNull();
+        await db.execute(
+          sql`update index_switch_attempts set outcome='unknown',resolved_at=clock_timestamp() where index_name='test-index'`,
+        );
+        expect((await readImportStatus(db, schedule)).alert?.siteState).toBe('uncertain');
         await db.execute(
           sql`update index_switch_attempts set outcome='committed',resolved_at=clock_timestamp() where index_name='test-index'`,
         );
-        expect((await readImportStatus(db, null)).alert).toBeNull();
+        expect((await readImportStatus(db, schedule)).alert).toBeNull();
         await expect(
           owner.execute(
             sql`update index_builds set deletion_requested_at=clock_timestamp() where build_id='testone'`,
