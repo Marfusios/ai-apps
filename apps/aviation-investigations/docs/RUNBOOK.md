@@ -964,15 +964,59 @@ again there before relying on them.
 ## Ingestion
 
 The automatic snapshot worker is documented in [IMPORTER.md](IMPORTER.md), including
-migrations 0027–0028, the no-change/forced-dev exercises, the fixed $0.50 artifact
-cap and 89-day resumption boundary, concrete-index protection, named approvals,
-rollback/rebaseline, free re-certification and the installation gate. Rebaseline is
-the explicit dry-run-first recovery step after rollback or a manual publication;
-it never clears an accounting or restore hold. The importer is disabled by default. Do not enable its timer before mutual exclusion with AirCase's
-own manual and scheduled database backups, a separately running pinned dev app, and
-actual PG/ES/filesystem headroom have been verified. Langfuse backup I/O belongs in
-the headroom assessment; its mutex is optional. The manual commands below remain useful
-for reviewed operator work; only the PostgreSQL manifest selects the serving pair.
+migrations 0027–0029, the $2 per-file/environment cap, the unchanged monthly budgets and
+89-day accounting boundary. Source comparisons are informational; the count guard rejects
+only a file below 90% of either serving total or answer-eligible count. Dev-first checks,
+concrete-index protection, backup exclusion and restore protections remain mandatory.
+Routine updates and recoveries need no approval. Free re-certification proves the serving
+pair during a release even while a file waits.
+
+### Automatic import alerts and emergency rollback
+
+Admin is the only alert channel. Its top box says what failed, which file serves, and what
+happens next. Copy details gives bounded technical IDs and enums for diagnosis. Off means
+the schedule is disabled and emits no alert. Enabled schedules show a fix if no run started
+for 36 hours. Temporary failures on 3 schedule-zone dates give delayed; on 7 dates, fix.
+A successful check clears resolved causes. Suppressed work still records daily checks;
+re-certification cannot hide an unfixed candidate.
+
+| Cause | Operator action and automatic next step |
+| --- | --- |
+| NTSB/app unavailable, download changed, interrupted/timeout, cache unavailable, busy/backup/lock loss | The system retries daily. After persistent failures, inspect the service, connectivity, cache and maintenance schedule. |
+| Monthly budget | The import continues on the first of next month; no new allowance is created for that file. |
+| Schema, listing change, integrity, verification, mapping, probe/site check, shrunk, unclassified | Diagnose using private reports. Fix code/configuration or wait for new source bytes; identical work is suppressed. A deliberately smaller corpus needs a code change. |
+| Import cap | The file reached its $2 limit; no bypass/reset. Diagnose the input and embedding plan in code. |
+| Storage, cleanup, configuration | Repair capacity/permissions, container cleanup or configuration. Release corrected code/image for identical suppressed bytes to retry. |
+| Restore hold, accounting | Follow the restore procedure and reconcile importer provenance and all costs. Never erase histories, guards or original reservation markers. |
+| Source retired | Disable the old timer and enabled intent. A new source needs a compatible adapter. |
+| Overdue | Check the user timer, clean pinned checkout, service and host logs. Host refusal can happen before a database run exists. |
+| Status unavailable | Repair the status/database connection or missing migration. The app must not guess that imports are healthy. |
+| Switch unknown or restoration failed | The site may show mixed data. Both pairs stay protected; a release permits automatic reconciliation. Do not clear unknown attempts on elapsed time alone. |
+| Failure after recorded success | The data stays published. Storage alerts immediately; other incidents follow 3/7 dates. Repair the reported cause; do not roll back good data for cleanup/report failure. |
+
+The worker automatically restores the exact previous pair when switching or canaries fail
+before recorded success, then checks the restored site. It says “restored” only after those
+checks. Interrupted recovery runs before new work. External publications become the new
+baseline without an adoption command.
+
+For an emergency only, return a known importer publication to its previous pair:
+
+```sh
+pnpm importer rollback --config "$IMPORT_CONFIG" --env dev \
+  --artifact "$ARCHIVE_SHA256" --publication-sha256 "$PUBLICATION_IDENTITY_SHA256"
+```
+
+The publication hash is the canonical digest of the exact publication object from the
+private activation report, including its timestamp, not the ZIP hash. The command proves
+that exact candidate still serves, restores its protected previous pair, and checks it.
+It does not change operational aliases, erase spend or require another command afterwards.
+The rejected file is suppressed under its code/image until new bytes or a release arrive.
+A failed restoration keeps the switch hold. Use `--env live` only for a deliberate live
+emergency with the exact live publication identity.
+
+The importer is disabled by default. Before installation, prove mutual backup exclusion,
+a separately running pinned dev app, and actual PG/ES/filesystem headroom. The manual
+commands below remain available for operator ingestion; the manifest alone selects what serves.
 
 Extraction needs the Docker CLI to start its sandbox containers, so it runs on the
 host, never in the `aviation-ingest` container (which has no Docker socket):
@@ -1830,4 +1874,4 @@ that processing bound with 503 and log category `admin_overview_user_limit`.
 The whole overview has a 15-second deadline in addition to five-second SQL statement
 limits; timeout returns 503 with `admin_overview_timeout`. Any held overview transaction
 is destroyed on timeout. Expand this implementation before reaching the account bound.
-The dataset's next automatic import stays null: none is scheduled.
+The dataset's next automatic import reflects the configured schedule; it is null when scheduling is off.
