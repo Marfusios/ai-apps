@@ -191,8 +191,10 @@ for (const [width, theme] of [
             : 'Automatic import needs a fix',
         );
       }
-      if (state === 'disabled')
+      if (state === 'disabled' || state === 'never_run')
         await expect(block).toContainText('No runs recorded yet.');
+      else if (state === 'unreadable')
+        await expect(block).toContainText('Unknown: the status could not be read.');
       else
         await expect(
           block.getByRole('list', { name: 'Recent import runs' }),
