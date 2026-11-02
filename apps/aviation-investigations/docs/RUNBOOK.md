@@ -534,6 +534,9 @@ named `YYYY.MM.DD-<first seven characters of HEAD>` (for example with
 its suffix must match the commit. The command creates no tags, merges or pushes.
 Run it from the configured main checkout, not a different worktree:
 
+Use a **tmux or screen session** for the release so a dropped SSH connection does not
+interrupt it. The launcher uses `node --import tsx`, without the tsx CLI's signal relay.
+
 ```sh
 pnpm app:release --config /abs/private/release.json --dry-run
 pnpm app:release --config /abs/private/release.json
@@ -604,10 +607,13 @@ After those checks, the command:
 3. Runs the live host preflight, then starts live. Compose builds the release image at
    its first required use (normally the live migration) and subsequently reuses it.
    Each app gets at most 180 seconds for `/api/config` to return 200. **Live only:**
-   app-level log entries at level 40 or above (including 50 and 60) in the container's
-   first 180 seconds fail. Every request-scoped entry carrying `reqId` is ignored,
-   including `api request`. A no-restart retry rechecks the same window from `StartedAt`
-   to `StartedAt + 180 s`. Signed-out public `/` and `/privacy` must return
+   app-level log entries at level 40 or above (including 50 and 60) before the first
+   `Server listening at` line in the container's first 180 seconds fail. Later app-logged
+   visitor warnings, such as an evidence rerank fallback, do not fail the release.
+   Every request-scoped entry carrying `reqId` is ignored, including `api request`.
+   Without a listening line, all non-request lines in that window are checked. A
+   no-restart retry rechecks the same window from `StartedAt` to `StartedAt + 180 s`.
+   Signed-out public `/` and `/privacy` must return
    200, and `/admin` and `/api/admin/overview` must return 404, without following redirects.
 4. Starts the private dev canary, checks health, verifies a readable `APP_VERSION`, and
    requires equal valid immutable live/dev image IDs. It has no startup-log gate:
@@ -621,12 +627,15 @@ After those checks, the command:
    a safe refusal, not a lock bypass. The release's recertification timeout is the importer's
    own three-hour deadline plus a fifteen-minute cleanup margin.
 
-Release children receive a fresh environment containing only `PATH`, `HOME`, and
-the applicable `AVIATION_ENV_FILES`, with one exception: **recertify only** also receives
+Release children receive a fresh environment containing only `PATH`, `HOME`,
+the applicable `AVIATION_ENV_FILES`, and nonempty `DOCKER_HOST`, `DOCKER_CONTEXT` and
+`DOCKER_CONFIG` from the release's own environment. This includes lock helpers and the
+release's `docker inspect`/`docker logs`: deployment, checks and recertification all use
+the same Docker endpoint. **Recertify only** also receives
 the importer host's existing allowlist from the operator's environment (`USER`, `LOGNAME`,
 `LANG`, `LC_ALL`, `TZ`, `TMPDIR`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`,
-`XDG_RUNTIME_DIR`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`). This preserves the daily
-importer's CA and Docker settings. Neither path inherits provider keys, database URLs,
+`XDG_RUNTIME_DIR`). This preserves the daily importer's CA and host settings.
+Neither path inherits provider keys, database URLs,
 `NODE_OPTIONS` or arbitrary exported application settings. Child diagnostics go to
 `<logDir>/<tag>/<NN>-<step>.log` (directory 0700, files 0600); repeated runs append.
 Treat those logs as private: deployment tooling can print sensitive diagnostics.
@@ -640,12 +649,21 @@ Exit codes: **0** success, **1** step failure, **2** usage/config, **75** busy/q
 There is no automatic rollback of earlier completed steps. **Fix the cause and run the
 same command again:** every step is idempotent, equal version/pin values are no-ops,
 migrations are no-ops when current, and Compose reuses the existing tagged image.
-A genuine live startup warning persists in the checked window: fix its cause, then recreate
-the live app before rerunning. From the application directory, set `LIVE_COMPOSE_ENV_FILES`
-to the comma-joined `live.composeEnvFiles` from the private release config and run:
+A warning before the first listening line persists in the checked window: fix its cause,
+then recreate the live app before rerunning. When the window has no listening line, the
+same recovery applies to any non-request warning it contains; check for a changed log
+format too. Visitor warnings after listening need no recreation. From the application
+directory, set `LIVE_COMPOSE_ENV_FILES` to the comma-joined `live.composeEnvFiles` from
+the private release config and run, preserving the release's Docker endpoint settings:
 
-```sh
-env -i PATH="$PATH" HOME="$HOME" AVIATION_ENV_FILES="$LIVE_COMPOSE_ENV_FILES" pnpm app:up --force-recreate aviation-app
+```bash
+release_docker_env=()
+for release_docker_name in DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG; do
+  if [ -n "${!release_docker_name:-}" ]; then
+    release_docker_env+=("$release_docker_name=${!release_docker_name}")
+  fi
+done
+env -i PATH="$PATH" HOME="$HOME" "${release_docker_env[@]}" AVIATION_ENV_FILES="$LIVE_COMPOSE_ENV_FILES" pnpm app:up --force-recreate aviation-app
 ```
 
 Re-certification failure leaves the new pins in place; rerun after repair, or let the
@@ -655,6 +673,9 @@ abort the release, stopping the active child before releasing locks. Another sig
 that child to SIGKILL; the release process stays alive to close locks and print the failure
 and summary. A release cannot guarantee completion merely
 because it started before 03:30.
+An interrupted step always reports `release interrupted` and exits 1. If closing a lock
+also fails, its separate failure line follows the original failure without changing the
+original exit code.
 
 ### Dev canary app
 

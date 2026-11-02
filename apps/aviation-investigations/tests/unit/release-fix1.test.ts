@@ -209,7 +209,11 @@ it('wires the real checkout, environment allowlists and non-creating lock adapte
   expect(await runRelease(f.args, f.fx)).toBe(0);
   for (const c of f.commands) {
     if (c.args.includes('recertify')) expect(c.env).toEqual(fx.importerEnvironment);
-    else expect(Object.keys(c.env).sort()).toEqual(c.env.AVIATION_ENV_FILES ? ['AVIATION_ENV_FILES', 'HOME', 'PATH'] : ['HOME', 'PATH']);
+    else expect(Object.keys(c.env).sort()).toEqual(c.env.AVIATION_ENV_FILES ?
+      ['AVIATION_ENV_FILES', 'DOCKER_CONFIG', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'HOME', 'PATH'] :
+      ['DOCKER_CONFIG', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'HOME', 'PATH']);
+    for (const key of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG']) expect(c.env[key]).toBe(process.env[key]);
+    expect(JSON.stringify(c.env)).not.toContain('PRIVATE_SENTINEL');
   }
   await expect(readPrivateFile(p)).resolves.toEqual(Buffer.alloc(0));
 }));

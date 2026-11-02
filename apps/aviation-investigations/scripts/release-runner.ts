@@ -60,8 +60,10 @@ export function inReleaseQuietWindow(now: Date): boolean {
   const c = localClock(now, QUIET_TIME_ZONE), minute = c.hour * 60 + c.minute;
   return minute >= QUIET_START_MINUTE && minute < QUIET_END_MINUTE;
 }
-export function childEnvironment(base: { PATH: string; HOME: string }, files?: string[]): Record<string, string> {
-  return { PATH: base.PATH, HOME: base.HOME, ...(files ? { AVIATION_ENV_FILES: files.join(',') } : {}) };
+export function childEnvironment(base: { PATH: string; HOME: string }, files?: string[], host: NodeJS.ProcessEnv = {}): Record<string, string> {
+  const docker = Object.fromEntries(['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG']
+    .filter((key) => !!host[key]).map((key) => [key, host[key]!]));
+  return { PATH: base.PATH, HOME: base.HOME, ...docker, ...(files ? { AVIATION_ENV_FILES: files.join(',') } : {}) };
 }
 /** Only recertify inherits the same host settings as the daily importer. Never provider/DB keys. */
 export function importerChildEnvironment(base: { PATH: string; HOME: string }, source: NodeJS.ProcessEnv): Record<string, string> {
@@ -76,13 +78,17 @@ export function releaseTag(head: string, refs: string): string {
   return candidates[0]![0]!;
 }
 export function hasStartupWarning(output: string): boolean {
-  return output.split('\n').some((line) => {
+  for (const line of output.split('\n')) {
     try {
       const value: unknown = JSON.parse(line);
-      return typeof value === 'object' && value !== null && !Object.hasOwn(value, 'reqId') &&
-        'level' in value && Number(value.level) >= 40;
-    } catch { return false; }
-  });
+      if (typeof value !== 'object' || value === null || Object.hasOwn(value, 'reqId')) continue;
+      // Fastify logs its readiness before accepting visitor work. Request-scoped text
+      // cannot act as that boundary. Without it, inspect the entire startup window.
+      if ('msg' in value && typeof value.msg === 'string' && value.msg.startsWith('Server listening at ')) return false;
+      if ('level' in value && Number(value.level) >= 40) return true;
+    } catch { /* Not a structured application log line. */ }
+  }
+  return false;
 }
 export function parseReleaseArgs(args: string[]): { config: string; dryRun: boolean } {
   try {
@@ -146,13 +152,13 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
     const options = parseReleaseArgs(args);
     config = parseReleaseConfig(await fx.readPrivate(options.config, false));
     const c = config;
-    const env = childEnvironment(fx.environment);
+    const env = childEnvironment(fx.environment, undefined, fx.importerEnvironment);
     const appDir = join(c.checkout, 'apps/aviation-investigations');
     const precheckOutput: string[] = [];
     const command = async (name: string, values: string[], files?: string[], timeoutMs = 30_000, importerLine?: (line: string) => void, importerHost = false) => {
       interrupted();
       const r = await fx.run({ command: name, args: values, cwd: appDir,
-        env: importerHost ? importerChildEnvironment(fx.environment, fx.importerEnvironment) : childEnvironment(fx.environment, files),
+        env: importerHost ? importerChildEnvironment(fx.environment, fx.importerEnvironment) : childEnvironment(fx.environment, files, fx.importerEnvironment),
         timeoutMs, log, locks, importerLine });
       interrupted();
       if (!log) precheckOutput.push(r.stdout, r.stderr);
@@ -339,8 +345,11 @@ export async function runRelease(args: string[], fx: ReleaseEffects): Promise<nu
     return 0;
   } catch (e) {
     let error = e instanceof ReleaseError ? e : new ReleaseError(currentStep === 'config' || ['checkout', 'files', 'locks', 'docker', 'logs'].includes(currentStep) ? 2 : 1, `operation failed${log ? '; inspect the private step log' : ''}`);
-    try { await closeLocks(); } catch { currentStep = 'release-locks'; error = new ReleaseError(1, 'could not close a release lock'); }
+    let closeFailed = false;
+    try { await closeLocks(); } catch { closeFailed = true; }
+    if (fx.signal?.aborted) error = new ReleaseError(1, 'release interrupted');
     fx.print(`${currentStep}: failed; ${error.message}`);
+    if (closeFailed) fx.print('release-locks: failed; could not close a release lock');
     if (currentStep === 'recertify') fx.print('Recovery: every release step is idempotent. Fix the cause and rerun pnpm app:release; the daily importer also re-certifies on its own.');
     summary();
     return logs && error.exitCode === 2 ? 1 : error.exitCode;

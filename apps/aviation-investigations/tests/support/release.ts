@@ -73,7 +73,11 @@ export function fakeRelease() {
     },
     async readImporter(p) { return ImporterConfigSchema.parse(JSON.parse((await fx.readPrivate(p)).toString())); },
     async lock(p, env) {
-      if (JSON.stringify(env) !== JSON.stringify(fx.environment)) throw new Error('dirty lock environment');
+      const expected: Record<string, string> = { ...fx.environment };
+      for (const key of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG']) {
+        if (fx.importerEnvironment[key]) expected[key] = fx.importerEnvironment[key];
+      }
+      if (JSON.stringify(env) !== JSON.stringify(expected)) throw new Error('dirty lock environment');
       events.push(`lock:${p}`);
       if (behavior.busy === p) throw { reason: 'busy' };
       return { fd: p === importer.hostLock ? 100 : 101, close: async () => {

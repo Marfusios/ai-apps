@@ -18,7 +18,7 @@
     "provision:shared": "tsx scripts/provision-shared.ts",
     "test:pg16": "tsx scripts/test-pg16.ts",
     "app:up": "tsx scripts/compose.ts app-up",
-    "app:release": "tsx scripts/release.ts",
+    "app:release": "node --import tsx scripts/release.ts",
     "app:down": "tsx scripts/compose.ts app-down",
     "app:ps": "tsx scripts/compose.ts app-ps",
     "app:migrate": "tsx scripts/compose.ts migrate",

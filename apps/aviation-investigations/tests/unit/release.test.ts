@@ -116,7 +116,8 @@ it('runs the complete ordered plan with fresh environments and unlocks before re
   expect(f.events.slice(afterUp, f.events.indexOf(`write:${f.config.importerConfig}`)).filter((v) => v === 'docker:inspect')).toHaveLength(3);
   for (const command of f.commands) {
     expect(Object.keys(command.env).sort()).toEqual(command.args.includes('recertify') ? ['DOCKER_CONTEXT', 'HOME', 'PATH', 'TZ', 'USER'] :
-      command.env.AVIATION_ENV_FILES ? ['AVIATION_ENV_FILES', 'HOME', 'PATH'] : ['HOME', 'PATH']);
+      command.env.AVIATION_ENV_FILES ? ['AVIATION_ENV_FILES', 'DOCKER_CONTEXT', 'HOME', 'PATH'] : ['DOCKER_CONTEXT', 'HOME', 'PATH']);
+    expect(command.env.DOCKER_CONTEXT).toBe('offline-context');
     expect(JSON.stringify(command.env)).not.toContain('PRIVATE_LEAK');
   }
   expect(f.commands.find((c) => c.args.includes('recertify'))!.locks).toEqual([]);
