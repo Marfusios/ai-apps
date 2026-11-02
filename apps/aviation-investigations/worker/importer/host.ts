@@ -20,6 +20,7 @@ import { recoverExtraction } from './extraction.js';
 import { workerIdentity } from './application.js';
 import { classify } from './failure.js';
 import { readDevOutcome } from './outcome.js';
+import { hostCleanupStatus } from './host-status.js';
 import { SkipSchema, type Skip } from './recovery.js';
 import { FactMessageSchema, readHostFacts } from './facts.js';
 
@@ -232,18 +233,25 @@ async function main(args: string[], deadline: number): Promise<number> {
     await privateDirectory(config.root);
     await space.check();
     await recoverExtraction(space);
+    const startedAt = new Date().toISOString();
+    const environments = new Set<'dev' | 'live'>();
     try {
-      if (command !== 'cycle') return await boundedChild(args, deadline, locks, config);
+      if (command !== 'cycle') {
+        if (values.env === 'dev' || values.env === 'live') environments.add(values.env);
+        return await boundedChild(args, deadline, locks, config);
+      }
       const common = [
         'run',
         '--config',
         values.config,
         ...(values['cache-only'] ? ['--cache-only'] : []),
       ];
+      environments.add('dev');
       const dev = await boundedChild([...common, '--env', 'dev'], deadline, locks, config);
       if (dev !== 0) {
         process.stdout.write(`${safeLog('check', 'skipped_dev_failed', 'dev_failed')}\n`);
-        if (config.live && deadline - Date.now() > 180_000)
+        if (config.live && deadline - Date.now() > 180_000) {
+          environments.add('live');
           await boundedChild(
             ['record-skip', '--config', values.config, '--env', 'live'],
             deadline,
@@ -251,13 +259,20 @@ async function main(args: string[], deadline: number): Promise<number> {
             config,
             await readDevOutcome(config),
           );
+        }
         return dev;
       }
+      if (config.live) environments.add('live');
       return config.live
         ? await boundedChild([...common, '--env', 'live'], deadline, locks, config)
         : 0;
     } finally {
-      await recoverExtraction(space);
+      try { await recoverExtraction(space); }
+      catch (error) {
+        await hostCleanupStatus(config,space,environments,startedAt,classify(error));
+        throw error;
+      }
+      await hostCleanupStatus(config,space,environments,startedAt);
     }
   } finally {
     for (const lock of locks.reverse()) await lock.close();

@@ -125,7 +125,8 @@ export async function recordSuccess(
       await tx.execute(sql`select import_adopt(${session.fence}::uuid,${JSON.stringify(success.accepted)}::jsonb)`);
     } else {
       await tx.execute(sql`select import_accept(${session.fence}::uuid,${JSON.stringify(success.accepted)}::jsonb,false)`);
-      await tx.execute(sql`update import_issues set resolved_at=clock_timestamp() where resolved_at is null`);
+      // Acceptance proves the data. Cleanup/report incidents remain until those effects finish.
+      await tx.execute(sql`update import_issues set resolved_at=clock_timestamp() where resolved_at is null and not post_success`);
       await tx.execute(sql`update import_runs set good_check=true where id=${success.runId}::uuid`);
     }
     await tx.execute(
@@ -162,6 +163,13 @@ export async function committedSuccess(db: Db, runId: string | null): Promise<Su
     evidence: String(row.evidence_sha256),
     sourceChecked: row.source_check_succeeded === true,
   };
+}
+
+/** A normal unchanged check has no publication attestation, but is still durable success. */
+export async function completedRun(db: Db, runId: string | null): Promise<boolean> {
+  if (!runId) return false;
+  return (await db.execute(sql`select 1 from import_runs where id=${runId}::uuid and step='complete'
+    and (result='unchanged' or (result='published' and canary_passed))`)).rows.length === 1;
 }
 
 export async function recordLegacy(

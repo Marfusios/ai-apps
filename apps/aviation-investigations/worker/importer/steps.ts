@@ -611,14 +611,14 @@ export async function unchanged(
     await recertify(context);
     await cleanup(context);
     if(!context.options.recertify && !context.pending) {
-      await resolveIssues(context.db,context.session,true);
+      await resolveIssues(context.db,context.session,true,false);
       await fenced(context.db,context.session,tx=>tx.execute(sql`update import_runs set good_check=true where id=${context.runId}::uuid`));
     }
     return report(context, 'unchanged', reason);
   }
   if (!context.options.noChange) await cleanup(context);
   if(!context.pending) {
-    await resolveIssues(context.db,context.session,true);
+    await resolveIssues(context.db,context.session,true,false);
     await fenced(context.db,context.session,tx=>tx.execute(sql`update import_runs set good_check=true where id=${context.runId}::uuid`));
   }
   await updateRun(context.db, context.session, context.runId, {

@@ -9,7 +9,7 @@ import { ManagedSpace, ownedPath } from './files.js';
 import { privateJson } from './extraction.js';
 import { beginRun, updateRun, fenced, withImportSession, type ImportSession } from './store.js';
 import { environmentConfig, type ImporterConfig } from './config.js';
-import { committedSuccess } from './durable.js';
+import { completedRun } from './durable.js';
 import { suppressionKey } from './automatic.js';
 import { digest } from './provenance.js';
 import { localClock } from './status.js';
@@ -30,11 +30,11 @@ export async function replayOutage(db:Db,s:ImportSession,space:ManagedSpace,envi
  const raw=await privateJson(path).catch((e:NodeJS.ErrnoException)=>{if(e.code==='ENOENT') return null;throw e;});
  if(raw===null)return;
  const parsed=OutageSchema.safeParse(raw);if(!parsed.success)throw new ImportFailure('integrity');
- const r=parsed.data,success=await committedSuccess(db,r.runId);
+ const r=parsed.data,success=await completedRun(db,r.runId);
  const id=r.runId??await beginRun(db,s,'automatic');
  if(!r.runId)await space.json(path,{...r,runId:id});
  // Legacy failure evidence is retained as history, without resurrecting an approval latch.
- if(!success)await updateRun(db,s,id,{step:r.step,result:'failed',reason:r.reason,artifactId:r.artifactId,sourceCheckSucceeded:false});
+ if(!success && !r.meta?.postSuccess)await updateRun(db,s,id,{step:r.step,result:'failed',reason:r.reason,artifactId:r.artifactId,sourceCheckSucceeded:false});
  if(r.meta) {
    const m=r.meta,post=!!success||m.postSuccess,fix=post?r.reason==='storage':new ImportFailure(r.reason).fix;
    const key=fix&&!post?suppressionKey(environment,m.archive,m.source,m.code,m.image):digest([id,post,r.reason]);

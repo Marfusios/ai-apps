@@ -79,8 +79,9 @@ export async function incident(c: ImportContext, failure: ImportFailure, opts: {
       on conflict(key) do update set last_at=clock_timestamp(),resolved_at=null,site_state=excluded.site_state`);
   });
 }
-export async function resolveIssues(db:Db,s:ImportSession,all=false):Promise<void> {
-  await fenced(db,s,tx=>tx.execute(sql`update import_issues set resolved_at=clock_timestamp() where resolved_at is null and (${all} or not fixed or post_success)`));
+export async function resolveIssues(db:Db,s:ImportSession,all=false,includePostSuccess=true):Promise<void> {
+  await fenced(db,s,tx=>tx.execute(sql`update import_issues set resolved_at=clock_timestamp() where resolved_at is null
+    and (${includePostSuccess} or not post_success) and (${all} or not fixed or post_success)`));
 }
 export async function holdSwitch(c:ImportContext, reason:ImportReason):Promise<void> {
   await fenced(c.db,c.session!,tx=>tx.execute(sql`select import_switch_hold(${c.session!.fence}::uuid,

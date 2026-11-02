@@ -96,6 +96,10 @@ Recorded success cannot be downgraded by a later error. A report or cleanup fail
 success is a separate incident, with the import still shown as done. Storage is an
 immediate fix; other post-success errors follow the temporary 3/7-day rule. Data is never
 rolled back solely for a failure after recorded success.
+Cleanup/report incidents clear only after cleanup and the final report write succeed.
+The host's final cleanup records its own incidents and clears them itself; a child
+worker's successful check cannot clear a recurring host cleanup failure. Ordinary
+unchanged checks keep their recorded success if a later report write fails too.
 
 `recertify` proves the currently serving pair for a new code/image even while a candidate
 waits. It preserves pending work, money and acquisition clocks and returns `complete` /

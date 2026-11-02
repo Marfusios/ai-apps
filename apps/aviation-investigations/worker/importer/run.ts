@@ -12,7 +12,7 @@ import { ManagedSpace } from './files.js';
 import { AvallSource, refreshOwed, sameObservation } from './source.js';
 import { workerHostFacts } from './facts.js';
 import { certificationClient } from './strict-es.js';
-import { committedSuccess } from './durable.js';
+import { committedSuccess, completedRun } from './durable.js';
 import { classify } from './failure.js';
 import {
   accountingReport,
@@ -170,15 +170,23 @@ export async function runWithResources(
       // Keep the final report inside the same failure boundary as all other writes:
       // a disk failure after committed success is a separate incident, never a failed import.
       await context.space.json(join(config.root, `last-${options.environment}.json`), result);
+      if (result.result !== 'waiting' && !options.noChange) {
+        // The host has a later cleanup boundary of its own. Only that boundary can
+        // clear host incidents; worker success cannot erase recurring host failures.
+        await fenced(resources.db, session, tx => tx.execute(sql`update import_issues
+          set resolved_at=clock_timestamp() where resolved_at is null and post_success and origin<>'host'`));
+      }
       return result;
     });
   } catch (error) {
     let failure=classify(error);
     let succeeded: Awaited<ReturnType<typeof committedSuccess>>=null;
+    let completed=false;
     await withImportSession(resources.db,async session=> {
       context.session=session;
       succeeded=await committedSuccess(resources.db,context.runId);
-      if(succeeded) {
+      completed=!!succeeded || await completedRun(resources.db,context.runId);
+      if(completed) {
         await incident(context,failure,{postSuccess:true});
         return;
       }
@@ -199,10 +207,10 @@ export async function runWithResources(
     }).catch(async ()=> {
       await spoolFailure(resources.space,options.environment,failure,context.step,context.runId||null,context.artifact?.id??null,
         {code:config.code,image:config[options.environment]!.image,archive:context.pending?.archive??context.artifact?.archive_sha256??null,
-          source:context.pending?.observation??context.observation??null,postSuccess:!!succeeded}).catch(()=>undefined);
+          source:context.pending?.observation??context.observation??null,postSuccess:completed}).catch(()=>undefined);
     });
     const success = succeeded as Awaited<ReturnType<typeof committedSuccess>>;
-    if(success) return steps.report(context,success.kind==='publication'?'published':'unchanged',null);
+    if(completed) return steps.report(context,success?.kind==='publication'?'published':'unchanged',null);
     process.stdout.write(`${safeLog(context.step,context.blocked?'waiting':failure.result,failure.reason)}\n`);
     failure.logged=true; throw failure;
   }
