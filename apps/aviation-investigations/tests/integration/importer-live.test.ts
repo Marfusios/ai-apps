@@ -14,6 +14,7 @@ import { readImportStatus } from '../../server/db/import-status.js';
 import { ImportFailure } from '../../worker/importer/contracts.js';
 import { recordHostCleanup } from '../../worker/importer/host-status.js';
 import { readFile } from 'node:fs/promises';
+import { reserveSpend, settleSpend } from '../../server/quota/index.js';
 import { editTable } from '../support/extract-dir.js';
 
 const schedule = { enabled: true, localTime: '05:30', timeZone: 'Europe/Prague' };
@@ -21,6 +22,32 @@ const schedule = { enabled: true, localTime: '05:30', timeZone: 'Europe/Prague' 
 it('a full cycle promotes dev’s pinned file to live without downloading and keeps separate allowances', async () =>
   importerPair(async (dev, live) => {
     expect((await dev.run()).result).toBe('published');
+    const devId = String(
+      (await dev.owner.execute(sql`select id from import_artifacts`)).rows[0]!.id,
+    );
+    // Fully consume dev's file allowance with an offline ledger reservation. Live must
+    // still get its own allowance, without resetting dev's record.
+    await withImportSession(dev.resources.db, async (session) => {
+      const reservation = await reserveSpend(dev.resources.db, {
+        import: { artifactId: devId, fence: session.fence },
+        category: 'indexing',
+        usd: 2,
+        request: { provider: 'offline', model: 'synthetic', stage: 'embed' },
+        budgets: dev.resources.appConfig.ai.budgets,
+      });
+      if (!reservation.ok) throw new Error('offline fixture reservation refused');
+      await settleSpend(
+        dev.resources.db,
+        { reservationId: reservation.reservationId },
+        'uncertain',
+        reservation.fencingToken,
+      );
+      await expect(
+        dev.resources.db.execute(
+          sql`select import_check_budget(${devId}::uuid,${session.fence}::uuid,1::bigint)`,
+        ),
+      ).rejects.toThrow();
+    });
     const download = vi.fn(async () => {
       throw new Error('live must use the certified local ZIP');
     });
