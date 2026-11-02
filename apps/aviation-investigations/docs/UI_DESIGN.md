@@ -1313,26 +1313,37 @@ plain words and formatted numbers; times are in the viewer's own time zone, name
   happens next. Live held by dev names the dev failure. A live count refusal after dev
   completes says “Dev has the new file. Live still has the previous file.” Unknown recovery
   says the site may show mixed data. “Restored” requires the previous site's checks to pass.
+  A committed switch-back with outstanding checks says “AirCase switched back to the data
+  from <date>. Its site check has not passed yet.” and retries those checks daily.
   Completed imports with later incidents remain done, with the incident described separately.
   - Technical details (result/reason/step, viewer-zone time, run, file date, code/image,
     originating dev run) appear only in the mono details line and “Copy details”. The line
-    abbreviates IDs; Copy details keeps them complete. Long IDs
+    abbreviates IDs; Copy details keeps them complete. If clipboard copying fails, the
+    selectable line expands to the same full details. Refresh resets the copy result. Long IDs
     wrap without horizontal overflow. Copy success/failure is announced with `aria-live`.
     No approval controls, resolution commands or neutral notices appear.
   - Overdue uses the run **start**: “No import check has run since ⟨date, time⟩.” after
     36 hours while enabled. Temporary failures on 3 distinct schedule-zone dates give
     delayed; 7 dates give fix. A single bad day appears only in Recent runs. The monthly
-    budget follows 3/7 and says it continues on the first of next month.
+    budget follows 3/7 and says it continues on the first of next month. Overdue takes
+    precedence over an earlier file issue or hold, keeping that cause in Waiting and details.
+    The delay’s Since date is its first unresolved temporary failure.
   - **System → Automatic import:** chip Working / Delayed / Needs a fix / Off, plus one
     line. Off says “Automatic import is turned off.” and has no alert. Healthy says
-    “Each new NTSB file goes in by itself.”
+    “Each new NTSB file goes in by itself.” Overdue says “No check since <date, time>.”;
+    unreadable status says “The status could not be read.”; monthly budget says
+    “Since <date>. Continues on the 1st of next month.”; other daily retries say
+    “Since <date>, retrying daily.”, and other known start dates say “Since <date>.”
   - **Facts:** Data on the site (NTSB date, import or checked restoration time); Last check,
     or Last good check while alerted; Waiting (file not yet imported); Next check with
     “Every day at 05:30, Europe/Prague”. Times use the viewer's zone; the source's date is
-    never timezone shifted. Missing metadata says “Not recorded”.
+    never timezone shifted. Missing metadata says “Not recorded”. An unreadable status
+    shows every fact and the runs as “Unknown: the status could not be read.” instead.
+    Off shows “None” for Next check. Waiting includes the fixed plain reason for the stop.
   - **Recent runs:** newest first, at most 20, a responsive time/outcome/cost list. An import
     says “Imported the 1 Nov 2026 file: 152 new cases, 501 updated, 2 removed”. Costs are
-    the artifact's total across attempts, shown for imports or incurred charges. Waiting
+    the artifact's total across attempts, shown only for published imports. Failed, deferred
+    and waiting rows never repeat that amount as though they incurred a new charge. Waiting
     says “No new file. The 1 Dec 2026 file waits for a fix.” A healthy check says “No new
     file.” All causes have fixed wording in `features/admin/imports.ts`; no raw enums or
     IDs appear outside technical details.

@@ -88,8 +88,10 @@ The importer never starts or deploys an app.
 Any failure after a possible switch and before recorded canary success starts automatic
 restoration of the exact previous publication. The restored site's checks must pass
 before the status says **restored**. If the worker dies, the next run resumes the recorded
-switch or restoration before any new work. A failed restoration or ambiguous alias state
-keeps a durable switch hold and the alert that the site may show mixed data. New code/image
+switch or restoration before any new work. A committed switch-back whose site check fails
+stays unverified, with the file suppressed as `site_check`; the next daily run repeats
+propagation and the restored site checks without a switch hold. Only a failed rollback
+commit or ambiguous alias state keeps a durable switch hold and the alert that the site may show mixed data. New code/image
 allows recovery to be attempted; uncertainty itself never expires.
 
 Recorded success cannot be downgraded by a later error. A report or cleanup failure after
@@ -105,6 +107,9 @@ unchanged checks keep their recorded success if a later report write fails too.
 waits. It preserves pending work, money and acquisition clocks and returns `complete` /
 `unchanged`. The release command needs no bypass. The next daily cycle handles the waiting
 file with the new code. Re-certification includes the full site canary, without provider calls.
+Failures in re-certification or preflight are per-run incidents; they never suppress a
+waiting file that was not processed. A successful retry resolves that incident, without
+clearing an unrelated file failure or changing acquisition dates or monetary identity.
 
 ## Money, isolation and retention
 
@@ -157,6 +162,9 @@ private/no-store responses and client forgetting remain unchanged.
 
 When enabled, a needs-fix cause alerts at once. No run **start** for 36 hours is a fix,
 including an installation that has never started (measured from migration/monitoring start).
+Overdue takes priority over an existing file issue or hold, while that earlier cause stays
+in Waiting and details. The delayed Since date is the earliest unresolved temporary
+failure, not the latest run.
 Temporary failures on **three distinct dates in the schedule zone** give a delayed alert;
 **seven dates** give a fix. Several failures on one day count once. Monthly-budget failure
 uses the same rule and says the import continues on the first of next month. A good check
@@ -167,7 +175,11 @@ unreadable status, restore trouble and uncertain switches fail closed to a fix a
 Live skips include dev's actual reason and originating run. The newest finished check and
 last good check are separate. Serving metadata comes from the actual manifest, not the
 last successful run in the recent window. A process outage is replayed from a bounded
-private spool; it does not invent a successful check.
+private spool; it does not invent a successful check. An unreadable status shows unknown
+facts rather than claiming history is missing; its Since date is unknown too. Normal
+pending alias switches and declared-abandoned attempts do not create a mixed-data alert.
+An unresolved unknown outcome or a durable switch hold does. Recent runs show the file’s
+total cost only on published rows, never as a new charge on every waiting check.
 
 ## Configuration and commands
 
@@ -222,7 +234,9 @@ pnpm importer run --config "$IMPORT_CONFIG" --env dev --no-change --cache-only \
 pnpm importer run --config "$IMPORT_CONFIG" --env dev --forced-dev --cache-only
 ```
 
-A forced dev exercise uses the original artifact allowance. Normal scheduled operation
+A forced dev exercise uses the original artifact allowance. Repeating it reuses the
+original artifact and generation, increments the attempt count and records another
+successful exercise; it does not create a new financial allowance or reset history. Normal scheduled operation
 is `pnpm importer cycle --config "$IMPORT_CONFIG"`; a single environment can be run with
 `pnpm importer run --config "$IMPORT_CONFIG" --env dev`. `cycle` requires enabled intent
 and installation evidence. Paid misses remain subject to all budgets; `--cache-only`
