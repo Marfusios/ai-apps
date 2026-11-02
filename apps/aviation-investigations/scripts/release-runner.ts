@@ -11,6 +11,9 @@ export const QUIET_START_MINUTE = 3 * 60 + 30;
 export const QUIET_END_MINUTE = 6 * 60;
 export const APP_HEALTH_TIMEOUT_MS = 180_000;
 export const RECERTIFY_TIMEOUT_MS = IMPORT_DEADLINE_MS + 15 * 60_000;
+// server/app.ts logs this after server/dataset.ts lazily checks the passages index.
+// Definitive failures stay cached; only `unavailable` is rechecked after 30 seconds.
+export const PASSAGES_UNSERVABLE_MESSAGE = 'passages index not servable: AI evidence stays off';
 export const IMAGE_ID = /^sha256:[0-9a-f]{64}$/;
 export const RELEASE_TAG = /^\d{4}\.\d{2}\.\d{2}-[0-9a-f]{7}$/;
 export const STEPS = [
@@ -78,14 +81,21 @@ export function releaseTag(head: string, refs: string): string {
   return candidates[0]![0]!;
 }
 export function hasStartupWarning(output: string): boolean {
+  let listening = false;
   for (const line of output.split('\n')) {
     try {
       const value: unknown = JSON.parse(line);
       if (typeof value !== 'object' || value === null || Object.hasOwn(value, 'reqId')) continue;
+      const message = 'msg' in value ? value.msg : undefined;
+      const warning = 'level' in value && Number(value.level) >= 40;
+      if (message === PASSAGES_UNSERVABLE_MESSAGE) {
+        if (warning && (!('code' in value) || value.code !== 'unavailable')) return true;
+        continue;
+      }
       // Fastify logs its readiness before accepting visitor work. Request-scoped text
       // cannot act as that boundary. Without it, inspect the entire startup window.
-      if ('msg' in value && typeof value.msg === 'string' && value.msg.startsWith('Server listening at ')) return false;
-      if ('level' in value && Number(value.level) >= 40) return true;
+      if (typeof message === 'string' && message.startsWith('Server listening at ')) { listening = true; continue; }
+      if (!listening && warning) return true;
     } catch { /* Not a structured application log line. */ }
   }
   return false;

@@ -532,10 +532,11 @@ After the reviewed merge, create an **annotated** tag on the clean release commi
 named `YYYY.MM.DD-<first seven characters of HEAD>` (for example with
 `git tag -a <tag> -m <release-note>`). Exactly one tag matching that form may name HEAD;
 its suffix must match the commit. The command creates no tags, merges or pushes.
-Run it from the configured main checkout, not a different worktree:
 
 Use a **tmux or screen session** for the release so a dropped SSH connection does not
 interrupt it. The launcher uses `node --import tsx`, without the tsx CLI's signal relay.
+
+Run it from the configured main checkout, not a different worktree:
 
 ```sh
 pnpm app:release --config /abs/private/release.json --dry-run
@@ -610,6 +611,10 @@ After those checks, the command:
    app-level log entries at level 40 or above (including 50 and 60) before the first
    `Server listening at` line in the container's first 180 seconds fail. Later app-logged
    visitor warnings, such as an evidence rerank fallback, do not fail the release.
+   One configuration warning is checked after listening too:
+   `passages index not servable: AI evidence stays off` at level 40 or above fails anywhere
+   in the window unless its `code` is `unavailable`. That transient code is ignored; the
+   app rechecks it on demand after 30 seconds.
    Every request-scoped entry carrying `reqId` is ignored, including `api request`.
    Without a listening line, all non-request lines in that window are checked. A
    no-restart retry rechecks the same window from `StartedAt` to `StartedAt + 180 s`.
@@ -652,8 +657,11 @@ migrations are no-ops when current, and Compose reuses the existing tagged image
 A warning before the first listening line persists in the checked window: fix its cause,
 then recreate the live app before rerunning. When the window has no listening line, the
 same recovery applies to any non-request warning it contains; check for a changed log
-format too. Visitor warnings after listening need no recreation. From the application
-directory, set `LIVE_COMPOSE_ENV_FILES` to the comma-joined `live.composeEnvFiles` from
+format too. The definitive `passages index not servable: AI evidence stays off` warning
+is checked after listening too: fix the index or the embedding settings, recreate the
+app, then rerun. Its transient `unavailable` code does not fail the release. Visitor
+warnings after listening need no recreation. From the application directory, set
+`LIVE_COMPOSE_ENV_FILES` to the comma-joined `live.composeEnvFiles` from
 the private release config and run, preserving the release's Docker endpoint settings:
 
 ```bash
