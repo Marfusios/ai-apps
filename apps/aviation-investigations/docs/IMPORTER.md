@@ -51,9 +51,10 @@ pinned bytes identify the environment's original allowance; repackaging identica
 reuses it. `import_processing` stores builds and recovery phases for new code/image
 attempts. New processing never resets reservations, first-reservation time or counters.
 
-A failure that needs a fix suppresses the same **environment + archive digest + code
-commit + image digest**. Before bytes exist, source advertisement substitutes for the
-archive identity. Daily discovery still runs; identical suppressed work records a waiting
+A failure that needs a fix **while processing a file** suppresses the same **environment +
+archive digest + code commit + image digest**. Preflight and serving-data re-certification
+failures are per-run incidents; they never suppress an untouched waiting file. Daily
+discovery still runs; identical suppressed work records a waiting
 run and retains the original alert. Different bytes, code or image permit a retry.
 Successful work resolves its issue; a suppressed check or serving-data re-certification
 cannot clear a waiting-file issue.
@@ -61,8 +62,8 @@ cannot clear a waiting-file issue.
 | Kind | Reasons | Behavior |
 | --- | --- | --- |
 | Temporary | NTSB/app unavailable, file changed during download, busy/backup window, lost lock, timeout, interrupted worker, monthly budget, cache unavailable | Retry daily, without an attempt limit. |
-| Needs a fix | Schema, integrity, verification, mapping, probe/site check, per-file cap, storage, configuration, cleanup, restore/accounting hold, changed listing, retired source, shrunk file, unclassified error | Alert immediately; suppress identical work until new bytes or a release. |
-| Unknown switch or failed restoration | Alias state unknown, rollback failed | Keep both datasets protected. Block switches; a release permits reconciliation, never a timed waiver. |
+| Needs a fix | Schema, integrity, verification, mapping, probe/site check, per-file cap, storage, configuration, cleanup, restore/accounting hold, changed listing, retired source, shrunk file, unclassified error | Alert immediately. File-processing failures suppress identical work until new bytes or a release; preflight/re-certification incidents do not suppress a file. Restore/accounting holds still require reconciliation. |
+| Unknown switch or failed rollback commit | Alias state unknown, rollback failed | Keep both datasets protected. Block switches; a release permits reconciliation, never a timed waiver. |
 
 Historical attempt counters remain for accounting and diagnostics. Four interruptions
 no longer stop retries. A dead worker is recorded once when the next fenced run recovers it.
