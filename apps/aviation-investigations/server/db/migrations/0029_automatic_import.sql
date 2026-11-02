@@ -325,8 +325,9 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
    'automaticSince',import_status_time(c.automatic_since),
    'restoreHeld',c.restore_required OR coalesce((SELECT held_at IS NOT NULL FROM paid_operations_hold WHERE id=1),true),
    'switchHeld',c.switch_hold IS NOT NULL OR EXISTS(SELECT 1 FROM import_index_refs r JOIN index_switch_attempts a ON a.index_name=r.index_name
-      WHERE r.released_at IS NULL AND a.outcome IN ('pending','unknown')),
+      WHERE r.released_at IS NULL AND a.outcome='unknown' AND a.declared_abandoned_at IS NULL),
    'temporaryDays',least(7,(SELECT count(distinct failure_day)::int FROM import_issues WHERE resolved_at IS NULL AND NOT fixed)),
+   'delayedSince',(SELECT import_status_time(min(created_at)) FROM import_issues WHERE resolved_at IS NULL AND NOT fixed),
    'lastGood',(SELECT import_public_run(id) FROM import_runs WHERE good_check ORDER BY checked_at DESC LIMIT 1),
    'serving',(SELECT jsonb_build_object('generationId',generation_id,'sourceDate',source_date,'importedAt',import_status_time(published_at),'restoredAt',restored_at) FROM serving),
    'waiting',CASE WHEN c.pending IS NULL THEN NULL ELSE jsonb_build_object('source',c.pending->'observation','since',c.pending->>'fetchedAt') END,
