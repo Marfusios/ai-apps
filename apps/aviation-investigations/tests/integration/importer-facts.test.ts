@@ -48,7 +48,11 @@ function docker(args: string[], environment: NodeJS.ProcessEnv = {}): string {
   return result.stdout.trim();
 }
 
-async function seed(db: Db, environment: 'dev' | 'live', image: string): Promise<DevFacts> {
+async function seed(
+  db: Db,
+  environment: 'dev' | 'live',
+  image: string,
+): Promise<DevFacts> {
   const dir = await makeExtractDir();
   try {
     await writeManifest(dir, archives[environment]);
@@ -127,7 +131,9 @@ beforeAll(async () => {
     ],
     { POSTGRES_PASSWORD: password },
   );
-  const port = /:(\d+)\s*$/.exec(docker(['port', name, '5432/tcp']).split('\n')[0] ?? '')?.[1];
+  const port = /:(\d+)\s*$/.exec(
+    docker(['port', name, '5432/tcp']).split('\n')[0] ?? '',
+  )?.[1];
   if (!port) throw new Error('isolated host-facts database has no port');
   const adminUrl = `postgres://postgres:${password}@127.0.0.1:${port}/postgres`;
   for (let retry = 0; ; retry++) {
@@ -145,9 +151,22 @@ beforeAll(async () => {
       await connection.end().catch(() => undefined);
     }
   }
-  admin = new pg.Pool({ connectionString: adminUrl, max: 1, connectionTimeoutMillis: 1000 });
-  expect((await admin.query('show server_version')).rows[0].server_version).toMatch(/^16\.2/);
-  const image = docker(['inspect', '--type', 'container', '--format', '{{.Image}}', name]);
+  admin = new pg.Pool({
+    connectionString: adminUrl,
+    max: 1,
+    connectionTimeoutMillis: 1000,
+  });
+  expect((await admin.query('show server_version')).rows[0].server_version).toMatch(
+    /^16\.2/,
+  );
+  const image = docker([
+    'inspect',
+    '--type',
+    'container',
+    '--format',
+    '{{.Image}}',
+    name,
+  ]);
   const environment = (env: 'dev' | 'live') => ({
     envFiles: [join(root, `${env}.env`)],
     applicationUrl: 'http://127.0.0.1:9/',
@@ -227,16 +246,18 @@ it.each(['dev', 'live'] as const)(
   'reads real %s retention facts before closing the pool',
   async (environment) => {
     expect(
-      ((await readHostFacts(config, { kind: 'retention', environment })) as string[]).sort(),
+      (
+        (await readHostFacts(config, { kind: 'retention', environment })) as string[]
+      ).sort(),
     ).toEqual([archives[environment], pendingArchives[environment]].sort());
     await expectPoolsClosed();
   },
 );
 
 it('reads the real canary and publication and inspects a running fixture container', async () => {
-  expect(await readHostFacts(config, { kind: 'canary', environment: 'dev', content })).toEqual(
-    devFacts,
-  );
+  expect(
+    await readHostFacts(config, { kind: 'canary', environment: 'dev', content }),
+  ).toEqual(devFacts);
   expect(
     await readHostFacts(config, {
       kind: 'canary',
@@ -248,7 +269,10 @@ it('reads the real canary and publication and inspects a running fixture contain
 });
 
 it('closes the canary pool when the image check fails', async () => {
-  const wrongImage = { ...config, dev: { ...config.dev, image: 'sha256:' + '0'.repeat(64) } };
+  const wrongImage = {
+    ...config,
+    dev: { ...config.dev, image: 'sha256:' + '0'.repeat(64) },
+  };
   await expect(
     readHostFacts(wrongImage, { kind: 'canary', environment: 'dev', content }),
   ).rejects.toMatchObject({ reason: 'source_unavailable' });
@@ -294,6 +318,7 @@ it.each(['dev', 'live'] as const)(
         retention: string[];
         repeated: string[];
         canary: DevFacts | null;
+        serving: unknown;
       };
       expect({
         ...returned,
@@ -304,6 +329,7 @@ it.each(['dev', 'live'] as const)(
         retention: [archives[other], pendingArchives[other]].sort(),
         repeated: [archives[other], pendingArchives[other]].sort(),
         canary: own === 'live' ? devFacts : null,
+        serving: await readHostFacts(config, { kind: 'serving', environment: other }),
       });
       await expectPoolsClosed();
     } finally {
@@ -313,5 +339,20 @@ it.each(['dev', 'live'] as const)(
         await exit;
       }
     }
+  },
+);
+
+it.each(['dev', 'live'] as const)(
+  'reads %s serving facts over the production host reader',
+  async (environment) => {
+    const facts = await readHostFacts(config, { kind: 'serving', environment });
+    expect(facts).toMatchObject({
+      archive: archives[environment],
+      content,
+      observation: { advertisedAtLocal: '2026-11-01T00:00:00', bytes: 100 },
+      counts: { total: expect.any(Number), eligible: expect.any(Number) },
+      publication: { generationId: expect.any(Number) },
+    });
+    await expectPoolsClosed();
   },
 );

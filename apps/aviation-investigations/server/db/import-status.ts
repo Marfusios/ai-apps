@@ -9,7 +9,7 @@ const Health=z.strictObject({
  serving:AdminImportsSchema.shape.serving,lastGood:AdminImportRunSchema.nullable(),
  waiting:z.strictObject({source:AdminImportRunSchema.shape.source,since:z.iso.datetime()}).nullable(),
  issue:z.strictObject({reason:z.enum(IMPORT_REASONS).nullable(),fixed:z.boolean(),since:z.iso.datetime(),origin:z.enum(['dev','live','host']),
-  siteState:z.enum(['unchanged','restored','uncertain']),postSuccess:z.boolean(),details:AdminImportRunSchema.nullable(),originRunId:z.uuid().nullable()}).nullable(),
+  siteState:z.enum(['unchanged','restored','restore_unverified','uncertain']),postSuccess:z.boolean(),details:AdminImportRunSchema.nullable(),originRunId:z.uuid().nullable()}).nullable(),
 });
 /** Definer projections only, in the overview's snapshot; raw tables and errors never reach HTTP. */
 export async function readImportStatus(db:DbOrTx,schedule:ImportSchedule|null,now=new Date()) {

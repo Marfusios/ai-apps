@@ -26,9 +26,9 @@ export async function applicationAvailable(
       },
     });
     await response.body?.cancel();
-    if (response.status !== 200) throw new ImportFailure('source_unavailable', false);
+    if (response.status !== 200) throw new ImportFailure('source_unavailable');
   } catch {
-    throw new ImportFailure('source_unavailable', false);
+    throw new ImportFailure('source_unavailable');
   }
 }
 export async function deployedImage(config: ImporterConfig['dev']): Promise<string> {
@@ -46,10 +46,10 @@ export async function deployedImage(config: ImporterConfig['dev']): Promise<stri
       { timeout: 10_000, maxBuffer: 1024 },
     );
     if (r.stdout.trim() !== `${config.image} true`)
-      throw new ImportFailure('source_unavailable', false);
+      throw new ImportFailure('source_unavailable');
     return config.image;
   } catch {
-    throw new ImportFailure('source_unavailable', false);
+    throw new ImportFailure('source_unavailable');
   }
 }
 export async function workerIdentity(expected: string, cwd: string): Promise<void> {
@@ -65,9 +65,9 @@ export async function workerIdentity(expected: string, cwd: string): Promise<voi
       maxBuffer: 1024 * 1024,
     });
     if (head.stdout.trim() !== expected || status.stdout.trim())
-      throw new ImportFailure('configuration', false);
+      throw new ImportFailure('configuration');
   } catch {
-    throw new ImportFailure('configuration', false);
+    throw new ImportFailure('configuration');
   }
 }
 /** The actual public GET read paths. No cookies, identity, AI endpoints or provider clients. */
@@ -89,7 +89,7 @@ export function applicationProbe(
       });
       if (r.status !== 200) {
         await r.body?.cancel();
-        throw new ImportFailure('source_unavailable', false);
+        throw new ImportFailure('source_unavailable');
       }
       if (!r.body) throw new ImportFailure('probe');
       const chunks: Uint8Array[] = [];
@@ -102,7 +102,7 @@ export function applicationProbe(
       return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
     } catch (e) {
       if (e instanceof ImportFailure) throw e;
-      throw new ImportFailure('source_unavailable', false);
+      throw new ImportFailure('source_unavailable');
     }
   }
   return {
@@ -118,7 +118,7 @@ export function applicationProbe(
         const c = ConfigResponseSchema.parse(JSON.parse(await read('/api/config')));
         // Cache propagation is retried by the orchestrator; no rollback based on a stale response.
         if (c.datasetRevision !== revision)
-          throw new ImportFailure('source_unavailable', false);
+          throw new ImportFailure('source_unavailable');
         if (
           c.coverage.defaultCohort !== expectedCounts.eligible ||
           c.coverage.defaultCohort + c.coverage.otherRecords !== expectedCounts.cases
@@ -136,7 +136,7 @@ export function applicationProbe(
             detail.provenance.datasetRevision,
           ].some((r) => r !== revision)
         ) {
-          throw new ImportFailure('source_unavailable', false);
+          throw new ImportFailure('source_unavailable');
         }
         if (
           search.total !== expectedCounts.eligible ||

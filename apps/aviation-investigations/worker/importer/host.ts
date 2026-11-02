@@ -27,17 +27,37 @@ import { FactMessageSchema, readHostFacts } from './facts.js';
 /** Includes lock acquisition, recovery, both environments and final daemon cleanup. */
 export const IMPORT_DEADLINE_MS = 3 * 3_600_000;
 export const IMPORT_HOST_ENVIRONMENT = [
-  'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR',
-  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'XDG_RUNTIME_DIR',
-  'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG',
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'LANG',
+  'LC_ALL',
+  'TZ',
+  'TMPDIR',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'XDG_RUNTIME_DIR',
+  'DOCKER_HOST',
+  'DOCKER_CONTEXT',
+  'DOCKER_CONFIG',
 ] as const;
 
 /**
  * flock on the inherited open file description: the parent retains it after the helper exits.
  * The release command supplies a fresh environment and create=false for read-only dry-run checks.
  */
-export async function hostLock(path: string, env?: NodeJS.ProcessEnv, create = true): Promise<FileHandle> {
-  const fd = await open(path, (create ? constants.O_CREAT : 0) | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+export async function hostLock(
+  path: string,
+  env?: NodeJS.ProcessEnv,
+  create = true,
+): Promise<FileHandle> {
+  const fd = await open(
+    path,
+    (create ? constants.O_CREAT : 0) | constants.O_RDWR | constants.O_NOFOLLOW,
+    0o600,
+  );
   try {
     const stat = await fd.stat();
     if (!stat.isFile() || (stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.())
@@ -50,7 +70,7 @@ export async function hostLock(path: string, env?: NodeJS.ProcessEnv, create = t
       p.once('error', reject);
       p.once('close', done);
     });
-    if (code !== 0) throw new ImportFailure('busy', false);
+    if (code !== 0) throw new ImportFailure('busy');
     return fd;
   } catch (e) {
     await fd.close();
@@ -82,7 +102,11 @@ export function serveChildFacts(
   let factsPending = false;
   child.on('message', (raw: unknown) => {
     const parsed = FactMessageSchema.safeParse(raw);
-    if (!parsed.success || factsPending || parsed.data.request.environment === ownEnvironment)
+    if (
+      !parsed.success ||
+      factsPending ||
+      parsed.data.request.environment === ownEnvironment
+    )
       return;
     const message = parsed.data;
     factsPending = true;
@@ -90,11 +114,22 @@ export function serveChildFacts(
       .then(
         (value) => {
           if (child.connected)
-            child.send({ type: 'import-facts-reply', id: message.id, ok: true, value }, () => {});
+            child.send(
+              {
+                type: 'import-facts-reply',
+                id: message.id,
+                ok: true,
+                value,
+              },
+              () => {},
+            );
         },
         () => {
           if (child.connected)
-            child.send({ type: 'import-facts-reply', id: message.id, ok: false }, () => {});
+            child.send(
+              { type: 'import-facts-reply', id: message.id, ok: false },
+              () => {},
+            );
         },
       )
       .finally(() => {
@@ -112,7 +147,10 @@ export async function boundedChild(
 ): Promise<number> {
   return new Promise<number>((done) => {
     const environment = Object.fromEntries(
-      IMPORT_HOST_ENVIRONMENT.filter((n) => Boolean(process.env[n])).map((n) => [n, process.env[n]!]),
+      IMPORT_HOST_ENVIRONMENT.filter((n) => Boolean(process.env[n])).map((n) => [
+        n,
+        process.env[n]!,
+      ]),
     ) as NodeJS.ProcessEnv;
     const child = spawn(
       process.execPath,
@@ -145,7 +183,10 @@ export async function boundedChild(
       kill('SIGTERM');
     };
     const soft = setTimeout(stop, Math.max(1, deadline - Date.now() - 120_000));
-    const hard = setTimeout(() => kill('SIGKILL'), Math.max(1, deadline - Date.now() - 90_000));
+    const hard = setTimeout(
+      () => kill('SIGKILL'),
+      Math.max(1, deadline - Date.now() - 90_000),
+    );
     const onSignal = () => stop();
     process.once('SIGTERM', onSignal);
     process.once('SIGINT', onSignal);
@@ -174,7 +215,9 @@ export async function boundedChild(
     child.stderr!.on('data', () => {});
     const ownEnvironment = args[args.indexOf('--env') + 1];
     serveChildFacts(child, config, ownEnvironment);
-    child.on('message',m=>{if(skip && (m as {type?:string})?.type==='skip-ready') child.send(skip);});
+    child.on('message', (m) => {
+      if (skip && (m as { type?: string })?.type === 'skip-ready') child.send(skip);
+    });
     const finish = (code: number | null) => {
       clearTimeout(soft);
       clearTimeout(hard);
@@ -208,12 +251,7 @@ async function main(args: string[], deadline: number): Promise<number> {
   if (
     !values.config ||
     positionals.length !== 1 ||
-    ![
-      'run',
-      'cycle',
-      'rollback',
-      'recertify',
-    ].includes(positionals[0]!)
+    !['run', 'cycle', 'rollback', 'recertify'].includes(positionals[0]!)
   ) {
     throw new ImportFailure('configuration');
   }
@@ -221,7 +259,7 @@ async function main(args: string[], deadline: number): Promise<number> {
     command = positionals[0];
   const reminder = sourceReminder(new Date());
   if (reminder) process.stdout.write(`${reminder}\n`);
-  if (inBackupWindow(new Date())) throw new ImportFailure('backup_window', false);
+  if (inBackupWindow(new Date())) throw new ImportFailure('backup_window');
   if (command === 'cycle' && (!config.schedule.enabled || !config.installation))
     throw new ImportFailure('configuration');
   const locks: FileHandle[] = [];
@@ -229,7 +267,10 @@ async function main(args: string[], deadline: number): Promise<number> {
   try {
     locks.push(await hostLock(config.hostLock));
     locks.push(await hostLock(config.maintenanceLock));
-    await workerIdentity(config.code, resolve(dirname(fileURLToPath(import.meta.url)), '../../..'));
+    await workerIdentity(
+      config.code,
+      resolve(dirname(fileURLToPath(import.meta.url)), '../../..'),
+    );
     await privateDirectory(config.root);
     await space.check();
     await recoverExtraction(space);
@@ -247,7 +288,12 @@ async function main(args: string[], deadline: number): Promise<number> {
         ...(values['cache-only'] ? ['--cache-only'] : []),
       ];
       environments.add('dev');
-      const dev = await boundedChild([...common, '--env', 'dev'], deadline, locks, config);
+      const dev = await boundedChild(
+        [...common, '--env', 'dev'],
+        deadline,
+        locks,
+        config,
+      );
       if (dev !== 0) {
         process.stdout.write(`${safeLog('check', 'skipped_dev_failed', 'dev_failed')}\n`);
         if (config.live && deadline - Date.now() > 180_000) {
@@ -267,12 +313,13 @@ async function main(args: string[], deadline: number): Promise<number> {
         ? await boundedChild([...common, '--env', 'live'], deadline, locks, config)
         : 0;
     } finally {
-      try { await recoverExtraction(space); }
-      catch (error) {
-        await hostCleanupStatus(config,space,environments,startedAt,classify(error));
+      try {
+        await recoverExtraction(space);
+      } catch (error) {
+        await hostCleanupStatus(config, space, environments, startedAt, classify(error));
         throw error;
       }
-      await hostCleanupStatus(config,space,environments,startedAt);
+      await hostCleanupStatus(config, space, environments, startedAt);
     }
   } finally {
     for (const lock of locks.reverse()) await lock.close();

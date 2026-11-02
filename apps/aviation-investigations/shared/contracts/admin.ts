@@ -89,7 +89,7 @@ export const AdminImportRunSchema = z.strictObject({
   origin: ImportOrigin.nullable().default(null), workKind: z.enum(['import','recertification']).default('import'),
   suppressed: z.boolean().default(false),
   changes: z.strictObject({new:Count,updated:Count,removed:Count}).nullable().default(null),
-  restoration: z.strictObject({sourceDate:z.iso.date().nullable(),restoredAt:Iso}).nullable().default(null),
+  restoration: z.strictObject({sourceDate:z.iso.date().nullable(),restoredAt:Iso.nullable()}).nullable().default(null),
   checkedAt: Iso,
   finishedAt: Iso.nullable(),
   mode: z.enum(['automatic', 'forced_dev']),
@@ -107,7 +107,7 @@ export type AdminImportRun = z.infer<typeof AdminImportRunSchema>;
 export const ImportAlertSchema = z.strictObject({
   level:z.enum(['delayed','fix']), cause:z.enum([...IMPORT_REASONS,'overdue','status_unavailable']),
   since:Iso, failedDays:Count, origin:ImportOrigin,
-  siteState:z.enum(['unchanged','restored','uncertain']), nextAction:ImportRetry,
+  siteState:z.enum(['unchanged','restored','restore_unverified','uncertain']), nextAction:ImportRetry,
   retryAt:Iso.nullable(), postSuccess:z.boolean(), devAdvanced:z.boolean(),
   details:AdminImportRunSchema.nullable(), originRunId:z.uuid().nullable(),
 });

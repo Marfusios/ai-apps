@@ -55,7 +55,7 @@ export async function setPending(
   await fenced(db, session, (tx) => setPendingTransaction(tx, session, value, fetched));
 }
 
-/** A review blocks acquisition; a later listing is only an observation, never a new candidate. */
+/** Record an advertisement independently from the bytes already acquired. */
 export async function observePending(
   db: Db,
   session: ImportSession,
@@ -102,7 +102,8 @@ export async function recordSuccess(
       throw new ImportFailure('integrity');
     if (success.artifactId) {
       const saved = await artifact(tx, success.artifactId);
-      if (saved.rollback && success.kind === 'publication') throw new ImportFailure('integrity');
+      if (saved.rollback && success.kind === 'publication')
+        throw new ImportFailure('integrity');
       if (
         saved.archive_sha256 !== success.accepted.archive ||
         saved.content_sha256 !== success.accepted.content ||
@@ -122,12 +123,24 @@ export async function recordSuccess(
       ${success.runId}::uuid,${success.artifactId}::uuid,${success.kind},${JSON.stringify(publication)}::jsonb,
       ${JSON.stringify(success.accepted)}::jsonb,${JSON.stringify(success.canary)}::jsonb,${success.evidence})`);
     if (success.kind === 'recertification') {
-      await tx.execute(sql`select import_adopt(${session.fence}::uuid,${JSON.stringify(success.accepted)}::jsonb)`);
+      await tx.execute(
+        sql`select import_adopt(${session.fence}::uuid,${JSON.stringify(success.accepted)}::jsonb)`,
+      );
+      // Resolve only serving-data checks. A waiting candidate's own issue stays open.
+      await tx.execute(sql`update import_issues i set resolved_at=clock_timestamp()
+        where i.resolved_at is null and not i.post_success and exists(
+          select 1 from import_runs r where r.id=i.run_id and r.work_kind='recertification')`);
     } else {
-      await tx.execute(sql`select import_accept(${session.fence}::uuid,${JSON.stringify(success.accepted)}::jsonb,false)`);
+      await tx.execute(
+        sql`select import_accept(${session.fence}::uuid,${JSON.stringify(success.accepted)}::jsonb,false)`,
+      );
       // Acceptance proves the data. Cleanup/report incidents remain until those effects finish.
-      await tx.execute(sql`update import_issues set resolved_at=clock_timestamp() where resolved_at is null and not post_success`);
-      await tx.execute(sql`update import_runs set good_check=true where id=${success.runId}::uuid`);
+      await tx.execute(
+        sql`update import_issues set resolved_at=clock_timestamp() where resolved_at is null and not post_success`,
+      );
+      await tx.execute(
+        sql`update import_runs set good_check=true where id=${success.runId}::uuid`,
+      );
     }
     await tx.execute(
       sql`update import_runs set success_publication=${JSON.stringify(publication)}::jsonb where id=${success.runId}::uuid`,
@@ -143,8 +156,11 @@ export async function recordSuccess(
   });
 }
 
-/** An acknowledgement/report failure after commit cannot turn committed acceptance into a review. */
-export async function committedSuccess(db: Db, runId: string | null): Promise<Success | null> {
+/** An acknowledgement/report failure after commit cannot downgrade committed acceptance. */
+export async function committedSuccess(
+  db: Db,
+  runId: string | null,
+): Promise<Success | null> {
   if (!runId) return null;
   const result =
     await db.execute(sql`select t.*,r.source_check_succeeded from import_attestations t
@@ -168,8 +184,12 @@ export async function committedSuccess(db: Db, runId: string | null): Promise<Su
 /** A normal unchanged check has no publication attestation, but is still durable success. */
 export async function completedRun(db: Db, runId: string | null): Promise<boolean> {
   if (!runId) return false;
-  return (await db.execute(sql`select 1 from import_runs where id=${runId}::uuid and step='complete'
-    and (result='unchanged' or (result='published' and canary_passed))`)).rows.length === 1;
+  return (
+    (
+      await db.execute(sql`select 1 from import_runs where id=${runId}::uuid and step='complete'
+    and (result='unchanged' or (result='published' and canary_passed))`)
+    ).rows.length === 1
+  );
 }
 
 export async function recordLegacy(

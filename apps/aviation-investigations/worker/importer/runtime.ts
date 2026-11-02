@@ -66,6 +66,8 @@ export type FaultPoint =
   | 'loaded'
   | 'cases_built'
   | 'passages_built'
+  | 'rollback_started'
+  | 'rollback_committed'
   | 'published'
   | 'accepted'
   | 'before_report';
@@ -126,6 +128,8 @@ export interface ImportContext extends ImportResources {
   blocked: boolean;
   sourceChecked: boolean;
   recertifying: boolean;
+  /** True only after this run touches the candidate, never during serving-data checks. */
+  fileWork: boolean;
   artifact: Artifact | null;
   pending: PendingFetch | null;
   accepted?: AcceptedSnapshot;

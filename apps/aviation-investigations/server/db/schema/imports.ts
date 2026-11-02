@@ -151,7 +151,7 @@ export const importIssues = pgTable('import_issues', {
   key: text('key').primaryKey(), runId: uuid('run_id').references(() => importRuns.id),
   artifactId: uuid('artifact_id').references(() => importArtifacts.id),
   code: text('code').notNull(), image: text('image').notNull(), archiveSha256: text('archive_sha256'),
-  source: jsonb('source'), reason: text('reason').notNull(), step: text('step').notNull(),
+  source: jsonb('source'), reason: text('reason').notNull(), originalReason: text('original_reason'), step: text('step').notNull(),
   origin: text('origin').notNull(), originRunId: uuid('origin_run_id'), fixed: boolean('fixed').notNull(),
   siteState: text('site_state').notNull().default('unchanged'),
   postSuccess: boolean('post_success').notNull().default(false),

@@ -49,7 +49,6 @@ export interface Artifact {
   canary: Canary | null;
 
   rollback: ManifestIdentity | null;
-
 }
 export interface Certificate {
   version: 'import-certificate.v2';
@@ -112,7 +111,9 @@ const ArtifactSchema = z.object({
   archive_sha256: Sha256,
   content_sha256: Sha256,
   processingId: z.uuid().nullable(),
-  phase: z.string(), code: z.string(), image: z.string(),
+  phase: z.string(),
+  code: z.string(),
+  image: z.string(),
   reason: z.enum(IMPORT_REASONS).nullable(),
   generation_id: z
     .union([z.string().regex(/^\d+$/), z.number().int().positive()])
@@ -125,7 +126,6 @@ const ArtifactSchema = z.object({
   canary: CanarySchema.nullable(),
 
   rollback: ManifestSchema.nullable(),
-
 });
 function parseArtifact(row: unknown): Artifact {
   const parsed = ArtifactSchema.safeParse(row);
@@ -150,10 +150,11 @@ export async function withImportSession<T>(
   });
   try {
     await client.connect();
-    const r = await client.query<{ ok: boolean }>('select pg_try_advisory_lock($1) as ok', [
-      IMPORT_SESSION_LOCK,
-    ]);
-    if (!r.rows[0]?.ok) throw new ImportFailure('busy', false);
+    const r = await client.query<{ ok: boolean }>(
+      'select pg_try_advisory_lock($1) as ok',
+      [IMPORT_SESSION_LOCK],
+    );
+    if (!r.rows[0]?.ok) throw new ImportFailure('busy');
     const claim = await client.query<{ fence: string }>(
       'select import_claim()::text as fence',
     );
@@ -162,7 +163,7 @@ export async function withImportSession<T>(
     return await fn({
       fence,
       assertLocked() {
-        if (lost) throw new ImportFailure('lock_lost', false, 'cancelled');
+        if (lost) throw new ImportFailure('lock_lost', 'cancelled');
       },
     });
   } finally {
@@ -216,33 +217,61 @@ export async function artifact(db: DbOrTx, id: string): Promise<Artifact> {
   if (!r.rows[0]) throw new ImportFailure('integrity');
   return parseArtifact(r.rows[0]);
 }
-export async function startProcessing(db: Db, session: ImportSession, id: string,
-  value: { archive: string; content: string; baseline: ManifestIdentity; code: string; image: string }): Promise<Artifact> {
-  return fenced(db, session, async tx => {
-    const a = await artifact(tx,id);
-    if (a.processingId && a.code === value.code && a.image === value.image &&
-        a.archive_sha256 === value.archive && a.content_sha256 === value.content && a.phase !== 'abandoned') return a;
-    if (a.processingId && ['switching','published','rolling_back'].includes(a.phase))
+export async function startProcessing(
+  db: Db,
+  session: ImportSession,
+  id: string,
+  value: {
+    archive: string;
+    content: string;
+    baseline: ManifestIdentity;
+    code: string;
+    image: string;
+  },
+): Promise<Artifact> {
+  return fenced(db, session, async (tx) => {
+    const a = await artifact(tx, id);
+    if (
+      a.processingId &&
+      a.code === value.code &&
+      a.image === value.image &&
+      a.archive_sha256 === value.archive &&
+      a.content_sha256 === value.content &&
+      a.phase !== 'abandoned'
+    )
+      return a;
+    if (a.processingId && ['switching', 'published', 'rolling_back'].includes(a.phase))
       throw new ImportFailure('alias_unknown');
-    await tx.execute(sql`update import_processing set active=false where artifact_id=${id}::uuid and active`);
+    await tx.execute(
+      sql`update import_processing set active=false where artifact_id=${id}::uuid and active`,
+    );
     await tx.execute(sql`insert into import_processing(artifact_id,archive_sha256,content_sha256,baseline,code,image)
       values(${id}::uuid,${value.archive},${value.content},${JSON.stringify(value.baseline)}::jsonb,${value.code},${value.image})`);
-    return artifact(tx,id);
+    return artifact(tx, id);
   });
 }
-export async function registerArtifact(db: Db, session: ImportSession, environment: 'dev'|'live',
-  archive: string, content: string, baseline: ManifestIdentity,
-  identity = { code: '0'.repeat(40), image: 'sha256:'+'0'.repeat(64) }): Promise<Artifact> {
-  const id = await fenced(db,session,async tx => {
+export async function registerArtifact(
+  db: Db,
+  session: ImportSession,
+  environment: 'dev' | 'live',
+  archive: string,
+  content: string,
+  baseline: ManifestIdentity,
+  identity = { code: '0'.repeat(40), image: 'sha256:' + '0'.repeat(64) },
+): Promise<Artifact> {
+  const id = await fenced(db, session, async (tx) => {
     // Same bytes or repackaged identical content keep the original monetary identity.
-    let r = await tx.execute(sql`select id from import_artifacts where environment=${environment}
+    let r =
+      await tx.execute(sql`select id from import_artifacts where environment=${environment}
       and (archive_sha256=${archive} or content_sha256=${content}
         or exists(select 1 from import_processing p where p.artifact_id=import_artifacts.id and (p.archive_sha256=${archive} or p.content_sha256=${content}))) order by created_at limit 1`);
-    if (!r.rows[0]) r = await tx.execute(sql`insert into import_artifacts(environment,archive_sha256,content_sha256,baseline)
+    if (!r.rows[0])
+      r =
+        await tx.execute(sql`insert into import_artifacts(environment,archive_sha256,content_sha256,baseline)
       values(${environment},${archive},${content},${JSON.stringify(baseline)}::jsonb) returning id`);
     return String(r.rows[0]!.id);
   });
-  return startProcessing(db,session,id,{archive,content,baseline,...identity});
+  return startProcessing(db, session, id, { archive, content, baseline, ...identity });
 }
 /** Checks age even for cache-only resumes, while locks prevent spending/publication races. */
 export async function resumeArtifact(
@@ -257,7 +286,7 @@ export async function resumeArtifact(
     const r = await tx.execute(
       sql`update import_artifacts set attempts=attempts+1 where id=${id}::uuid returning id`,
     );
-    if (r.rows.length !== 1) throw new ImportFailure('interrupted', true);
+    if (r.rows.length !== 1) throw new ImportFailure('interrupted');
   });
 }
 export async function budgetRemaining(
@@ -329,14 +358,15 @@ export async function beginRun(
 ): Promise<string> {
   return fenced(db, session, async (tx) => {
     // Claiming this fence proves the former lock session is gone. Keep failed daily checks bounded too.
-    const stopped=await tx.execute(sql`update import_runs set result=case when attempt_started then 'failed' else 'deferred' end,
+    const stopped =
+      await tx.execute(sql`update import_runs set result=case when attempt_started then 'failed' else 'deferred' end,
       reason='interrupted',finished_at=clock_timestamp(),
       source_check_succeeded=false where result='running' returning *,to_char(checked_at at time zone ${zone},'YYYY-MM-DD') as failure_day`);
-    for(const row of stopped.rows) {
+    for (const row of stopped.rows) {
       await tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,source,reason,step,origin,fixed,failure_day)
-        values(${digest([row.id,'interrupted'])},${String(row.id)}::uuid,${row.artifact_id as string|null}::uuid,
-        ${row.code as string|null??'0'.repeat(40)},${row.image as string|null??'sha256:'+'0'.repeat(64)},${row.observed_sha256 as string|null},
-        ${row.source?JSON.stringify(row.source):null}::jsonb,'interrupted',${String(row.step)},${row.origin as string|null??'host'},false,${String(row.failure_day)}) on conflict do nothing`);
+        values(${digest([row.id, 'interrupted'])},${String(row.id)}::uuid,${row.artifact_id as string | null}::uuid,
+        ${(row.code as string | null) ?? '0'.repeat(40)},${(row.image as string | null) ?? 'sha256:' + '0'.repeat(64)},${row.observed_sha256 as string | null},
+        ${row.source ? JSON.stringify(row.source) : null}::jsonb,'interrupted',${String(row.step)},${(row.origin as string | null) ?? 'host'},false,${String(row.failure_day)}) on conflict do nothing`);
     }
     const r = await tx.execute(
       sql`insert into import_runs(mode) values(${mode}) returning id`,
@@ -467,7 +497,8 @@ export async function findContent(
   environment: 'dev' | 'live',
   content: string,
 ): Promise<Artifact | null> {
-  const r = await db.execute(sql`select a.id from import_artifacts a left join import_processing p on p.artifact_id=a.id and p.active
+  const r =
+    await db.execute(sql`select a.id from import_artifacts a left join import_processing p on p.artifact_id=a.id and p.active
     where a.environment=${environment} and (a.content_sha256=${content} or p.content_sha256=${content}) order by a.created_at limit 1`);
   return r.rows[0] ? artifact(db, String(r.rows[0].id)) : null;
 }
@@ -491,7 +522,7 @@ export async function checkCertificate(
       Date.parse(canary.checkedAt) > Date.now() ||
       Date.now() - Date.parse(canary.checkedAt) > 86_400_000
     ) {
-      throw new ImportFailure('dev_failed', false);
+      throw new ImportFailure('dev_failed');
     }
   }
   if (
@@ -533,15 +564,25 @@ export async function checkCertificate(
 }
 
 /** Explicit, parsed recovery queries; no raw database rows escape into step state. */
-export async function outstandingArtifacts(db: Db, environment: 'dev'|'live'): Promise<Artifact[]> {
-  const r = await db.execute(sql`select a.id from import_artifacts a join import_processing p on p.artifact_id=a.id
+export async function outstandingArtifacts(
+  db: Db,
+  environment: 'dev' | 'live',
+): Promise<Artifact[]> {
+  const r =
+    await db.execute(sql`select a.id from import_artifacts a join import_processing p on p.artifact_id=a.id
     where a.environment=${environment} and p.active and p.phase in ('switching','published','rolling_back') order by p.created_at`);
-  return Promise.all(r.rows.map(r=>artifact(db,String(r.id))));
+  return Promise.all(r.rows.map((r) => artifact(db, String(r.id))));
 }
 export async function originalFetch(db: Db, id: string) {
-  const r = await db.execute(sql`select id,source,checked_at::text as checked from import_runs where artifact_id=${id}::uuid and source is not null order by checked_at limit 1`);
+  const r = await db.execute(
+    sql`select id,source,checked_at::text as checked from import_runs where artifact_id=${id}::uuid and source is not null order by checked_at limit 1`,
+  );
   if (!r.rows[0]) throw new ImportFailure('accounting');
-  return {id:String(r.rows[0].id),source:SourceSchema.parse(r.rows[0].source),checked:new Date(String(r.rows[0].checked)).toISOString()};
+  return {
+    id: String(r.rows[0].id),
+    source: SourceSchema.parse(r.rows[0].source),
+    checked: new Date(String(r.rows[0].checked)).toISOString(),
+  };
 }
 export async function reusableReference(
   db: Db,
@@ -580,7 +621,6 @@ export async function admitArtifact(
   id: string,
 ): Promise<void> {
   await budgetRemaining(db, session, id);
-
 }
 export async function startAttempt(
   db: Db,

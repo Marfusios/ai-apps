@@ -55,8 +55,10 @@ export class ImportFailure extends Error {
   logged = false;
   readonly fix: boolean;
   readonly result: 'deferred' | 'failed' | 'cancelled';
-  constructor(readonly reason: ImportReason, _legacy?: boolean,
-    result?: 'deferred' | 'failed' | 'cancelled') {
+  constructor(
+    readonly reason: ImportReason,
+    result?: 'deferred' | 'failed' | 'cancelled',
+  ) {
     super(reason);
     this.name = 'ImportFailure';
     this.fix = !TEMPORARY_REASONS.has(reason);
@@ -80,7 +82,10 @@ export interface ManifestIdentity {
   passagesIndex: string;
   publishedAt: string;
 }
-export function sameManifest(a: ManifestIdentity | null, b: ManifestIdentity | null): boolean {
+export function sameManifest(
+  a: ManifestIdentity | null,
+  b: ManifestIdentity | null,
+): boolean {
   return (
     a !== null &&
     b !== null &&

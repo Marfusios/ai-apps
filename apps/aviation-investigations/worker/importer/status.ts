@@ -91,7 +91,7 @@ export interface ImportHealth {
   lastGood: AdminImportRun|null;
   waiting: {source:AdminImportRun['source'];since:string}|null;
   issue: {reason:AdminImportRun['reason'];fixed:boolean;since:string;origin:'dev'|'live'|'host';
-    siteState:'unchanged'|'restored'|'uncertain';postSuccess:boolean;details:AdminImportRun|null;originRunId:string|null}|null;
+    siteState:'unchanged'|'restored'|'restore_unverified'|'uncertain';postSuccess:boolean;details:AdminImportRun|null;originRunId:string|null}|null;
 }
 /** Severity and retry policy are server owned. Incidents outlive the recent-run window. */
 export function projectImports(rows: readonly StatusRow[], schedule: ImportSchedule|null, now:Date,

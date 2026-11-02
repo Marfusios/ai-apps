@@ -19,11 +19,16 @@ CREATE TABLE IF NOT EXISTS import_issues (
  site_state text NOT NULL DEFAULT 'unchanged', post_success boolean NOT NULL DEFAULT false,
  failure_day text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), last_at timestamptz NOT NULL DEFAULT now(), resolved_at timestamptz,
  CHECK(key ~ '^[0-9a-f]{64}$'), CHECK(origin IN ('dev','live','host')),
- CHECK(site_state IN ('unchanged','restored','uncertain')),
+ CHECK(site_state IN ('unchanged','restored','restore_unverified','uncertain')),
  CHECK(code ~ '^[0-9a-f]{40}$' AND image ~ '^sha256:[0-9a-f]{64}$'),
  CHECK(archive_sha256 IS NULL OR archive_sha256 ~ '^[0-9a-f]{64}$'),
  CHECK(failure_day ~ '^\d{4}-\d{2}-\d{2}$')
 );
+--> statement-breakpoint
+ALTER TABLE import_issues ADD COLUMN IF NOT EXISTS original_reason text;
+ALTER TABLE import_issues DROP CONSTRAINT IF EXISTS import_issues_site_state_check;
+ALTER TABLE import_issues ADD CONSTRAINT import_issues_site_state_check
+ CHECK(site_state IN ('unchanged','restored','restore_unverified','uncertain'));
 --> statement-breakpoint
 ALTER TABLE import_control ADD COLUMN IF NOT EXISTS automatic_since timestamptz NOT NULL DEFAULT now();
 ALTER TABLE import_control ADD COLUMN IF NOT EXISTS switch_hold jsonb;
@@ -213,6 +218,10 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 BEGIN
  PERFORM import_assert_fence(p_fence);
  IF p_fetched THEN RAISE EXCEPTION 'use durable acquisition' USING ERRCODE='55000'; END IF;
+ IF p_accepted IS NOT NULL AND EXISTS(SELECT 1 FROM import_control
+   WHERE id=1 AND pending->>'content' IS NOT NULL
+   AND pending->>'content' IS DISTINCT FROM p_accepted->>'content')
+ THEN RAISE EXCEPTION 'accepted content differs from pending file' USING ERRCODE='55000'; END IF;
  UPDATE import_control SET accepted=coalesce(p_accepted,accepted),
  last_fetched=CASE WHEN p_accepted IS NOT NULL AND pending IS NOT NULL THEN pending||jsonb_build_object('state','accepted') ELSE last_fetched END,
  pending=CASE WHEN p_accepted IS NOT NULL THEN NULL ELSE pending END,
@@ -247,24 +256,14 @@ DROP FUNCTION IF EXISTS import_acknowledge_preartifact(uuid,uuid,text,text,boole
 DROP FUNCTION IF EXISTS import_rebaseline(uuid,jsonb,text,uuid,uuid);
 DROP FUNCTION IF EXISTS import_resolve_abandoned_fetch(uuid);
 --> statement-breakpoint
--- Health is derived from durable incidents, not a truncated recent-run window.
-CREATE OR REPLACE FUNCTION import_prune_runs(p_fence uuid) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
-BEGIN
- PERFORM import_assert_fence(p_fence);
- DELETE FROM import_runs WHERE finished_at IS NOT NULL AND id NOT IN (
- SELECT run_id FROM import_attestations WHERE run_id IS NOT NULL
- UNION SELECT run_id FROM import_issues WHERE run_id IS NOT NULL
- UNION SELECT id FROM import_runs WHERE acknowledged_at IS NOT NULL OR result='needs_review'
- UNION SELECT pending_run_id FROM import_runs WHERE pending_run_id IS NOT NULL
- UNION SELECT (pending->>'runId')::uuid FROM import_control WHERE pending IS NOT NULL
- UNION SELECT id FROM (SELECT id FROM import_runs ORDER BY checked_at DESC LIMIT 200) r
- UNION SELECT id FROM (SELECT id FROM import_runs WHERE good_check ORDER BY checked_at DESC LIMIT 1) r
- UNION SELECT id FROM (SELECT DISTINCT ON(artifact_id) id FROM import_runs WHERE artifact_id IS NOT NULL ORDER BY artifact_id,checked_at DESC) r);
-END $$;
---> statement-breakpoint
 REVOKE ALL ON import_processing,import_issues FROM PUBLIC,aviation_app,aviation_ingest;
-GRANT SELECT,INSERT,UPDATE ON import_processing,import_issues TO aviation_ingest;
+GRANT SELECT ON import_processing,import_issues TO aviation_ingest;
+GRANT INSERT(artifact_id,code,image,archive_sha256,content_sha256,baseline) ON import_processing TO aviation_ingest;
+GRANT UPDATE(active,phase,reason,generation_id,baseline,certificate,publication,canary,rollback) ON import_processing TO aviation_ingest;
+GRANT INSERT(key,run_id,artifact_id,code,image,archive_sha256,source,reason,original_reason,step,origin,origin_run_id,fixed,
+ site_state,post_success,failure_day,created_at,last_at) ON import_issues TO aviation_ingest;
+GRANT UPDATE(last_at,resolved_at,site_state) ON import_issues TO aviation_ingest;
+REVOKE UPDATE(approved) ON import_artifacts FROM aviation_ingest;
 GRANT UPDATE(code,image,origin,changes,restoration,good_check,suppressed) ON import_runs TO aviation_ingest;
 REVOKE ALL ON FUNCTION import_automatic_guard(),import_adopt(uuid,jsonb),import_switch_hold(uuid,jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION import_adopt(uuid,jsonb),import_switch_hold(uuid,jsonb) TO aviation_ingest;

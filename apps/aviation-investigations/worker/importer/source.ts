@@ -146,12 +146,12 @@ async function response(
             : Date.parse(after) - http.now().getTime();
         await r.body?.cancel();
         if (!Number.isFinite(delay) || delay > 60_000)
-          throw new ImportFailure('source_unavailable', false);
+          throw new ImportFailure('source_unavailable');
         retry = true;
       } else {
         if (r.status !== 200) {
           await r.body?.cancel();
-          throw new ImportFailure('source_unavailable', false);
+          throw new ImportFailure('source_unavailable');
         }
         if ((r.headers.get('content-encoding') ?? 'identity') !== 'identity') {
           await r.body?.cancel();
@@ -168,7 +168,7 @@ async function response(
       clearTimeout(totalTimer);
       controller.abort();
     }
-    if (!retry || attempt === 2) throw new ImportFailure('source_unavailable', false);
+    if (!retry || attempt === 2) throw new ImportFailure('source_unavailable');
     const jitter = Math.floor((http.random ?? Math.random)() * 1000);
     await http.sleep(Math.min(60_000, Math.max(100, delay) + jitter));
   }
@@ -188,10 +188,10 @@ async function stream(
       const next = await Promise.race([
         reader.read(),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new ImportFailure('source_unavailable', false)), 30_000);
+          timer = setTimeout(() => reject(new ImportFailure('source_unavailable')), 30_000);
         }),
       ]).finally(() => clearTimeout(timer));
-      if (signal.aborted) throw new ImportFailure('source_unavailable', false);
+      if (signal.aborted) throw new ImportFailure('source_unavailable');
       if (next.done) return count;
       count += next.value.length;
       if (count > limit) throw new ImportFailure('integrity');
@@ -270,7 +270,7 @@ export class AvallSource implements SnapshotSource {
           const after = await this.inspect();
           if (!sameObservation(observation, after)) {
             await space.remove(temp);
-            throw new ImportFailure('source_changed_during_download', false);
+            throw new ImportFailure('source_changed_during_download');
           }
           await space.register(`archives/${sha256}`);
           const dir = join(space.root, 'archives', sha256);

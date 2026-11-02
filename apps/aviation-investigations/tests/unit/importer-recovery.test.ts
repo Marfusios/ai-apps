@@ -45,7 +45,7 @@ describe('real cross-environment matching orchestration', () => {
           candidate,
           facts,
           async () => {
-            throw new ImportFailure('source_unavailable', false);
+            throw new ImportFailure('source_unavailable');
           },
           now,
         ),
@@ -78,6 +78,8 @@ it.each([
   ['P2602', 'restore_hold', 'failed'],
   ['P2603', 'import_cap', 'failed'],
   ['P2604', 'accounting', 'failed'],
+  ['P2605', 'alias_unknown', 'failed'],
+  ['55000', 'integrity', 'failed'],
   ['ECONNRESET', 'interrupted', 'deferred'],
 ])('classifies %s without reading diagnostics', (code, reason, result) => {
   const failure = classify(
