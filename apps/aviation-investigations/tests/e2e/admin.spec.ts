@@ -9,7 +9,7 @@ import { expect, test, type Page } from '@playwright/test';
  * system from the mock's synthetic overview, readable at phone width without sideways scrolling;
  * for an account that is not an admin, and when signed out, `/admin` is the ordinary "not found"
  * page. Task 26: the System section's "Automatic import" in each of the mock importer's states
- * (session storage `casebook-mock-admin-imports`), the stop for review first.
+ * (session storage `casebook-mock-admin-imports`), with delayed/fix alerts at the top.
  *
  * `E2E_SCREENSHOTS=<dir>` keeps screenshots of the page there.
  */
@@ -126,7 +126,8 @@ for (const [width,theme] of [[1280,'day'],[390,'night']] as const) {
         await expect(alert.getByRole('button',{name:'Copy details'})).toBeVisible();
         await expect(alert).toContainText(state==='delayed'||state==='monthly_budget'?'Automatic import is delayed':'Automatic import needs a fix');
       }
-      await expect(block.getByRole('list',{name:'Recent import runs'})).toBeVisible();
+      if(state==='disabled')await expect(block).toContainText('No runs recorded yet.');
+      else await expect(block.getByRole('list',{name:'Recent import runs'})).toBeVisible();
       await expect(block).not.toContainText('pnpm importer');
       if(state==='disabled')await expect(block).toContainText('Automatic import is turned off.');
       if(state==='published')await expect(block).toContainText('152 new cases, 501 updated, 2 removed');

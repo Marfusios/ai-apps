@@ -52,12 +52,12 @@ export function importOutcome(run:AdminImportRun):string {
  if(run.result==='needs_review')return 'Earlier import stopped.';
  return `${run.result==='deferred'?'Waiting':'Failed'}: ${reasonWords(run.reason)}`;
 }
-export function alertDetails(imports:AdminImports,zone:string):string {
+export function alertDetails(imports:AdminImports,zone:string,compact=false):string {
  const a=imports.alert;if(!a)return '';
  const r=a.details;
  return [r?.result??'failed',a.cause,r?.step??'check',`${formatDateTime(r?.checkedAt??a.since,zone)} (${zone})`,
-  r?.runId?`run ${r.runId}`:null,r?.source?`file ${sourceDay(r.source.advertisedAtLocal)}`:null,
-  r?.code?`code ${r.code}`:null,r?.image?`image ${r.image}`:null,a.originRunId?`dev run ${a.originRunId}`:null].filter(Boolean).join(' · ');
+  r?.runId?`run ${compact?r.runId.slice(0,8):r.runId}`:null,r?.source?`file ${sourceDay(r.source.advertisedAtLocal)}`:null,
+  r?.code?`code ${compact?r.code.slice(0,12):r.code}`:null,r?.image?`image ${compact?r.image.slice(0,19):r.image}`:null,a.originRunId?`dev run ${compact?a.originRunId.slice(0,8):a.originRunId}`:null].filter(Boolean).join(' · ');
 }
 export function alertSentences(imports:AdminImports,environment:ImportEnvironment,zone:string):string[] {
  const a=imports.alert;if(!a)return [];

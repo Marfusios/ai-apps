@@ -36,7 +36,7 @@ describe('automatic import alerts and facts',{timeout:20000},()=>{
       expect(alert!.classList.contains(a.level==='fix'?'border-l-magenta':'border-l-ink')).toBe(true);
       expect(alert!.compareDocumentPosition(block)&Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
       expect(within(alert as HTMLElement).getByRole('button',{name:'Copy details'})).not.toBeNull();
-      expect(alert!.querySelector('code')?.textContent).toBe(alertDetails(o.system.imports,viewerTimeZone()));
+      expect(alert!.querySelector('code')?.textContent).toBe(alertDetails(o.system.imports,viewerTimeZone(),true));
     }
     const copy=document.querySelector('main')!.cloneNode(true) as HTMLElement;
     copy.querySelectorAll('[data-import-details]').forEach(x=>x.remove());

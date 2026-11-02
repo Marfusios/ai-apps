@@ -1315,7 +1315,8 @@ plain words and formatted numbers; times are in the viewer's own time zone, name
   says the site may show mixed data. “Restored” requires the previous site's checks to pass.
   Completed imports with later incidents remain done, with the incident described separately.
   - Technical details (result/reason/step, viewer-zone time, run, file date, code/image,
-    originating dev run) appear only in the mono details line and “Copy details”. Long IDs
+    originating dev run) appear only in the mono details line and “Copy details”. The line
+    abbreviates IDs; Copy details keeps them complete. Long IDs
     wrap without horizontal overflow. Copy success/failure is announced with `aria-live`.
     No approval controls, resolution commands or neutral notices appear.
   - Overdue uses the run **start**: “No import check has run since ⟨date, time⟩.” after

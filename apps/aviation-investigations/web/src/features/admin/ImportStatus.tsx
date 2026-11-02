@@ -24,7 +24,7 @@ export function ImportAlert({ imports, environment, timeZone }: {
         {alertSentences(imports, environment, timeZone).map((sentence, i) => <p key={i}>{sentence}</p>)}
       </div>
       <div className="mt-2 flex flex-wrap items-start gap-2 text-label">
-        <code className="min-w-0 flex-1 break-all font-mono text-muted" data-import-details="">{details}</code>
+        <code className="min-w-0 flex-1 break-all font-mono text-muted" data-import-details="">{alertDetails(imports, timeZone, true)}</code>
         <button type="button" className="shrink-0 rounded border border-hairline bg-blue-wash px-2 py-0.5 text-blue pointer-coarse:min-h-11"
           onClick={async () => {
             try { await navigator.clipboard.writeText(details); setCopied('copied'); }
