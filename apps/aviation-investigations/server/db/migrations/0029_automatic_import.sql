@@ -346,3 +346,30 @@ $$;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION import_status_time(timestamptz),import_public_run(uuid),import_status_health() FROM PUBLIC,aviation_app,aviation_ingest;
 GRANT EXECUTE ON FUNCTION import_status_health() TO aviation_app,aviation_ingest;
+
+--> statement-breakpoint
+-- Incident details and the last good check outlive the bounded recent-run list.
+CREATE OR REPLACE FUNCTION import_prune_runs (p_fence uuid) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM import_assert_fence (p_fence);
+  DELETE FROM import_runs WHERE finished_at IS NOT NULL AND id NOT IN (
+   SELECT run_id FROM import_issues WHERE run_id IS NOT NULL
+   UNION SELECT id FROM (SELECT id FROM import_runs WHERE good_check ORDER BY checked_at DESC LIMIT 1) last_good
+   UNION SELECT run_id FROM import_attestations WHERE run_id IS NOT NULL
+   UNION SELECT id FROM import_runs WHERE acknowledged_at IS NOT NULL
+   UNION SELECT pending_run_id FROM import_runs WHERE pending_run_id IS NOT NULL
+   UNION SELECT (pending ->> 'runId')::uuid FROM import_control WHERE pending IS NOT NULL
+   UNION SELECT id FROM (SELECT id FROM import_runs ORDER BY checked_at DESC LIMIT 200) newest
+   UNION SELECT id FROM (SELECT id FROM import_runs WHERE result = 'published' AND canary_passed ORDER BY
+     checked_at DESC LIMIT 1) success
+   UNION SELECT id FROM (SELECT id FROM import_runs WHERE source_check_succeeded AND finished_at IS NOT
+     NULL ORDER BY checked_at DESC LIMIT 1) checked
+   UNION SELECT id FROM (SELECT DISTINCT ON (artifact_id, reason) id FROM import_runs WHERE result =
+     'needs_review'
+     ORDER BY artifact_id, reason, checked_at DESC) unresolved
+   UNION SELECT id FROM (SELECT DISTINCT ON (artifact_id) id FROM import_runs WHERE artifact_id IS NOT
+     NULL
+     ORDER BY artifact_id, checked_at DESC) artifact_report
+  );
+END $$;

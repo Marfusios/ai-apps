@@ -1,13 +1,11 @@
 /** Internal child entry: invoke through `pnpm importer`, whose host locks and redacting journal wrap this process. */
 import { parseArgs } from 'node:util';
-import { join } from 'node:path';
 import { fstatSync, lstatSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { readImporterConfig } from './config.js';
 import { ImportFailure, safeLog, SourceSchema } from './contracts.js';
 import { runImport } from './run.js';
 import { operatorCommand } from './commands.js';
-import { ManagedSpace } from './files.js';
 import { recordSkippedLive, SkipSchema } from './recovery.js';
 
 import { classify } from './failure.js';
@@ -99,10 +97,6 @@ async function main(): Promise<void> {
       forcedDev: values['forced-dev'],
       seed: seed(),
     });
-    await new ManagedSpace(config.root).json(
-      join(config.root, `last-${environment}.json`),
-      report,
-    );
     process.stdout.write(`${safeLog('complete', report.result, report.reason)}\n`);
     if(report.result === 'waiting') process.exitCode = 1;
     return;

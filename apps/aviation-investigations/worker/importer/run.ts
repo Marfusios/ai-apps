@@ -166,7 +166,11 @@ export async function runWithResources(
   try {
     return await withImportSession(resources.db, async (session) => {
       context.session = session;
-      return dispatch(context);
+      const result = await dispatch(context);
+      // Keep the final report inside the same failure boundary as all other writes:
+      // a disk failure after committed success is a separate incident, never a failed import.
+      await context.space.json(join(config.root, `last-${options.environment}.json`), result);
+      return result;
     });
   } catch (error) {
     let failure=classify(error);

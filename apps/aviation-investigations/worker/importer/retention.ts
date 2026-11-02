@@ -51,6 +51,21 @@ export async function retainDatabase(db: Db, es: Client, s: ImportSession): Prom
         await unpinGeneration(tx,Number(ref.generation_id),`import-previous:${ref.artifact_id}`);
       }
     }
+    // A load can stop before either index exists. Such generations have a pin but no
+    // import_index_refs row to drive the loop above. Release those pins only after
+    // every processing attempt is reconciled and the same 48-hour grace has elapsed.
+    const orphanPins = await tx.execute(sql`select g.generation_id,g.reason
+      from generation_pins g join import_artifacts a
+        on g.reason in ('import:'||a.id::text,'import-previous:'||a.id::text)
+      where g.generation_id not in (
+          select generation_id from dataset_manifests order by active desc,published_at desc limit 2)
+        and not exists(select 1 from import_processing p where p.artifact_id=a.id
+          and (p.updated_at>=clock_timestamp()-interval '48 hours'
+            or (p.active and p.phase in ('building','switching','published','rolling_back'))))
+        and not exists(select 1 from import_index_refs r where r.artifact_id=a.id
+          and r.generation_id=g.generation_id and r.released_at is null)`);
+    for (const pin of orphanPins.rows)
+      await unpinGeneration(tx, Number(pin.generation_id), String(pin.reason));
     await tx.execute(sql`select import_prune_runs(${s.fence}::uuid)`);
   });
   await cleanupStalePins(db, { olderThanHours: 48 });

@@ -22,6 +22,7 @@ it('durable dates survive 200 later runs, deduplicate by civil day and reset onl
   // Simulate many later checks. They must not erase failure dates or invent a good check.
   await fenced(owner,s,tx=>tx.execute(sql`insert into import_runs(mode,result,step,finished_at,suppressed)
     select 'automatic','waiting','check',clock_timestamp(),true from generate_series(1,220)`));
+  await fenced(db,s,tx=>tx.execute(sql`select import_prune_runs(${s.fence}::uuid)`));
   const result=await readImportStatus(app,schedule);expect(result.alert).toMatchObject({level:'fix',failedDays:7});expect(result.recentRuns).toHaveLength(20);
   expect(result.lastGoodCheck).toBeNull();expect(result.lastStartedAt).not.toBeNull();
   expect((await readImportStatus(app,{...schedule,enabled:false}))).toMatchObject({status:'off',alert:null});
