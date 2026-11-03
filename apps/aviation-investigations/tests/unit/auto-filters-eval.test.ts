@@ -585,7 +585,7 @@ describe('Task 30 preflight', () => {
       expect(replayPart).toMatchObject({ ready: true, items: 1040, samples: 1, attempts: 1040, candidates: { scriptedSearches: 918 } });
       expect(replayPart.candidates.withCandidate).toBeGreaterThan(300);
       expect(replayPart.candidates.withCandidate).toBeLessThan(918);
-      expect(replayPart.chargeableWorstMicros).toBe(replayPart.candidates.withCandidate * 625);
+      expect(replayPart.chargeableWorstMicros).toBe(replayPart.candidates.withCandidate * s.attribution);
       expect(replayPart.worstCaseMicros).toBe(1040 * (s.scope + s.attribution + s.embed));
       const c2 = preflightPart('c2', dir, policy, s, undefined, true) as any;
       expect(c2).toMatchObject({ items: 1600, attempts: 1600, chargeableWorstMicros: 1600 * (s.scope + s.attribution) });
