@@ -725,7 +725,7 @@ describe('advisory isolation', () => {
     const page = searchOf(await h.request());
     expect(page.suggestion).toBeNull(); expect(page.note).toBeNull(); expect(page.total).toBeGreaterThan(0);
     expect((await usage()).quota_counted).toBe(true); expect(h.embed).toHaveBeenCalledTimes(1);
-  }, 20_000);
+  }, 30_000); // waits for the real 15-second scope bound
   it('filter-only edits inherit the executed query, and cleared filters never return', async () => {
     const plans: unknown[] = [];
     const h = harness({ evidenceScope: { output: { ...success, filters: { state: ['CA'] }, terms: 'UNACCEPTED' } } }, r => ({ ...r, search(p, plan, signal, cb, terms) {

@@ -70,11 +70,12 @@ const configs = EVIDENCE_RANKING_VERSIONS.map(version => {
   const r = version.includes('-h50-') ? rerank('claude-haiku-5-5', 50) : version.includes('-h100-') ? rerank('claude-haiku-5-5', 100) : version.includes('-s50-') ? rerank('claude-sonnet-5-5', 50) : null;
   return [version, freeze({ version, lexicalText, rerank: r, rerankProtocol,
     embedding: { model: 'text-embedding-3-small', dimensions: 1536 },
-    scope: { model: 'claude-haiku-5-5', settings: { thinking: 'off', effort: 'low', retries: 0, cache: 'system-5m' }, schemaSha256: hash(JSON.stringify(z.toJSONSchema(EvidenceScopeWireOutputSchema))), version: EVIDENCE_SCOPE_VERSION, sha256: hash(EVIDENCE_SCOPE_SYSTEM), caps: EVIDENCE_SCOPE_CAPS, cachePrefixTokens: CACHED_PREFIX_MAX, timeoutMs: 10_000 },
+    scope: { model: 'claude-haiku-5-5', settings: { thinking: 'off', effort: 'low', retries: 0, cache: 'system-5m' }, schemaSha256: hash(JSON.stringify(z.toJSONSchema(EvidenceScopeWireOutputSchema))), version: EVIDENCE_SCOPE_VERSION, sha256: hash(EVIDENCE_SCOPE_SYSTEM), caps: EVIDENCE_SCOPE_CAPS, cachePrefixTokens: CACHED_PREFIX_MAX, timeoutMs: 15_000 },
     retrieval: EVIDENCE_RETRIEVAL,
     query: { bound: 'fitQueryText-cl100k-v1', tokens: 1000, join: '\n', highlights: version === DEFAULT_EVIDENCE_RANKING ? 'suggested-or-executed' : 'executed-lexical' },
     retrievalTimeoutMs: 8000,
-    deadlineMs: 30_000 + (r?.timeoutMs ?? 0),
+    // Scope 15 s + retrieval 8 s + margin, plus the reranker's own bound (Task 30: scope 10 s → 15 s).
+    deadlineMs: 35_000 + (r?.timeoutMs ?? 0),
   } satisfies EvidenceRankingConfig)] as const;
 });
 export const EVIDENCE_RANKING_CONFIGS: Readonly<Record<EvidenceRankingVersion, EvidenceRankingConfig>> = Object.freeze(Object.fromEntries(configs)) as Record<EvidenceRankingVersion, EvidenceRankingConfig>;
