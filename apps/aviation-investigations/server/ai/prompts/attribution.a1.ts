@@ -52,6 +52,8 @@ Rules:
 - A place or year linked to an aircraft, a person, a company or a flight does not say where or when the accident happened, even when that is likely.
 - A candidate with several values is accident_location, accident_date or accident_aircraft only when every value is, as alternatives of one request.
 - Judge each candidate by its own words. Read commas, parentheses and long phrases for what they modify.
+- AirCase combines approved candidates with AND and cannot express alternatives across different kinds of constraint. If the question joins this value with another kind of constraint as an alternative (or, either, versus), compares separate groups, or makes it conditional (if, unless), choose unclear.
+- A year candidate states its exact range: approve accident_date only when the question's own words give exactly that range, including whether each end is open or closed.
 - quote: the shortest exact span of the question, copied character for character, that names the candidate's value and shows what it describes, at most 160 characters; "" if the question does not name it.`;
 
 /** The question is reader text; the candidates are AirCase's, encoded so no reader text can reach them. */
