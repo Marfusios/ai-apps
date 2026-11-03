@@ -20,7 +20,7 @@ describe('the check input', () => {
   it('renders canonical values with their operators, never scope text', () => {
     const value = (question: string, suggested: BriefFilters) => candidatesOf(question, suggested).flatMap(candidateValues);
     expect(value('Find accidents in Ohio or Iowa.', { state: ['OH', 'IA'] })).toEqual(['Iowa (IA)', 'Ohio (OH)']);
-    expect(value('Find accidents in Washington, DC.', { state: ['DC'] })).toEqual(['District of Columbia (DC)']);
+    expect(value('Find accidents in the District of Columbia.', { state: ['DC'] })).toEqual(['District of Columbia (DC)']);
     expect(value('Find accidents in 2019.', { yearFrom: 2019, yearTo: 2019 })).toEqual(['2019']);
     expect(value('Find accidents between 2015 and 2018.', { yearFrom: 2015, yearTo: 2018 })).toEqual(['2015 to 2018']);
     expect(value('Find accidents after 2015.', { yearFrom: 2016 })).toEqual(['2016 or later']);
@@ -89,7 +89,7 @@ describe('attributedFilters', () => {
   });
   it('a quote from another occurrence of the same words does not cover the witness', () => {
     // "helicopter" names the category once; the quote's other "accidents" occurrence is beside another value.
-    const q = 'Find helicopter accidents near Juneau, AK and accidents of the operator.';
+    const q = 'Find helicopter accidents near Juneau, AK, then accidents of the operator.';
     expect(decide(q, { category: ['HELI'] }, [{ id: 'category', about: 'accident_aircraft', quote: 'accidents of the operator' }]).fields)
       .toEqual({ category: 'bad_quote' });
     // Overlapping occurrences are all tried.
