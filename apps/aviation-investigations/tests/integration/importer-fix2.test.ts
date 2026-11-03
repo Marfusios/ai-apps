@@ -326,11 +326,15 @@ it('bounded fixed live skips show a new immutable cause when the same file passe
       live.config,
       first,
     );
-    expect((await readImportStatus(live.app, schedule)).alert).toMatchObject({
+    const preflightStatus = await readImportStatus(live.app, schedule);
+    expect(preflightStatus.alert).toMatchObject({
       cause: 'configuration',
       nextAction: 'daily',
-      servingChecks: true,
+      servingChecks: false,
     });
+    expect(alertSentences(preflightStatus, 'live', 'UTC')).toContain(
+      'The importer’s settings need a fix.',
+    );
     for (let n = 0; n < 2; n++) {
       await expect(
         dev.run({

@@ -1,5 +1,13 @@
 /** Shared reason classes for server retry policy and fixed UI explanations. */
 import type { AdminImportRun } from './contracts/admin.js';
+export const DATA_CHECK_REASONS = new Set<NonNullable<AdminImportRun['reason']>>([
+  'probe',
+  'site_check',
+  'verification',
+  'mapping',
+  'integrity',
+  'schema',
+]);
 export const TEMPORARY_REASONS = new Set<NonNullable<AdminImportRun['reason']>>([
   'source_unavailable',
   'source_changed_during_download',

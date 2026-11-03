@@ -5,6 +5,7 @@ import {
   ImportFailure,
 } from './contracts.js';
 import { IMPORT_LOCAL_TIME, IMPORT_TIME_ZONE } from '../../shared/import-schedule.js';
+import { DATA_CHECK_REASONS } from '../../shared/import-policy.js';
 
 export interface ImportSchedule {
   enabled: boolean;
@@ -131,30 +132,25 @@ export function projectImports(
   const unknown = health === true;
   const enabled = schedule?.enabled === true;
   const lastStartedAt = sorted[0]?.public.checkedAt ?? null;
-  const lastCheck =
-    sorted.find((r) => r.public.finishedAt !== null && !r.recertification)?.public ??
-    null;
+  // Daily dev refreshes pass through detect() and record a successful source check.
+  // The explicit recertify command bypasses detect(). Hide only its passing run;
+  // failed checks and live's skipped_dev_failed rows remain visible.
+  const visible = sorted.filter(
+    (r) =>
+      !(r.recertification && r.public.result === 'unchanged' && !r.sourceCheckSucceeded),
+  );
+  const lastCheck = visible.find((r) => r.public.finishedAt !== null)?.public ?? null;
   const lastGoodCheck =
     known?.lastGood ?? sorted.find((r) => r.goodCheck)?.public ?? null;
   const startSince = lastStartedAt ?? known?.automaticSince ?? null;
   const overdue =
     startSince !== null && now.getTime() - Date.parse(startSince) > 36 * 3_600_000;
   const issue = known?.issue ?? null;
-  const servingChecks =
+  const nonFile =
     !!issue &&
     !issue.postSuccess &&
-    (issue.preflight ||
-      issue.details?.workKind === 'recertification' ||
-      (!issue.suppressesFile &&
-        issue.details?.step === 'check' &&
-        [
-          'probe',
-          'site_check',
-          'verification',
-          'mapping',
-          'integrity',
-          'schema',
-        ].includes(issue.reason ?? '')));
+    (issue.preflight || issue.details?.workKind === 'recertification');
+  const servingChecks = nonFile && !!issue.reason && DATA_CHECK_REASONS.has(issue.reason);
   const days = known?.temporaryDays ?? 0;
   const retry = retryPolicy(issue);
   const holds: NonNullable<AdminImports['alert']>['holds'] = [];
@@ -222,13 +218,17 @@ export function projectImports(
     !waiting &&
     issue?.originRunId &&
     !issue.postSuccess &&
-    !servingChecks &&
+    !nonFile &&
     issue.details?.source
   ) {
     waiting = {
       source: issue.details.source,
       since: issue.since,
-      reason: issue.details.archiveSha256 ? issue.reason : null,
+      reason:
+        issue.details.archiveSha256 &&
+        !['check', 'cleanup', 'complete'].includes(issue.details.step)
+          ? issue.reason
+          : null,
       retry,
     };
   }
@@ -251,9 +251,6 @@ export function projectImports(
     lastGoodCheck,
     waiting,
     alert,
-    recentRuns: sorted
-      .filter((r) => !(r.recertification && r.public.result === 'unchanged'))
-      .slice(0, 20)
-      .map((r) => r.public),
+    recentRuns: visible.slice(0, 20).map((r) => r.public),
   });
 }

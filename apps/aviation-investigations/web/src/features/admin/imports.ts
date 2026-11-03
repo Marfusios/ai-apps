@@ -1,6 +1,9 @@
 /** Fixed words only. Alert severity and retry decisions come from the server. */
 import type { AdminImportRun, AdminImports } from '../../../../shared/contracts/admin.js';
-import { TEMPORARY_REASONS } from '../../../../shared/import-policy.js';
+import {
+  DATA_CHECK_REASONS,
+  TEMPORARY_REASONS,
+} from '../../../../shared/import-policy.js';
 import { formatDate } from '../../../../shared/format.js';
 import { formatDateTime, formatDay } from './format.js';
 
@@ -118,12 +121,13 @@ export function importOutcome(run: AdminImportRun): string {
     return run.source
       ? `No new file. The ${day} file waits for a fix.`
       : 'Checked. Imports are on hold until a fix.';
-  if (run.result === 'unchanged')
-    return run.workKind === 'recertification'
-      ? 'The data on the site passed the release checks.'
-      : 'No new file.';
+  if (run.result === 'unchanged') return 'No new file.';
   if (run.result === 'running') return 'Import in progress.';
-  if (run.workKind === 'recertification')
+  if (
+    run.workKind === 'recertification' &&
+    run.reason &&
+    DATA_CHECK_REASONS.has(run.reason)
+  )
     return run.result === 'skipped_dev_failed'
       ? 'Held back by the test copy of the site: The data on the site failed the release checks.'
       : 'Failed: The data on the site failed the release checks.';
@@ -217,7 +221,10 @@ export function alertSentences(
       lines.push(
         `The NTSB file of ${sourceDay(a.details.source.advertisedAtLocal)} is waiting.`,
       );
-    if (a.cause !== 'manual_rollback')
+    if (
+      a.cause !== 'manual_rollback' &&
+      !(a.servingChecks && a.origin === 'dev' && environment === 'live')
+    )
       lines.push(
         a.servingChecks
           ? 'The data on the site failed the release checks.'

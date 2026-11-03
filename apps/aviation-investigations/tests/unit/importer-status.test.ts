@@ -223,3 +223,39 @@ it('fixed Since uses the earliest same-cause date, and a hold reason beats an un
     since: null,
   });
 });
+
+it('a check-step integrity failure is not classified as a serving-data check without provenance', () => {
+  const h = health();
+  h.issue = {
+    ...h.issue!,
+    fixed: true,
+    reason: 'integrity',
+    details: { ...row.public, reason: 'integrity', step: 'check' },
+  };
+  expect(projectImports([row], schedule, now, h).alert).toMatchObject({
+    cause: 'integrity',
+    servingChecks: false,
+  });
+});
+
+it.each(['check', 'cleanup', 'complete'] as const)(
+  'an inherited %s incident cannot supply a file-failure reason',
+  (step) => {
+    const h = health();
+    h.issue = {
+      ...h.issue!,
+      fixed: true,
+      reason: 'configuration',
+      originRunId: '10000000-0000-4000-8000-000000000001',
+      details: {
+        ...row.public,
+        step,
+        source: { advertisedAtLocal: '2026-11-01T07:30:00', bytes: 100 },
+        archiveSha256: 'a'.repeat(64),
+      },
+    };
+    expect(projectImports([row], schedule, now, h).waiting).toMatchObject({
+      reason: null,
+    });
+  },
+);

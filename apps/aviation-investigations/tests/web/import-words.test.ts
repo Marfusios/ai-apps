@@ -216,7 +216,14 @@ it('serving-data check failures never blame a pending file, including on live', 
   expect(waitingWords(status.waiting!.reason)).toBe('Not imported yet');
   for (const env of ['dev', 'live'] as const) {
     const text = alertSentences(status, env, 'UTC').join(' ');
-    expect(text).toContain('The data on the site failed the release checks.');
+    if (env === 'dev')
+      expect(text).toContain('The data on the site failed the release checks.');
+    else {
+      expect(text).toContain(
+        'The release checks failed in the test copy of the site (dev). Live was not touched.',
+      );
+      expect(text).not.toContain('The data on the site failed the release checks.');
+    }
     expect(text).not.toMatch(
       /new data failed|new file failed|file of .* is waiting|not finished its checks/,
     );
@@ -224,4 +231,45 @@ it('serving-data check failures never blame a pending file, including on live', 
   expect(importOutcome(issue.details!)).toBe(
     'Failed: The data on the site failed the release checks.',
   );
+});
+
+it.each(['dev', 'live'] as const)(
+  'an unavailable preflight keeps its cause on %s without an inherited waiting file',
+  (env) => {
+    const now = new Date('2026-11-03T12:00:00Z');
+    const input = mockImportInputs('delayed', now);
+    if (input.health === true) throw Error('readable fixture');
+    const issue = input.health.issue!;
+    issue.reason = 'source_unavailable';
+    issue.preflight = true;
+    issue.origin = 'dev';
+    issue.details!.source = { advertisedAtLocal: '2026-11-01T07:30:00', bytes: 100 };
+    issue.details!.archiveSha256 = 'a'.repeat(64);
+    issue.originRunId = env === 'live' ? '10000000-0000-4000-8000-000000000001' : null;
+    input.health.temporaryDays = 3;
+    input.health.waiting = null;
+    const status = projectImports(input.rows, input.schedule, now, input.health);
+    expect(status.alert).toMatchObject({ level: 'delayed', servingChecks: false });
+    expect(status.waiting).toBeNull();
+    const text = alertSentences(status, env, 'UTC').join(' ');
+    expect(text).toContain('The NTSB download or the site did not answer.');
+    expect(text).not.toContain('release checks');
+    if (env === 'live')
+      expect(text).toContain(
+        'The test copy of the site (dev) has not finished its checks. Live was not touched.',
+      );
+  },
+);
+
+it('recertification availability failures and configuration mocks keep their own words', () => {
+  const input = mockImportInputs('configuration', new Date('2026-11-03T12:00:00Z'));
+  if (input.health === true) throw Error('readable fixture');
+  expect(input.health.issue!.preflight).toBe(false);
+  expect(
+    importOutcome({
+      ...input.rows[0]!.public,
+      workKind: 'recertification',
+      reason: 'source_unavailable',
+    }),
+  ).toBe('Failed: The NTSB download or the site did not answer.');
 });
