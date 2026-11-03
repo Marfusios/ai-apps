@@ -1,4 +1,4 @@
-/** Task 29's pure parts: the rows, the "Apply these filters" request, worst-case sizing and the scores. */
+/** Task 29's pure parts: the rows, the "Apply these filters" request, worst-case sizing, fallbacks and the scores. */
 import { BriefFiltersSchema, type BriefFilters } from '../../shared/contracts/briefs.js';
 import type { EvidenceScopeSuggestion } from '../../shared/contracts/evidence.js';
 import { questionQuery, remainingSuggestion } from '../../server/evidence/disclosure.js';
@@ -6,9 +6,9 @@ import type { LexicalSource } from '../../server/evidence/pipeline.js';
 import { embeddingWorstCaseUsd, stageWorstCaseUsd } from '../../server/ai/pricing.js';
 import type { EvidenceRankingConfig } from '../../server/evidence/ranking-config.js';
 import { codedMetrics } from '../search-quality/ab-score.js';
-import type { RankingQuestion } from '../search-quality/ab-types.js';
+import type { RankingQuestion, SearchObservation } from '../search-quality/ab-types.js';
 import { mean, pairedGroupBootstrap, type BootstrapResult } from '../retrieval/experiments/stats.js';
-import { withSuggestedFilters } from './filters.js';
+import { hasFilters, withSuggestedFilters } from './filters.js';
 
 /**
  * - `Q0`: Elasticsearch alone, the question as typed (no AI stage; scope skipped, it cannot change this ranking).
@@ -18,9 +18,7 @@ import { withSuggestedFilters } from './filters.js';
  */
 export const ROWS = ['Q0', 'QH50', 'QH50+F', 'Q0+F'] as const;
 export type Row = typeof ROWS[number];
-export const SAMPLES = [1, 2, 3] as const;
-
-const hasFilters = (f: BriefFilters) => Object.values(f).some(v => Array.isArray(v) ? v.length > 0 : v !== undefined);
+export type Sample = 1 | 2 | 3;
 
 /**
  * The filters "Apply these filters" sends after a search, or null when the page shows no such
@@ -34,14 +32,29 @@ export function applyFiltersRequest(lexicalSource: LexicalSource, addedTerms: st
   return BriefFiltersSchema.parse(withSuggestedFilters({}, visible.filters));
 }
 
-/** Worst-case microdollars of one question's searches: Q0 once, then per sample QH50 and its two edits. */
-export function questionWorstCaseMicros(q0: EvidenceRankingConfig, qh50: EvidenceRankingConfig): number {
+/** Worst-case microdollars of each stage, as `rankEvidence` reserves them. */
+export interface StageMicros { embed: number; scope: number; rerank: number }
+export function stageMicros(q0: EvidenceRankingConfig, qh50: EvidenceRankingConfig): StageMicros {
+  if (q0.rerank || !qh50.rerank || q0.embedding.model !== qh50.embedding.model) throw new Error('Unexpected Task 29 configurations');
   const micros = (usd: number) => Math.ceil(usd * 1e6);
-  const embed = micros(embeddingWorstCaseUsd(qh50.embedding.model));
-  const scope = micros(stageWorstCaseUsd(qh50.scope.model, qh50.scope.caps, qh50.scope.cachePrefixTokens));
-  const rerank = micros(stageWorstCaseUsd(qh50.rerank!.model, qh50.rerank!.caps, qh50.rerank!.cachePrefixTokens));
-  if (q0.rerank || q0.embedding.model !== qh50.embedding.model) throw new Error('Unexpected Task 29 configurations');
-  return embed + SAMPLES.length * ((scope + embed + rerank) + (embed + rerank) + embed);
+  return { embed: micros(embeddingWorstCaseUsd(qh50.embedding.model)),
+    scope: micros(stageWorstCaseUsd(qh50.scope.model, qh50.scope.caps, qh50.scope.cachePrefixTokens)),
+    rerank: micros(stageWorstCaseUsd(qh50.rerank.model, qh50.rerank.caps, qh50.rerank.cachePrefixTokens)) };
+}
+/** Worst-case microdollars of one question: Q0 once, then per sample QH50 and its two edits. */
+export const questionWorstCaseMicros = (s: StageMicros, samples: number): number =>
+  s.embed + samples * ((s.scope + s.embed + s.rerank) + (s.embed + s.rerank) + s.embed);
+
+/** Task 24's infrastructure outcomes: three in a row stop a run. */
+export const INFRASTRUCTURE = new Set(['count_failed', 'rate_limited', 'overloaded', 'timeout', 'provider_error', 'unbilled_provider_error']);
+export const isInfrastructure = (o: Pick<SearchObservation, 'scopeOutcome' | 'rerankOutcome'>) => INFRASTRUCTURE.has(o.scopeOutcome) || INFRASTRUCTURE.has(o.rerankOutcome);
+/** Task 24's fallback rates: failed scope among scope attempts, unapplied reranks among rerank attempts. */
+export function fallbackRates(rows: readonly SearchObservation[]) {
+  const scope = rows.filter(r => r.timing.scope.attempted), rerank = rows.filter(r => r.timing.rerank.attempted);
+  const failedScope = scope.filter(r => !['used', 'non_search', 'skipped'].includes(r.scopeOutcome)).length;
+  const fallbacks = rerank.filter(r => r.rerankOutcome !== 'applied').length;
+  return { scopeAttempts: scope.length, scopeFailures: failedScope, scopeRate: scope.length ? failedScope / scope.length : 0,
+    rerankAttempts: rerank.length, rerankFallbacks: fallbacks, rerankRate: rerank.length ? fallbacks / rerank.length : 0 };
 }
 
 /** How a sample's applied filters relate to the question's answer-key filters (reported only, never dispatched). */
@@ -74,7 +87,7 @@ export function rowScores(questions: readonly RankingQuestion[], rankings: reado
     broadP10: mean(broad.map(p => p.broadP10)), broadNdcg10: mean(broad.map(p => p.broadNdcg10)) };
 }
 
-/** Paired group bootstrap of a narrow Recall@20 difference (connected questions resampled together). */
+/** Paired group bootstrap of a narrow Recall@20 difference (connected questions resampled together). Quote `ci95`, not `lower95`. */
 export function compareNarrowR20(base: ReturnType<typeof rowScores>, variant: ReturnType<typeof rowScores>, seed = 29): BootstrapResult {
   const values = base.questions.filter(q => q.class === 'narrow').map(b => {
     const v = variant.questions.find(x => x.id === b.id);
@@ -82,4 +95,13 @@ export function compareNarrowR20(base: ReturnType<typeof rowScores>, variant: Re
     return { id: b.id, group: b.group, base: b.narrowR20, variant: v.narrowR20 };
   });
   return pairedGroupBootstrap(values, 10_000, seed);
+}
+
+/** Pairs of questions in different connected groups that now share a coded case (the bootstrap assumes none). */
+export function crossGroupShares(questions: readonly RankingQuestion[]): number {
+  let shared = 0;
+  for (const [i, a] of questions.entries()) for (const b of questions.slice(i + 1)) {
+    if (a.group !== b.group && a.relevant.some(n => b.relevant.includes(n))) shared += 1;
+  }
+  return shared;
 }

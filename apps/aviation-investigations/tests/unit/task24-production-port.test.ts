@@ -10,6 +10,8 @@ import { evidenceRankingConfig, evidenceRankingIdentity } from '../../server/evi
 import { evidenceReservation } from '../../server/evidence/pricing.js';
 import { createMemorySpendGate } from '../../worker/index/spend-gate.js';
 import { productionPort } from '../../evals/search-quality/ab-production.js';
+import { applyFiltersRequest } from '../../evals/applied-filters/plan.js';
+import type { LexicalSource } from '../../server/evidence/pipeline.js';
 import { ARM_IDS, type Arm, type ArmIdentity } from '../../evals/search-quality/ab-types.js';
 import type { TaskAllocation } from '../../evals/search-quality/money.js';
 import type { Db } from '../../server/db/client.js';
@@ -73,5 +75,30 @@ describe('Task 24 production entry-point adapter', () => {
     const h = setup(); mocks.active.mockResolvedValue({ ...dataset.manifest, generationId: 2 });
     await expect(h.port.run({ key: 'synthetic-question:Q0:1', questionId: question.id, arm: 'Q0', sample: 1 }, question)).rejects.toThrow('Active target changed');
     expect(h.gate).not.toHaveBeenCalled(); expect(mocks.provider.calls).toHaveLength(0);
+  });
+});
+
+describe('Task 29 edits through the production entry point', () => {
+  it('runs "Apply these filters" as the site does: the suggestion\'s filters, inherited texts, no scope, a rerank', async () => {
+    const h = setup();
+    const live = await h.port.run({ key: 'synthetic-question:QH50:1', questionId: question.id, arm: 'QH50', sample: 1 }, question);
+    expect(live.suggestion).toEqual({ filters: { state: ['AK'] }, terms: 'engine power loss' });
+    const filters = applyFiltersRequest(live.lexicalSource as LexicalSource, live.addedTerms ?? null, live.suggestion ?? null)!;
+    expect(filters).toEqual({ state: ['AK'] });
+    const before = mocks.provider.calls.length;
+    mocks.search.mockClear();
+    const edit = await h.port.run({ key: 'synthetic-question:QH50F:1', questionId: question.id, arm: 'QH50', sample: 1 }, question,
+      { filters, edited: { executed: live.executed!, lexicalSource: live.lexicalSource as LexicalSource, addedTerms: live.addedTerms ?? null } });
+    expect(edit.failure).toBeNull(); expect(edit.safetyFaults).toEqual([]);
+    expect(mocks.provider.calls.slice(before).map((c: any) => c.stage)).toEqual(['rerank']);
+    expect(mocks.search.mock.calls[0]![1]).toEqual({ text: live.executed!.vector, keywordText: live.executed!.lexical, filters: { state: ['AK'] } });
+    expect(edit).toMatchObject({ edited: true, appliedFilters: { state: ['AK'] }, scopeOutcome: 'skipped', rerankOutcome: 'applied', suggestion: null });
+  });
+  it('runs Elasticsearch alone with scope skipped and no filters', async () => {
+    const h = setup();
+    const q0 = await h.port.run({ key: 'synthetic-question:Q0:1', questionId: question.id, arm: 'Q0', sample: 1 }, question, { filters: {}, skipScope: true });
+    expect(q0.failure).toBeNull(); expect(mocks.provider.calls).toHaveLength(0);
+    expect(mocks.search.mock.calls[0]![1].filters).toEqual({});
+    expect(q0).toMatchObject({ scopeOutcome: 'skipped', rerankOutcome: 'disabled', edited: false });
   });
 });

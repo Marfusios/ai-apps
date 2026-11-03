@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyFiltersRequest, compareNarrowR20, filterMatch, questionWorstCaseMicros, rowScores, type RowRanking } from '../../evals/applied-filters/plan.js';
+import { applyFiltersRequest, compareNarrowR20, crossGroupShares, fallbackRates, filterMatch, isInfrastructure, questionWorstCaseMicros, rowScores, stageMicros, type RowRanking } from '../../evals/applied-filters/plan.js';
 import { readJournal, TASK29 } from '../../evals/applied-filters/run.js';
 import { checkTaskCap } from '../../evals/langfuse/money.js';
 import { filterIdentity } from '../../evals/search-quality/ab-production.js';
@@ -70,16 +70,18 @@ describe('Task 29 scores', () => {
 
 describe('Task 29 money and journal', () => {
   it('sizes a question from the production stage worst cases', () => {
-    const micros = questionWorstCaseMicros(evidenceRankingConfig('er-q-v1'), evidenceRankingConfig('er-q-h50-v1'));
-    expect(micros).toBeGreaterThan(0);
+    const stages = stageMicros(evidenceRankingConfig('er-q-v1'), evidenceRankingConfig('er-q-h50-v1'));
+    const micros = questionWorstCaseMicros(stages, 3);
+    expect(micros).toBe(stages.embed + 3 * (stages.scope + 3 * stages.embed + 2 * stages.rerank));
     expect(micros).toBeLessThan(TASK29.capMicros / 10);
-    expect(() => questionWorstCaseMicros(evidenceRankingConfig('er-q-h50-v1'), evidenceRankingConfig('er-q-h50-v1'))).toThrow();
+    expect(questionWorstCaseMicros(stages, 1)).toBeLessThan(micros);
+    expect(() => stageMicros(evidenceRankingConfig('er-q-h50-v1'), evidenceRankingConfig('er-q-h50-v1'))).toThrow();
   });
   it('has its own ledger prefix, lock and hard cap', () => {
-    expect(TASK29).toMatchObject({ allocation: 'eval-task29', lockKey: 732900029, capMicros: 600_000 });
-    const t = { chargedMicros: 590_000, ledgerMicros: 590_000, openMicros: 0, open: 0, reservations: 3 };
+    expect(TASK29).toMatchObject({ allocation: 'eval-task29', lockKey: 732900029, capMicros: 800_000 });
+    const t = { chargedMicros: 790_000, ledgerMicros: 790_000, openMicros: 0, open: 0, reservations: 3 };
     expect(() => checkTaskCap(t, 10_000, TASK29)).not.toThrow();
-    expect(() => checkTaskCap(t, 10_001, TASK29)).toThrow('Task 29 hard $0.60 cap would be exceeded');
+    expect(() => checkTaskCap(t, 10_001, TASK29)).toThrow('Task 29 hard $0.80 cap would be exceeded');
     expect(() => checkTaskCap({ ...t, open: 1, openMicros: 5 }, 1, TASK29)).toThrow(/Task 29 has unresolved/);
   });
   it('stops on an attempt without a durable result', () => {
@@ -95,5 +97,22 @@ describe('Task 29 money and journal', () => {
   it('compares filter objects regardless of key order', () => {
     expect(filterIdentity({ state: ['HI'], yearFrom: 2023 })).toBe(filterIdentity({ yearFrom: 2023, state: ['HI'] }));
     expect(filterIdentity({ state: ['HI'] })).not.toBe(filterIdentity({}));
+  });
+});
+
+describe('Task 29 fallbacks and groups', () => {
+  const obs = (scopeOutcome: string, rerankOutcome: string, scope = true, rerank = true) => ({ scopeOutcome, rerankOutcome,
+    timing: { scope: { attempted: scope, ms: 1 }, embed: { attempted: true, ms: 1 }, retrieve: { attempted: true, ms: 1 }, rerank: { attempted: rerank, ms: 1 } } }) as any;
+  it('counts Task 24 infrastructure outcomes and fallback rates', () => {
+    expect(isInfrastructure(obs('timeout', 'applied'))).toBe(true);
+    expect(isInfrastructure(obs('used', 'overloaded'))).toBe(true);
+    expect(isInfrastructure(obs('non_search', 'applied'))).toBe(false);
+    const r = fallbackRates([obs('used', 'applied'), obs('timeout', 'applied'), obs('skipped', 'invalid_output', false), obs('skipped', 'disabled', false, false)]);
+    expect(r).toMatchObject({ scopeAttempts: 2, scopeFailures: 1, rerankAttempts: 3, rerankFallbacks: 1 });
+  });
+  it('finds questions in different groups that share a coded case', () => {
+    const q = (id: string, group: string, relevant: string[]) => ({ id, question: id, group, class: 'narrow' as const, area: 'personnel', relevant });
+    expect(crossGroupShares([q('a', 'g1', ['X']), q('b', 'g1', ['X']), q('c', 'g2', ['Y'])])).toBe(0);
+    expect(crossGroupShares([q('a', 'g1', ['X']), q('c', 'g2', ['X', 'Y'])])).toBe(1);
   });
 });
