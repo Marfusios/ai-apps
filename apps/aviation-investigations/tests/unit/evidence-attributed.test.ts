@@ -169,6 +169,36 @@ describe('rankEvidence with attributed.v1', () => {
     expect(h.search).not.toHaveBeenCalled();
     expect(h.memory.records.at(-1)).toMatchObject({ purpose: expect.stringMatching(/:attribution$/), status: 'uncertain', chargedUsd: WORST });
   });
+  it('records the attribution facts once the check settles, so a search that then stops or fails keeps them (review M6)', async () => {
+    const unavailable = { state: 'attribution_unavailable', years: 'attribution_unavailable', category: 'attribution_unavailable' };
+    // Dispatched, then the search was stopped during the check (shutdown).
+    const controller = new AbortController(), aborted = { onAttribution: vi.fn(), onExecution: vi.fn() };
+    const a = setup({ evidenceAttribution: () => { controller.abort(); return { fail: 'timeout', billing: { kind: 'uncertain' } }; } });
+    await expect(rankEvidence(a.config, { ...a.input, signal: controller.signal }, a.providers, a.spend, undefined, aborted)).rejects.toThrow();
+    expect(aborted.onAttribution).toHaveBeenCalledExactlyOnceWith({ attributionOutcome: 'aborted', autoFilterFields: unavailable });
+    expect(aborted.onExecution).not.toHaveBeenCalled();
+    // Approved and settled, then the search was stopped before retrieval (deletion).
+    const before = { onAttribution: vi.fn(), onExecution: vi.fn() }, b = setup(); let guards = 0;
+    await expect(rankEvidence(b.config, b.input, b.providers, b.spend, async () => { if (++guards === 3) throw new Error('deleted'); }, before))
+      .rejects.toMatchObject({ stage: 'retrieve' });
+    expect(before.onAttribution).toHaveBeenCalledExactlyOnceWith({ attributionOutcome: 'applied',
+      autoFilterFields: { state: 'applied', years: 'applied', category: 'applied' } });
+    expect(before.onExecution).not.toHaveBeenCalled();
+    // Stopped at the check's own guard: nothing dispatched.
+    const guarded = { onAttribution: vi.fn() }, c = setup(); guards = 0;
+    await expect(rankEvidence(c.config, c.input, c.providers, c.spend, async () => { if (++guards === 2) throw new Error('deleted'); }, guarded))
+      .rejects.toMatchObject({ stage: 'scope' });
+    expect(guarded.onAttribution).toHaveBeenCalledExactlyOnceWith({ attributionOutcome: 'stopped', autoFilterFields: unavailable });
+    // No candidate: the decision without a check.
+    const none = { onAttribution: vi.fn() }, d = setup({}, attributed, { state: ['TX'] });
+    await rankEvidence(d.config, d.input, d.providers, d.spend, undefined, none);
+    expect(none.onAttribution).toHaveBeenCalledExactlyOnceWith({ attributionOutcome: 'not_run',
+      autoFilterFields: { state: 'not_candidate:set_mismatch', years: 'not_candidate:empty', category: 'not_candidate:empty' } });
+    // Observability cannot change the search.
+    const e = setup();
+    await expect(rankEvidence(e.config, e.input, e.providers, e.spend, undefined, { onAttribution: () => { throw new Error('logger'); } }))
+      .resolves.toMatchObject({ attributionOutcome: 'applied' });
+  });
   it('a refused reservation or settlement is a ranking failure, never an abstention', async () => {
     for (const failure of ['reserve', 'settle'] as const) {
       const h = setup(); let calls = 0;

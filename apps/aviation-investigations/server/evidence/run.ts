@@ -68,6 +68,8 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
       }, {
         ...progress,
         onExecution: facts => { execution = { ...facts }; },
+        // Kept if the search stops or fails before retrieval starts (a paid check never reads "not run").
+        onAttribution: facts => { execution = { ...execution, ...facts }; },
         onStage: stage => { active = stage; progress.onStage?.(stage); },
         onFallback: ({ stage, outcome }) => {
           if (stage === 'scope') ctx.log.warn({ stage, outcome: 'no_suggestion', failure: outcome }, 'evidence suggestion unavailable');
