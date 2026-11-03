@@ -71,12 +71,14 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
         onStage: stage => { active = stage; progress.onStage?.(stage); },
         onFallback: ({ stage, outcome }) => {
           if (stage === 'scope') ctx.log.warn({ stage, outcome: 'no_suggestion', failure: outcome }, 'evidence suggestion unavailable');
+          else if (stage === 'attribution') ctx.log.warn({ stage, outcome: 'no_automatic_filters', failure: outcome }, 'evidence automatic filters unavailable');
           else ctx.log.warn({ stage, outcome }, 'evidence rerank unavailable');
         },
       });
       const query = row.data.edited ? disclosedQuery(row.data) : questionQuery(result.lexicalSource, result.addedTerms);
       execution = { addedTerms: result.addedTerms, appliedFilters: result.appliedFilters, automaticFilters: result.automaticFilters,
         autoFilterPolicy: result.autoFilterPolicy, autoFilterReason: result.autoFilterReason,
+        autoFilterFields: result.autoFilterFields, attributionOutcome: result.attributionOutcome,
         query,
         executed: result.executed, lexicalSource: result.lexicalSource, rankingConfig: result.configuration,
         scopeOutcome: result.scopeOutcome, rerankOutcome: result.rerankOutcome };

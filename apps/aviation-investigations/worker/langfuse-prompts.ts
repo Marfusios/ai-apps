@@ -3,12 +3,19 @@ import { z } from 'zod';
 import type { AppConfig } from '../shared/config.js';
 import { EVIDENCE_SCOPE_SYSTEM, EvidenceScopeWireOutputSchema, renderEvidenceScopeUser } from '../server/ai/prompts/scope.e1.js';
 import { RERANK_SYSTEM, RERANK_USER_TEMPLATE, RerankOutputSchema } from '../server/ai/prompts/rerank.r1.js';
+import { ATTRIBUTION_SYSTEM, AttributionWireOutputSchema, renderAttributionUser } from '../server/ai/prompts/attribution.a1.js';
 import { canonicalRequestHash } from '../server/quota/policy.js';
 import { LangfuseApiError, langfuseApi } from '../server/observability/langfuse.js';
+
+/** The attribution user turn with its candidates as a template variable (the sample has no escaped characters). */
+const ATTRIBUTION_SAMPLE = [{ id: 'state' as const, values: ['Ohio (OH)'] }];
+const attributionUser = renderAttributionUser({ question: '{{question}}', candidates: ATTRIBUTION_SAMPLE })
+  .replace(JSON.stringify(ATTRIBUTION_SAMPLE), '{{candidates_json}}');
 
 export const MIRRORED_PROMPTS = [
   { name: 'aircase-scope.e3', system: EVIDENCE_SCOPE_SYSTEM, user: renderEvidenceScopeUser({ question: '{{question}}' }), schema: EvidenceScopeWireOutputSchema },
   { name: 'aircase-rerank.r1', system: RERANK_SYSTEM, user: `${RERANK_USER_TEMPLATE}{{input_json}}`, schema: RerankOutputSchema },
+  { name: 'aircase-attr.a1', system: ATTRIBUTION_SYSTEM, user: attributionUser, schema: AttributionWireOutputSchema },
 ].map(({ name, system, user, schema }) => ({ name, type: 'chat' as const,
   prompt: [{ role: 'system', content: system }, { role: 'user', content: user }],
   config: { outputSchema: z.toJSONSchema(schema) },

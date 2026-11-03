@@ -10,7 +10,9 @@ import { suggestedHighlights, type RankedEvidenceCase } from './project.js';
 
 import { disclosedQuery, remainingSuggestion } from './disclosure.js';
 import type { autoFilterIdentity, AutoFilterReason } from './auto-filters.js';
-import type { ExecutedTexts, LexicalSource, ScopeOutcome, RerankOutcome } from './pipeline.js';
+import type { AutoFieldReason } from './attribution.js';
+import type { AutomaticField } from '../../shared/automatic-candidates.js';
+import type { AttributionOutcome, ExecutedTexts, LexicalSource, ScopeOutcome, RerankOutcome } from './pipeline.js';
 import type { evidenceRankingIdentity, HighlightPolicy } from './ranking-config.js';
 
 export interface SearchData {
@@ -21,6 +23,9 @@ export interface SearchData {
   diagnostics?: { automaticFilters: EvidenceAutomaticFilters | null; appliedFilters: BriefFilters };
   autoFilterPolicy?: ReturnType<typeof autoFilterIdentity>;
   autoFilterReason?: AutoFilterReason;
+  /** Private, enums only (`attributed.v1`): each field's reason, and what the attribution check did. */
+  autoFilterFields?: Partial<Record<AutomaticField, AutoFieldReason>>;
+  attributionOutcome?: AttributionOutcome;
   automaticFilters?: EvidenceAutomaticFilters | null;
   freeUndo?: boolean;
   marks?: 'suggested_terms' | 'search_words';
@@ -75,6 +80,7 @@ export async function readOwnedSearch(db: DbOrTx, id: string, readers: readonly 
   const header = sql`jsonb_build_object('question', ${source}->'question', 'edited', ${source}->'edited',
     'executed', ${source}->'executed', 'lexicalSource', ${source}->'lexicalSource',
     'autoFilterPolicy', ${source}->'autoFilterPolicy', 'autoFilterReason', ${source}->'autoFilterReason',
+    'autoFilterFields', ${source}->'autoFilterFields', 'attributionOutcome', ${source}->'attributionOutcome',
     'automaticFilters', ${source}->'automaticFilters', 'freeUndo', ${source}->'freeUndo', 'marks', ${source}->'marks',
     'rankingConfig', ${source}->'rankingConfig', 'scopeOutcome', ${source}->'scopeOutcome', 'rerankOutcome', ${source}->'rerankOutcome',
     'context', ${source}->'context', 'version', ${source}->'version', 'query', ${source}->'query',

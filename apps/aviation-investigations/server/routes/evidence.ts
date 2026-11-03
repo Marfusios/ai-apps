@@ -1,6 +1,6 @@
 /** Private evidence search creation and free pagination. Matched routes enforce network limits. */
 import { rateEvidence } from '../evidence/feedback.js';
-import { autoFilterPolicy, autoFilterIdentity } from '../evidence/auto-filters.js';
+import { attributionStage, autoFilterPolicy, autoFilterIdentity } from '../evidence/auto-filters.js';
 import { canUndo, isExpiredUndoClaim } from '../evidence/undo.js';
 import { initialExecution } from '../evidence/execution.js';
 import { evidenceRankingConfig, evidenceRankingIdentity } from '../evidence/ranking-config.js';
@@ -83,7 +83,9 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     const text = body.kind === 'question' ? body.question : body.terms;
     if (text !== undefined && (text.includes('\0') || Buffer.from(text, 'utf8').toString('utf8') !== text)) return sendError(reply, 400, 'bad_request');
     const ai = ctx.ai, svc = ctx.evidence;
-    if (!ai?.startup.enabled || !ai.policy || !ai.trials || !ai.llm?.evidenceScope || !ai.startup.models || !svc || svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
+    const autoFilters = ai?.evidenceAutoFilters ?? autoFilterPolicy();
+    if (!ai?.startup.enabled || !ai.policy || !ai.trials || !ai.llm?.evidenceScope || (attributionStage(autoFilters) && !ai.llm.evidenceAttribution)
+      || !ai.startup.models || !svc || svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
     const runtime = { ai: { ...ai, policy: ai.policy, llm: ai.llm, trials: ai.trials } };
     const { current: requestHash, legacyV2 } = evidenceRequestHashes(body);
     let who = await visitor(ctx, request);
@@ -112,7 +114,8 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     if (svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
     const payer = billed.payer;
     const ranking = ai.evidenceRanking ?? evidenceRankingConfig();
-    const { reservationUsd } = evidenceReservation(ai.llm.models.scope, ai.startup.models.embed, ranking);
+    // The attribution check's worst case is in the reservation: the admitted gate refuses any stage beyond it.
+    const { reservationUsd } = evidenceReservation(ai.llm.models.scope, ai.startup.models.embed, ranking, autoFilters);
     let admitted;
     try {
       admitted = await admitPaidRequest(ctx.db, { policy: ai.policy, principal: payer.principal, networkId: payer.networkId,
@@ -185,7 +188,8 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
           billingPrincipal: admission.principalHash, billingKind: payer.principal.kind, reservationId: admission.reservationId,
           generationId: pinned.manifest.generationId, casesIndex: pinned.manifest.casesIndex, passagesIndex: pinned.manifest.passagesIndex!, now: ai.now(),
           data: { automaticFilters: null, marks: 'search_words', freeUndo: admission.quotaExempt === true,
-            autoFilterPolicy: autoFilterIdentity(ai.evidenceAutoFilters ?? autoFilterPolicy()), autoFilterReason: body.kind === 'edited' ? 'edited' : 'scope_unavailable',
+            autoFilterPolicy: autoFilterIdentity(autoFilters), autoFilterReason: body.kind === 'edited' ? 'edited' : 'scope_unavailable',
+            autoFilterFields: {}, attributionOutcome: 'not_run',
             ...execution, rankingConfig: evidenceRankingIdentity(ranking),
             scopeOutcome: 'skipped', rerankOutcome: ranking.rerank ? 'not_run' : 'disabled', question, edited: body.kind === 'edited',
             version: EVIDENCE_CONTRACT_VERSION,
@@ -207,7 +211,9 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     const checklist = binding ? ctx.progress?.start(binding, body.idempotencyKey, row.id, row.data.edited || admission.skipScope === true, Boolean(ranking.rerank), {hash: row.readOwner, kind: row.readOwnerKind}) : undefined;
     let finished = false;
     try {
-      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(ranking.deadlineMs)]), checklist?.observer);
+      // The attribution check's own bound adds to the run deadline once (35 + 30 + 8 = 73 s at most).
+      const deadlineMs = ranking.deadlineMs + (attributionStage(autoFilters)?.timeoutMs ?? 0);
+      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(deadlineMs)]), checklist?.observer);
       finished = true;
       const current = await visitor(ctx, request);
       // A newly issued trial cookie is on the response, not yet on this request.

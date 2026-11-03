@@ -71,6 +71,9 @@ it('only approved model and frozen prompt attributes are linked', () => {
     'langfuse.observation.model.name':'test-model', 'langfuse.observation.type':'generation',
     'langfuse.observation.prompt.name':'aircase-scope.e3','langfuse.observation.prompt.version':1,
   });
+  expect(genAiAttributes({ model:'test-model',promptVersion:'attr.a1' })).toMatchObject({
+    'langfuse.observation.prompt.name':'aircase-attr.a1','langfuse.observation.prompt.version':1,
+  });
   expect(genAiAttributes({model:'test',promptVersion:'attacker'})).not.toHaveProperty('langfuse.observation.prompt.name');
 });
 it('progress is per principal, bounded, immutable to readers and expires five minutes after finishing', () => {
@@ -101,10 +104,11 @@ it('prompt sync is idempotent, refuses drift/version changes and never overwrite
   });
   expect((await syncLangfusePrompts(cfg,api)).every(p=>p.created)).toBe(true);
   expect((await syncLangfusePrompts(cfg,api)).every(p=>!p.created)).toBe(true);
-  expect(api.mock.calls.filter(c=>c[1])).toHaveLength(2);
+  expect(api.mock.calls.filter(c=>c[1])).toHaveLength(3);
+  expect(MIRRORED_PROMPTS.map(p=>p.name)).toEqual(['aircase-scope.e3','aircase-rerank.r1','aircase-attr.a1']);
   saved.set(MIRRORED_PROMPTS[0]!.name,{...MIRRORED_PROMPTS[0],version:2});
   await expect(syncLangfusePrompts(cfg,api)).rejects.toThrow('mirror mismatch');
-  expect(api.mock.calls.filter(c=>c[1])).toHaveLength(2);
+  expect(api.mock.calls.filter(c=>c[1])).toHaveLength(3);
 });
 it('project APIs use bounded requests, reject redirects, sanitize failures, and never follow an untrusted origin', async () => {
   const cfg=loadConfig({env:{LANGFUSE_BASE_URL:'https://traces.example',LANGFUSE_PUBLIC_KEY:'pk',LANGFUSE_SECRET_KEY:'secret'},files:[]});

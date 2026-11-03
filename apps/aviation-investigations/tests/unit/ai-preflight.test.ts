@@ -179,3 +179,19 @@ describe('evidence scope preflight (offline)', () => {
     expect(text(e.output)).toBeLessThanOrEqual(EVIDENCE_SCOPE_CAPS.output);
   });
 });
+
+describe('attribution preflight (offline)', () => {
+  it('sizes the frozen prompt and wire schema, a small request and the output at its bounds against the caps', async () => {
+    const { ATTRIBUTION_CAPS } = await import('../../server/ai/pricing.js');
+    const { ATTRIBUTION_SYSTEM, AttributionInputSchema, AttributionWireOutputSchema, renderAttributionUser } = await import('../../server/ai/prompts/attribution.a1.js');
+    const { attributionPreflightRequests } = await import('../../worker/ai-preflight.js');
+    const a = attributionPreflightRequests();
+    const base = fixed(ATTRIBUTION_SYSTEM, AttributionWireOutputSchema);
+    expect(base).toBeLessThanOrEqual(CACHED_PREFIX_MAX);
+    expect(base + text(renderAttributionUser(a.fixed))).toBeLessThanOrEqual(ATTRIBUTION_CAPS.input);
+    expect(AttributionWireOutputSchema.safeParse(JSON.parse(a.output)).success).toBe(true);
+    expect(text(a.output)).toBeLessThanOrEqual(ATTRIBUTION_CAPS.output);
+    // The largest requests are valid inputs; only the provider's counter decides whether they fit (never truncated).
+    for (const w of a.worst) expect(AttributionInputSchema.safeParse(w.input).success, w.label).toBe(true);
+  });
+});

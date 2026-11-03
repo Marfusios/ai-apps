@@ -36,20 +36,22 @@ const edit = (changes: Record<string, unknown> = {}) => CreateEvidenceRequestSch
   filters: { yearFrom: 2019 }, idempotencyKey: 'undo-12345678', ...changes }) as Extract<CreateEvidenceRequest, { kind: 'edited' }>;
 
 describe('independent automatic state policy', () => {
-  it.each(['dev', 'live'] as const)('%s defaults to none, accepts both cleared policies and rejects unknown values', APP_ENV => {
+  it.each(['dev', 'live'] as const)('%s defaults to none, accepts its cleared policies and rejects unknown values', APP_ENV => {
     expect(loadConfig({ files: [], env: { APP_ENV } }).ai.evidenceAutoFilters).toBe('none');
     expect(loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: '' } }).ai.evidenceAutoFilters).toBe('none');
-    for (const policy of ['none', 'state-explicit.v1.3']) {
+    // v1.3 failed the 2026-10-25 security re-check: dev only.
+    for (const policy of APP_ENV === 'dev' ? ['none', 'state-explicit.v1.3', 'attributed.v1'] : ['none', 'attributed.v1']) {
       expect(loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } }).ai.evidenceAutoFilters).toBe(policy);
     }
-    for (const policy of ['state-explicit.v1', 'state-explicit.v1.1', 'state-explicit.v1.2', 'unknown']) {
+    if (APP_ENV === 'live') expect(() => loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.3' } })).toThrow('not cleared for live');
+    for (const policy of ['state-explicit.v1', 'state-explicit.v1.1', 'state-explicit.v1.2', 'attributed.v0', 'unknown']) {
       expect(() => loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } })).toThrow('AVIATION_EVIDENCE_AUTO_FILTERS');
     }
   });
-  it('enabling automatic state on live still permits only the live ranking allowlist', () => {
+  it('enabling automatic filters on live still permits only the live ranking allowlist', () => {
     for (const version of EVIDENCE_RANKING_VERSIONS) {
       const live = () => loadConfig({ files: [], env: { APP_ENV: 'live',
-        AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.3', AVIATION_EVIDENCE_RANKING: version } });
+        AVIATION_EVIDENCE_AUTO_FILTERS: 'attributed.v1', AVIATION_EVIDENCE_RANKING: version } });
       if (LIVE_EVIDENCE_RANKINGS.includes(version)) expect(live().ai.evidenceRanking).toBe(version);
       else expect(live).toThrow('AVIATION_EVIDENCE_RANKING is not cleared for live');
     }
