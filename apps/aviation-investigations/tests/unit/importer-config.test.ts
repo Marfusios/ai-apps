@@ -106,7 +106,7 @@ it('keeps one strict bounded outage record without replacing unresolved artifact
       null,
       '00000000-0000-4000-8000-000000000001',
     );
-    await spoolFailure(space, 'dev', new ImportFailure('busy', false), 'check');
+    await spoolFailure(space, 'dev', new ImportFailure('busy'), 'check');
     const raw = JSON.parse(await readFile(join(c.root, 'status-dev.json'), 'utf8'));
     expect(OutageSchema.parse(raw).reason).toBe('integrity');
     expect(OutageSchema.safeParse({ ...raw, error: 'PRIVATE_SENTINEL' }).success).toBe(false);

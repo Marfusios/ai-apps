@@ -5,6 +5,7 @@ import {
   ImportFailure,
 } from './contracts.js';
 import { IMPORT_LOCAL_TIME, IMPORT_TIME_ZONE } from '../../shared/import-schedule.js';
+import { DATA_CHECK_REASONS } from '../../shared/import-policy.js';
 
 export interface ImportSchedule {
   enabled: boolean;
@@ -78,26 +79,165 @@ export interface StatusRow {
   public: AdminImportRun;
   sourceCheckSucceeded: boolean;
   canaryPassed: boolean;
-  unresolved: boolean;
+  goodCheck?: boolean;
+  unresolved?: boolean; // historical rows only; never authorizes or blocks work
   recertification?: boolean;
 }
-/** Pure projection. Busy/failure rows cannot refresh lastCheck; latched review survives later checks. */
+export interface ImportHealth {
+  automaticSince: string;
+  restoreHeld: boolean;
+  switchHeld: boolean;
+  switchHoldReason: 'rollback_failed' | 'alias_unknown';
+  hold: { since: string | null; details: AdminImportRun | null } | null;
+  fixSince: string | null;
+  temporaryDays: number;
+  delayedSince: string | null;
+  serving: AdminImports['serving'];
+  lastGood: AdminImportRun | null;
+  waiting: AdminImports['waiting'];
+  issue: {
+    reason: AdminImportRun['reason'];
+    fixed: boolean;
+    since: string;
+    origin: 'dev' | 'live' | 'host';
+    siteState: 'unchanged' | 'restored' | 'restore_unverified' | 'uncertain';
+    postSuccess: boolean;
+    suppressesFile: boolean;
+    preflight: boolean;
+    details: AdminImportRun | null;
+    originRunId: string | null;
+  } | null;
+}
+
+function retryPolicy(
+  issue: ImportHealth['issue'],
+): NonNullable<AdminImports['waiting']>['retry'] {
+  if (issue?.siteState === 'uncertain') return 'release';
+  if (issue?.reason === 'source_retired') return 'release';
+  if (issue?.suppressesFile && !issue.postSuccess) return 'new_file_or_release';
+  return 'daily';
+}
+
+/** Severity and retry policy are server owned. Incidents outlive the recent-run window. */
 export function projectImports(
   rows: readonly StatusRow[],
   schedule: ImportSchedule | null,
   now: Date,
-  unresolved = false,
+  health?: ImportHealth | boolean,
 ): AdminImports {
   const sorted = [...rows].sort((a, b) =>
     b.public.checkedAt.localeCompare(a.public.checkedAt),
   );
-  const lastCheck =
-    sorted.find((r) => r.sourceCheckSucceeded && r.public.finishedAt !== null)?.public ?? null;
-  const lastSuccess =
-    sorted.find((r) => r.canaryPassed && r.public.result === 'published')?.public ?? null;
+  const known = typeof health === 'object' ? health : null;
+  const unknown = health === true;
   const enabled = schedule?.enabled === true;
+  const lastStartedAt = sorted[0]?.public.checkedAt ?? null;
+  // Daily dev refreshes pass through detect() and record a successful source check.
+  // The explicit recertify command bypasses detect(). Hide only its passing run;
+  // failed checks and live's skipped_dev_failed rows remain visible.
+  const visible = sorted.filter(
+    (r) =>
+      !(r.recertification && r.public.result === 'unchanged' && !r.sourceCheckSucceeded),
+  );
+  const lastCheck = visible.find((r) => r.public.finishedAt !== null)?.public ?? null;
+  const lastGoodCheck =
+    known?.lastGood ?? sorted.find((r) => r.goodCheck)?.public ?? null;
+  const startSince = lastStartedAt ?? known?.automaticSince ?? null;
+  const overdue =
+    startSince !== null && now.getTime() - Date.parse(startSince) > 36 * 3_600_000;
+  const issue = known?.issue ?? null;
+  const nonFile =
+    !!issue &&
+    !issue.postSuccess &&
+    (issue.preflight || issue.details?.workKind === 'recertification');
+  const servingChecks = nonFile && !!issue.reason && DATA_CHECK_REASONS.has(issue.reason);
+  const days = known?.temporaryDays ?? 0;
+  const retry = retryPolicy(issue);
+  const holds: NonNullable<AdminImports['alert']>['holds'] = [];
+  if (known?.restoreHeld) holds.push('restore_hold');
+  if (known?.switchHeld) holds.push(known.switchHoldReason);
+  let cause: NonNullable<AdminImports['alert']>['cause'] | null = null;
+  // A stopped schedule takes precedence over a file's earlier failure. Preserve that
+  // failure in the waiting fact and details, but never imply that checks still run.
+  if (enabled) {
+    if (unknown) cause = 'status_unavailable';
+    else if (overdue) cause = 'overdue';
+    else if (known?.restoreHeld) cause = 'restore_hold';
+    else if (known?.switchHeld) cause = known.switchHoldReason;
+    else if (issue?.fixed || days >= 3) cause = issue?.reason ?? 'interrupted';
+  }
+  let alert: AdminImports['alert'] = null;
+  if (cause !== null) {
+    const held = !overdue && (known?.restoreHeld || known?.switchHeld);
+    const unavailable = cause === 'status_unavailable';
+    const fixed =
+      issue?.fixed ||
+      known?.restoreHeld ||
+      known?.switchHeld ||
+      unavailable ||
+      overdue ||
+      days >= 7;
+    let since: string | null =
+      (issue?.fixed ? known?.fixSince : null) ?? issue?.since ?? null;
+    if (unavailable)
+      since = null; // unreadable, not a new incident on every poll
+    else if (overdue) since = startSince;
+    else if (held) since = known?.hold?.since ?? null;
+    else if (!issue?.fixed && !known?.restoreHeld && !known?.switchHeld)
+      since = known?.delayedSince ?? since;
+    let nextAction = retry;
+    if (overdue || unavailable || known?.restoreHeld || known?.switchHeld)
+      nextAction = 'release';
+    else if (issue?.siteState === 'restore_unverified') nextAction = 'daily';
+    let siteState = issue?.siteState ?? 'unchanged';
+    if (known?.switchHeld) siteState = 'uncertain';
+    alert = {
+      level: fixed ? 'fix' : 'delayed',
+      cause,
+      holds,
+      since,
+      failedDays: days,
+      origin: held ? (known?.hold?.details?.origin ?? 'host') : (issue?.origin ?? 'host'),
+      siteState,
+      nextAction,
+      retryAt:
+        cause === 'monthly_budget'
+          ? new Date(
+              Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+            ).toISOString()
+          : null,
+      postSuccess: !held && issue?.postSuccess === true,
+      servingChecks: !held && servingChecks,
+      devAdvanced: !held && issue?.reason === 'shrunk' && issue.origin === 'live',
+      details: held ? (known?.hold?.details ?? null) : (issue?.details ?? null),
+      originRunId: held ? null : (issue?.originRunId ?? null),
+    };
+  }
+  let waiting = known?.waiting ?? null;
+  if (
+    !waiting &&
+    issue?.originRunId &&
+    !issue.postSuccess &&
+    !nonFile &&
+    issue.details?.source
+  ) {
+    waiting = {
+      source: issue.details.source,
+      since: issue.since,
+      reason:
+        issue.details.archiveSha256 &&
+        !['check', 'cleanup', 'complete'].includes(issue.details.step)
+          ? issue.reason
+          : null,
+      retry,
+    };
+  }
+  let status: AdminImports['status'] = 'off';
+  if (enabled) status = alert?.level ?? 'working';
   return AdminImportsSchema.parse({
     enabled,
+    readable: !unknown,
+    status,
     schedule: schedule
       ? {
           localTime: schedule.localTime,
@@ -105,15 +245,12 @@ export function projectImports(
           nextCheckAt: nextCheck(now, schedule),
         }
       : null,
+    serving: known?.serving ?? null,
+    lastStartedAt,
     lastCheck,
-    lastSuccessfulImport: lastSuccess,
-    attentionRequired: unresolved || sorted.some((r) => r.unresolved),
-    overdue:
-      enabled &&
-      (!lastCheck || now.getTime() - Date.parse(lastCheck.checkedAt) > 36 * 3_600_000),
-    recentRuns: sorted
-      .filter((r) => !(r.recertification && r.public.result === 'unchanged'))
-      .slice(0, 20)
-      .map((r) => r.public),
+    lastGoodCheck,
+    waiting,
+    alert,
+    recentRuns: visible.slice(0, 20).map((r) => r.public),
   });
 }

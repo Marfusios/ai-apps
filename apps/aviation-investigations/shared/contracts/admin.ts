@@ -30,6 +30,7 @@ export const IMPORT_STEPS = [
 ] as const;
 export const IMPORT_RESULTS = [
   'running',
+  'waiting',
   'unchanged',
   'published',
   'needs_review',
@@ -71,13 +72,47 @@ export const IMPORT_REASONS = [
   'dev_failed',
   'configuration',
   'cleanup',
+  'shrunk',
+  'unclassified',
+  'site_check',
+  'rollback_failed',
+  'post_success',
+  'manual_rollback',
 ] as const;
 
+const ImportSourceSchema = z.strictObject({
+  advertisedAtLocal: LocalDateTime,
+  bytes: Count,
+});
+const ImportOrigin = z.enum(['dev', 'live', 'host']);
+const ImportRetry = z.enum(['daily', 'new_file_or_release', 'release']);
 export const AdminImportRunSchema = z.strictObject({
+  runId: z.uuid().nullable().default(null),
+  code: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/)
+    .nullable()
+    .default(null),
+  image: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/)
+    .nullable()
+    .default(null),
+  origin: ImportOrigin.nullable().default(null),
+  workKind: z.enum(['import', 'recertification']).default('import'),
+  suppressed: z.boolean().default(false),
+  changes: z
+    .strictObject({ new: Count, updated: Count, removed: Count })
+    .nullable()
+    .default(null),
+  restoration: z
+    .strictObject({ sourceDate: z.iso.date().nullable(), restoredAt: Iso.nullable() })
+    .nullable()
+    .default(null),
   checkedAt: Iso,
   finishedAt: Iso.nullable(),
   mode: z.enum(['automatic', 'forced_dev']),
-  source: z.strictObject({ advertisedAtLocal: LocalDateTime, bytes: Count }).nullable(),
+  source: ImportSourceSchema.nullable(),
   archiveSha256: Sha256.nullable(),
   generationId: Count.nullable(),
   step: z.enum(IMPORT_STEPS),
@@ -88,9 +123,26 @@ export const AdminImportRunSchema = z.strictObject({
 });
 export type AdminImportRun = z.infer<typeof AdminImportRunSchema>;
 
+export const ImportAlertSchema = z.strictObject({
+  level: z.enum(['delayed', 'fix']),
+  holds: z.array(z.enum(['restore_hold', 'alias_unknown', 'rollback_failed'])).max(2),
+  cause: z.enum([...IMPORT_REASONS, 'overdue', 'status_unavailable']),
+  since: Iso.nullable(),
+  failedDays: Count,
+  origin: ImportOrigin,
+  siteState: z.enum(['unchanged', 'restored', 'restore_unverified', 'uncertain']),
+  nextAction: ImportRetry,
+  retryAt: Iso.nullable(),
+  postSuccess: z.boolean(),
+  servingChecks: z.boolean(),
+  devAdvanced: z.boolean(),
+  details: AdminImportRunSchema.nullable(),
+  originRunId: z.uuid().nullable(),
+});
 export const AdminImportsSchema = z.strictObject({
-  /** Configured schedule intent, not a systemd probe. */
   enabled: z.boolean(),
+  readable: z.boolean(),
+  status: z.enum(['off', 'working', 'delayed', 'fix']),
   schedule: z
     .strictObject({
       localTime: z.string().regex(/^\d{2}:\d{2}$/),
@@ -98,13 +150,26 @@ export const AdminImportsSchema = z.strictObject({
       nextCheckAt: Iso.nullable(),
     })
     .nullable(),
-  /** Newest completed successful source check; failures and skips do not refresh it. */
+  serving: z
+    .strictObject({
+      generationId: Count,
+      sourceDate: z.iso.date().nullable(),
+      importedAt: Iso.nullable(),
+      restoredAt: Iso.nullable(),
+    })
+    .nullable(),
+  lastStartedAt: Iso.nullable(),
   lastCheck: AdminImportRunSchema.nullable(),
-  /** Newest publication whose canary passed and was not rolled back. */
-  lastSuccessfulImport: AdminImportRunSchema.nullable(),
-  attentionRequired: z.boolean(),
-  /** No successful source check within 36 hours while enabled. */
-  overdue: z.boolean(),
+  lastGoodCheck: AdminImportRunSchema.nullable(),
+  waiting: z
+    .strictObject({
+      source: ImportSourceSchema.nullable(),
+      since: Iso,
+      reason: z.enum(IMPORT_REASONS).nullable(),
+      retry: ImportRetry,
+    })
+    .nullable(),
+  alert: ImportAlertSchema.nullable(),
   recentRuns: z.array(AdminImportRunSchema).max(20),
 });
 export type AdminImports = z.infer<typeof AdminImportsSchema>;

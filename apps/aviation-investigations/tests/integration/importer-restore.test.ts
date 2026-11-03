@@ -202,7 +202,7 @@ it('restores importer identities, references and tagged money with both holds, i
               'uncertain',
               reservation.fencingToken,
             );
-            expect(await budgetRemaining(source, session, id)).toBe(0.3);
+            expect(await budgetRemaining(source, session, id)).toBe(1.8);
             await expect(
               source.execute(
                 sql`update reservations set import_artifact_id=null where id=${reservation.reservationId}`,

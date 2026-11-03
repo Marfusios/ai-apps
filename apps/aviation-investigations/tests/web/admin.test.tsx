@@ -257,8 +257,8 @@ describe('the admin page', { timeout: 20_000 }, () => {
     expect(fact('Failed exports')).toBe('0');
     expect(fact('NTSB snapshot')).toBe('16 Oct 2026');
     expect(fact('Cases')).toBe('26 (21 completed US investigations with a probable cause)');
-    expect(fact('Schedule')).toBe('Daily at 05:30, Europe/Prague');
-    expect(fact('Next snapshot check')).toBe(`${formatDateTime(overview.system.imports.schedule?.nextCheckAt as string, viewerTimeZone())} (${viewerTimeZone()})`);
+    expect(fact('Next check')).toContain('Every day at 05:30, Europe/Prague');
+    expect(fact('Next check')).toContain(`${formatDateTime(overview.system.imports.schedule?.nextCheckAt as string, viewerTimeZone())} (${viewerTimeZone()})`);
   });
 
   it('shapes the mock never makes: a capped list, no accounts, no dataset, an unknown ranking, an import set up, tracing off', async () => {
@@ -292,7 +292,7 @@ describe('the admin page', { timeout: 20_000 }, () => {
     expect(fact('Last export')).toBe('None yet');
     expect(fact('Failed exports')).toBe('3');
     expect(fact('Dataset')).toBe('None loaded');
-    expect(fact('Next snapshot check')).toBe(`${formatDateTime('2026-11-16T04:30:00.000Z', viewerTimeZone())} (${viewerTimeZone()})`);
+    expect(fact('Next check')).toContain(`${formatDateTime('2026-11-16T04:30:00.000Z', viewerTimeZone())} (${viewerTimeZone()})`);
   });
 
   it('no accounts yet', async () => {

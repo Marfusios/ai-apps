@@ -88,7 +88,7 @@ it.each(['settlement', 'cache'] as const)(
           );
           if (!lost && /insert into "embedding_cache"/i.test(text)) {
             lost = true;
-            throw new Error('PRIVATE_SENTINEL_CACHE_COMMIT');
+            throw Object.assign(new Error('PRIVATE_SENTINEL_CACHE_COMMIT'),{code:'ECONNRESET'});
           }
           return result;
         }) as pg.Pool['query'];
@@ -106,7 +106,7 @@ it.each(['settlement', 'cache'] as const)(
               await gate.settle(reservation, outcome);
               if (boundary === 'settlement' && !lost) {
                 lost = true;
-                throw new Error('PRIVATE_SENTINEL_SETTLEMENT_COMMIT');
+                throw Object.assign(new Error('PRIVATE_SENTINEL_SETTLEMENT_COMMIT'),{code:'ECONNRESET'});
               }
             },
           },
@@ -114,7 +114,7 @@ it.each(['settlement', 'cache'] as const)(
       try {
         await expect(
           fixture.run({ paidEmbedder: embed }, { cacheOnly: false }),
-        ).rejects.toMatchObject({ review: false, result: 'failed' });
+        ).rejects.toMatchObject({ fix: false, result: 'deferred' });
       } finally {
         fixture.resources.db.$client.query = originalQuery;
       }
@@ -172,16 +172,14 @@ it('defers the monthly allowance without a review and resumes under the same art
     for (let day = 0; day < 5; day++) {
       await expect(
         fixture.run({ paidEmbedder: fakePaid(provider) }, { cacheOnly: false }),
-      ).rejects.toMatchObject({ reason: 'monthly_budget', review: false });
+      ).rejects.toMatchObject({ reason: 'monthly_budget', fix: false });
       const pending = (await control(fixture.resources.db)).pending!;
       expect((await artifact(fixture.resources.db, pending.artifactId!)).attempts).toBe(0);
     }
     const pending = (await control(fixture.resources.db)).pending!;
     expect(provider.calls).toBe(0);
-    expect((await artifact(fixture.resources.db, pending.artifactId!)).needs_review).toBe(
-      false,
-    );
-    expect((await readImportStatus(fixture.app, null)).attentionRequired).toBe(false);
+    expect((await fixture.resources.db.execute(sql`select fixed from import_issues where resolved_at is null`)).rows.every(r=>!r.fixed)).toBe(true);
+    expect((await readImportStatus(fixture.app, null)).alert).toBeNull();
     fixture.resources.appConfig.ai.budgets.ingestionMonthlyUsd = 20;
     expect(
       await fixture.run({ paidEmbedder: fakePaid(provider) }, { cacheOnly: false }),
@@ -203,7 +201,7 @@ it('redacts an actual provider failure and keeps all three uncertain attempts ta
     try {
       await expect(
         fixture.run({ paidEmbedder: fakePaid(provider, 500) }, { cacheOnly: false }),
-      ).rejects.toMatchObject({ review: false });
+      ).rejects.toMatchObject({ fix: false });
     } finally {
       capture.mockRestore();
     }

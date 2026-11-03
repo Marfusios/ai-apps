@@ -49,6 +49,15 @@ let db: Db, ingest: Db, migrator: Db, es: Client, writer: Client, dataset: Fixtu
 let clock: Date;
 const now = () => clock;
 const nextMinute = () => { clock = new Date(clock.getTime() + 61_000); };
+/**
+ * A test whose daily counts must not reset mid-test starts at least 15 minutes before the next UTC
+ * midnight. Not for every test: sessions the deletion and admin tests create at this clock must be
+ * recent by PostgreSQL's.
+ */
+const clockBeforeMidnight = () => {
+  const midnight = Date.UTC(clock.getUTCFullYear(), clock.getUTCMonth(), clock.getUTCDate() + 1);
+  clock = new Date(Math.min(clock.getTime(), midnight - 15 * 60_000));
+};
 const configs = (env: Record<string, string> = {}) => loadConfig({ files: [], env: {
   NODE_ENV: 'test', APP_ENV: 'dev', APP_URL: `https://${host}`, AI_LLM_PROVIDER: 'fake',
   IDENTITY_HMAC_SECRET: 'evidence-test-identity-key-012345678901', IP_HMAC_SECRET: 'evidence-test-network-key-012345678901',
@@ -251,6 +260,7 @@ describe('evidence search routes', () => {
     }
   });
   it.each(['trial', 'account'] as const)('skips only scope after the %s uncertain allowance; resets at UTC midnight', async kind => {
+    clockBeforeMidnight();
     const h = harness({ evidenceScope: { fail: 'timeout' } });
     if (kind === 'account') await h.account();
     for (let i = 0; i < 2; i++) { searchOf(await h.request()); nextMinute(); }
@@ -291,6 +301,7 @@ describe('evidence search routes', () => {
     expect(page.hint).toEqual({ kind: 'case_comparison', found: ['SEA08LA057', 'DCA25MA108'], notFound: [] });
   });
   it('reports new limits; the tenth anonymous search fits and UTC midnight resets it', async () => {
+    clockBeforeMidnight();
     const h = harness();
     for (let i = 0; i < 10; i++) { searchOf(await h.request()); nextMinute(); }
     expect((await h.request()).statusCode).toBe(429);
@@ -431,6 +442,7 @@ describe('evidence search routes', () => {
 
 describe('evidence fix-round regressions', () => {
   it('commits despite a real HTTP disconnect, then replays without another paid call or quota unit', async () => {
+    clockBeforeMidnight();
     let entered!: () => void, release!: () => void;
     const reached = new Promise<void>((r) => { entered = r; });
     const held = new Promise<void>((r) => { release = r; });
@@ -768,6 +780,7 @@ describe('evidence ranking selection and persistence', () => {
     expect(h.llm.calls.map(c => c.stage)).toEqual(['scope', 'rerank', 'rerank']);
   });
   it.each(['trial', 'account'] as const)('the %s uncertain allowance skips scope and rerank for questions and edits', async kind => {
+    clockBeforeMidnight();
     const h = harness({ evidenceScope: { output: success }, rerank: { fail: 'timeout' } }, undefined, 'er-q-h50-v1');
     if (kind === 'account') await h.account();
     for (let i = 0; i < 2; i++) { searchOf(await h.request()); nextMinute(); }
@@ -1051,6 +1064,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     await expect(db.execute(sql`UPDATE evidence_searches SET free_undo_reservation_id = NULL WHERE id = ${page.id}`)).rejects.toThrow();
   });
   it.each(['trial', 'account-day', 'account-month'] as const)('permits the one undo at the %s quota limit without bypassing Turnstile', async kind => {
+    clockBeforeMidnight();
     const env: Record<string, string> = kind === 'trial' ? { AI_ANONYMOUS_TRIAL_REQUESTS: '1' } : kind === 'account-day' ? { AI_USER_DAILY_REQUESTS: '1', AI_NEW_ACCOUNT_DAILY_REQUESTS: '1' } : { AI_USER_MONTHLY_REQUESTS: '1' };
     const h = withState(env); if (kind !== 'trial') await h.account();
     const page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
@@ -1115,6 +1129,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     expect(searchOf(await h.request(undoBody(page.id))).freeUndo).toBe(true);
   });
   it('a downstream failure settles the free attempt without refunding quota or resetting its claim', async () => {
+    clockBeforeMidnight();
     let fail = false;
     const h = harness({ evidenceScope: { output: stateScope } }, r => ({ ...r, search: async (...args) => {
       const found = await r.search(...args);

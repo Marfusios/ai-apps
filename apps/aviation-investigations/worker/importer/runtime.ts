@@ -34,6 +34,7 @@ import type { Comparison } from './compare.js';
 import {
   ImportFailure,
   type ImportStep,
+  type ImportReason,
   type ManifestIdentity,
   type SourceObservation,
 } from './contracts.js';
@@ -47,7 +48,7 @@ export interface RunOptions {
   seed?: { path: string; sha256: string; observation: SourceObservation };
 }
 export interface RunReport {
-  result: 'unchanged' | 'published';
+  result: 'unchanged' | 'published' | 'waiting';
   reason: 'same_archive' | 'same_content' | 'metadata_unchanged' | null;
   archive: string;
   content: string;
@@ -66,6 +67,8 @@ export type FaultPoint =
   | 'loaded'
   | 'cases_built'
   | 'passages_built'
+  | 'rollback_started'
+  | 'rollback_committed'
   | 'published'
   | 'accepted'
   | 'before_report';
@@ -126,6 +129,11 @@ export interface ImportContext extends ImportResources {
   blocked: boolean;
   sourceChecked: boolean;
   recertifying: boolean;
+  /** True only after this run touches the candidate, never during serving-data checks. */
+  fileWork: boolean;
+  /** Only the two preflight effects can set this marker. */
+  preflightActive: boolean;
+  recoveryReason?: ImportReason;
   artifact: Artifact | null;
   pending: PendingFetch | null;
   accepted?: AcceptedSnapshot;
@@ -134,7 +142,7 @@ export interface ImportContext extends ImportResources {
   observation?: SourceObservation;
   current?: ManifestIdentity;
   comparison?: Comparison;
-  approvedReasons?: string[];
+  promotion?: import('./facts.js').ServingFacts;
   generation?: number;
   genericReport?: string;
   plan?: Awaited<ReturnType<typeof planPassages>>;

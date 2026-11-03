@@ -1257,12 +1257,12 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   (`AdminOverviewSchema`; the private `admin` query), times in the viewer's own zone. Everyone else,
   and an admin the API answers 404, sees the ordinary not-found page; when who is signed in cannot
   be read (the account read and its retry failed), the page says it didn't load, with Try again. The
-  page is not indexed. Its System section's "Automatic import" (Task 26) is the automatic NTSB
-  importer's notification channel: a stop for review or an overdue daily check comes first, as a
-  notice that says what it means for the data that serves and how to resolve that kind of review
-  (docs/IMPORTER.md, or docs/RUNBOOK.md after a restore), and a line at the head of the page; then
-  the schedule, the latest run, the last completed check and the last successful import in words,
-  and the recent runs (`web/src/features/admin/ImportStatus.tsx`).
+  page is not indexed. Its System section's “Automatic import” and the top alert are the
+  importer's only notification channel: Working, Delayed, Needs a fix or Off, with fixed
+  words about the data serving and what happens next. Facts show serving file, last check
+  or last good check, waiting file and next check. Recent runs show changes and costs;
+  technical IDs appear only in alert details, with Copy details. Routine import processing
+  requires no approval or recovery command (docs/IMPORTER.md).
 - **Briefs that exist**: the interface starts none. While the server has briefs off
   (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
   failed step offers New search, not Try again.
@@ -1393,15 +1393,14 @@ this tab's session storage `casebook-mock-admin` (`1`) says so, and `GET /api/ad
 (`web/mock/admin.ts`) answers that admin, and only that admin, with a synthetic overview: 37 made-up
 accounts at the example domains, 30 days of use with a weekly rhythm, a small beta's costs, the
 ratings the mock was given and the configuration it stands in for. Its automatic importer
-(`web/mock/imports.ts`) is in one of twelve synthetic states, from `createHandlers({ imports })` or
-this tab's session storage `casebook-mock-admin-imports`: `healthy` (the default), `published`,
-`needs_review`, `blocked`, `after_switch`, `rolled_back`, `recertification`, `restore_hold`,
-`retired`, `unreadable`, `overdue` or `disabled`, each shaped as the server sends it (the last
-completed check is only an unchanged or published run, a run's cost is its file's running total,
-blocked daily runs carry their review's reason, a failed re-check of the serving data is postponed
-on the serving file). `tests/unit/evidence-progress-mock.test.ts` and
-`tests/unit/import-status-mock.test.ts` check them against the contracts, and
-`tests/web/import-words.test.ts` ties the limits the copy names to the worker's own.
+(`web/mock/imports.ts`) has deterministic states selected by `createHandlers({ imports })`
+or the tab's `casebook-mock-admin-imports`: `healthy` (default), `published`, `delayed`,
+`fix`, `disabled`, `never_run`, `overdue`, `unreadable`, `disabled_unreadable`, plus every current failure cause,
+legacy history, manual rollback, baseline changes and checked/unverified restoration,
+post-success and dev-held-live examples. `MOCK_IMPORT_STATES` is the full list.
+The server sends severity, serving facts, waiting state, durable incidents and recent runs;
+the client only renders fixed words. Tests validate the contracts and tie the displayed
+$2 per-file limit to the worker. See [the automatic policy](docs/IMPORTER.md).
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus

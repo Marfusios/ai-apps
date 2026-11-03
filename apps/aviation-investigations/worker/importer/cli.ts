@@ -1,15 +1,13 @@
 /** Internal child entry: invoke through `pnpm importer`, whose host locks and redacting journal wrap this process. */
 import { parseArgs } from 'node:util';
-import { join } from 'node:path';
 import { fstatSync, lstatSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { readImporterConfig } from './config.js';
 import { ImportFailure, safeLog, SourceSchema } from './contracts.js';
 import { runImport } from './run.js';
 import { operatorCommand } from './commands.js';
-import { ManagedSpace } from './files.js';
-import { recordSkippedLive } from './recovery.js';
-import { recoveryCommand } from './operations.js';
+import { recordSkippedLive, SkipSchema } from './recovery.js';
+
 import { classify } from './failure.js';
 
 async function main(): Promise<void> {
@@ -27,12 +25,8 @@ async function main(): Promise<void> {
       'seed-archive': { type: 'string' },
       sha256: { type: 'string' },
       'seed-advertised-at': { type: 'string' },
-      approval: { type: 'string' },
       artifact: { type: 'string' },
       'publication-sha256': { type: 'string' },
-      run: { type: 'string' },
-      'evidence-sha256': { type: 'string' },
-      apply: { type: 'boolean' },
     },
   });
   if (
@@ -90,7 +84,8 @@ async function main(): Promise<void> {
       : undefined;
   };
   if (positionals[0] === 'record-skip' && environment === 'live') {
-    await recordSkippedLive(config);
+    const skip=await new Promise<unknown>((resolve,reject)=>{const t=setTimeout(()=>reject(new ImportFailure('configuration')),5000);process.once('message',m=>{clearTimeout(t);resolve(m);});process.send?.({type:'skip-ready'});});
+    await recordSkippedLive(config,SkipSchema.parse(skip));
     return;
   }
   if (positionals[0] === 'run' || positionals[0] === 'recertify') {
@@ -102,40 +97,12 @@ async function main(): Promise<void> {
       forcedDev: values['forced-dev'],
       seed: seed(),
     });
-    await new ManagedSpace(config.root).json(
-      join(config.root, `last-${environment}.json`),
-      report,
-    );
     process.stdout.write(`${safeLog('complete', report.result, report.reason)}\n`);
+    if(report.result === 'waiting') process.exitCode = 1;
     return;
   }
-  if (positionals[0] === 'rebaseline' && values['publication-sha256']) {
-    await recoveryCommand(config, environment, {
-      command: 'rebaseline',
-      publication: values['publication-sha256'],
-      apply: values.apply === true,
-      seed: seed(),
-    });
-    process.stdout.write(`${safeLog('complete', 'deferred', null)}\n`);
-    return;
-  }
-  if (
-    positionals[0] === 'acknowledge-preartifact' &&
-    values.run &&
-    values['evidence-sha256']
-  ) {
-    await recoveryCommand(config, environment, {
-      command: 'acknowledge-preartifact',
-      run: values.run,
-      evidence: values['evidence-sha256'],
-      apply: values.apply === true,
-    });
-    process.stdout.write(`${safeLog('complete', 'deferred', null)}\n`);
-    return;
-  }
-  if ((positionals[0] === 'approve' || positionals[0] === 'rollback') && values.artifact) {
+  if (positionals[0] === 'rollback' && values.artifact) {
     await operatorCommand(config, environment, positionals[0], values.artifact, {
-      approval: values.approval,
       publicationHash: values['publication-sha256'],
     });
     process.stdout.write(

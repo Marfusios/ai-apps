@@ -137,7 +137,7 @@ async function prepared(
         };
         const probe = await probeCandidate(db, es, pair, facts, comparison, embedding);
         const certificate: Certificate = {
-          version: 'import-certificate.v1',
+          version: 'import-certificate.v2',
           artifactId: a.id,
           archive: a.archive_sha256,
           content: facts.digest,
@@ -146,11 +146,10 @@ async function prepared(
           candidate: { ...pair, casesBuildId: c2.buildId, passagesBuildId: p2.buildId },
           code: 'c'.repeat(40),
           deployedCode: 'sha256:' + 'd'.repeat(64),
-          policy: 'snapshot-monthly.v1',
+          policy: 'snapshot-automatic.v2',
           genericReport: verified.reportSha256,
           comparison: comparison.hash,
           probes: probe.hash,
-          approvedReasons: [],
           dev: null,
         };
         await saveCertificate(db, s, certificate);
@@ -176,7 +175,7 @@ async function prepared(
 }
 
 describe('guarded publication with real local indexes and offline cached embeddings', () => {
-  it('refuses a manual same-generation republication made after certification, preserving the operator manifest', async () =>
+  it('adopts an external same-generation republication as the rollback baseline', async () =>
     prepared(async ({ db, es, s, certificate: c }) => {
       await publishManifest(
         db,
@@ -186,13 +185,12 @@ describe('guarded publication with real local indexes and offline cached embeddi
       );
       const current = await manifest(db);
       expect(current?.publishedAt).not.toBe(c.baseline.publishedAt);
-      await expect(activate(db, es, s, c, embedding)).rejects.toMatchObject({
-        reason: 'baseline_changed',
-      });
-      expect(await manifest(db)).toEqual(current);
+      await activate(db,es,s,c,embedding);
+      expect((await artifact(db,c.artifactId)).baseline).toEqual(current);
+      expect((await manifest(db))!.generationId).toBe(c.candidate.generationId);
       expect(
         (await pruneGenerations(db, { keep: 1, graceHours: 0, dryRun: true })).skippedPinned,
-      ).toContain(c.candidate.generationId);
+      ).toContain(c.baseline.generationId);
     }));
   it('fences activation and refuses rollback over an operator publication during canary', async () =>
     prepared(async ({ db, es, s, certificate: c }) => {
@@ -227,7 +225,7 @@ describe('guarded publication with real local indexes and offline cached embeddi
           client.query = (async (...args: unknown[]) => {
             const text =
               typeof args[0] === 'string' ? args[0] : ((args[0] as { text?: string })?.text ?? '');
-            if (text.includes('update import_artifacts set publication=')) armed = true;
+            if (text.includes('update import_processing set publication=')) armed = true;
             const result = await (query as (...args: unknown[]) => Promise<unknown>)(...args);
             if (armed && !injected && /^commit$/i.test(text.trim())) {
               injected = true;

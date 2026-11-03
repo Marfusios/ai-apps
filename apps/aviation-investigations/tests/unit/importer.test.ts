@@ -25,7 +25,6 @@ import { ManagedSpace, treeBytes, fileDigest } from '../../worker/importer/files
 import type { Client } from '@elastic/elasticsearch';
 import { CONSUMED_CODES } from '../../worker/importer/codes.js';
 import { candidateSample } from '../../worker/importer/probes.js';
-import { checkApproval } from '../../worker/importer/approval.js';
 
 type Rows = Record<string, Record<string, string>[]>;
 let fixture: Rows;
@@ -436,29 +435,6 @@ describe('strict ES certification, status and journal boundaries', () => {
     expect(inBackupWindow(new Date('2026-10-31T03:40:00Z'))).toBe(true);
     expect(nextCheck(at, { ...s, enabled: false })).toBeNull();
   });
-  it('busy rows cannot reset overdue or erase review, and only a canary is successful', () => {
-    const row = {
-      checkedAt: at.toISOString(),
-      finishedAt: at.toISOString(),
-      mode: 'automatic' as const,
-      source: null,
-      archiveSha256: null,
-      generationId: null,
-      step: 'check' as const,
-      result: 'deferred' as const,
-      reason: 'busy' as const,
-      costUsd: 0,
-    };
-    const s = projectImports(
-      [{ public: row, sourceCheckSucceeded: false, canaryPassed: false, unresolved: true }],
-      { enabled: true, localTime: '05:30', timeZone: 'Europe/Prague' },
-      at,
-    );
-    expect(s.lastCheck).toBeNull();
-    expect(s.lastSuccessfulImport).toBeNull();
-    expect(s.overdue).toBe(true);
-    expect(s.attentionRequired).toBe(true);
-  });
   it('enforces managed-space bytes and refuses symlink reuse/cleanup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'import-space-'));
     try {
@@ -480,47 +456,4 @@ describe('strict ES certification, status and journal boundaries', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-});
-
-it('binds a synthetic NTSB withdrawal approval to the exact report and exact case list', () => {
-  const old = corpus(),
-    next = structuredClone(old);
-  for (const table of TABLE_NAMES)
-    rows(next)[table] = rows(next)[table]!.filter((row) => row.ev_id !== 'EV500');
-  const report = compareSnapshots(sourceFacts(old), sourceFacts(next), at);
-  expect(report.removed).toEqual(['SYN500']);
-  expect(report.cases).toEqual(['SYN500']);
-  expect(report.failures).toContain('removals');
-  const baseline = {
-    generationId: 1,
-    casesIndex: 'synthetic-cases',
-    passagesIndex: 'synthetic-passages',
-    publishedAt: '2026-10-31T00:00:00.000001Z',
-  };
-  const artifact = { archive_sha256: 'a'.repeat(64), environment: 'dev' as const };
-  const approval = {
-    archive: artifact.archive_sha256,
-    environment: 'dev' as const,
-    baseline,
-    policy: 'snapshot-monthly.v1',
-    code: 'b'.repeat(40),
-    report: report.hash,
-    reasons: report.failures,
-    cases: report.cases,
-  };
-  expect(checkApproval(approval, artifact, baseline, approval.code, report)).toEqual(
-    [...report.failures].sort(),
-  );
-  expect(() =>
-    checkApproval({ ...approval, cases: [] }, artifact, baseline, approval.code, report),
-  ).toThrow();
-  expect(() =>
-    checkApproval(
-      { ...approval, report: 'c'.repeat(64) },
-      artifact,
-      baseline,
-      approval.code,
-      report,
-    ),
-  ).toThrow();
 });

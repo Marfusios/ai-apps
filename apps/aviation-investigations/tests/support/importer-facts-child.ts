@@ -18,7 +18,8 @@ async function main(): Promise<void> {
   // A second request also exercises the host's one-request-at-a-time lifecycle.
   const repeated = await facts.retention(other);
   const canary = own === 'live' ? await facts.canary(process.argv[3]!) : null;
-  await send({ type: 'facts-test-result', retention, repeated, canary });
+  const serving = await facts.serving!(other);
+  await send({ type: 'facts-test-result', retention, repeated, canary, serving });
 }
 
 main()

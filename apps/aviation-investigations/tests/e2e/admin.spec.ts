@@ -9,7 +9,7 @@ import { expect, test, type Page } from '@playwright/test';
  * system from the mock's synthetic overview, readable at phone width without sideways scrolling;
  * for an account that is not an admin, and when signed out, `/admin` is the ordinary "not found"
  * page. Task 26: the System section's "Automatic import" in each of the mock importer's states
- * (session storage `casebook-mock-admin-imports`), the stop for review first.
+ * (session storage `casebook-mock-admin-imports`), with delayed/fix alerts at the top.
  *
  * `E2E_SCREENSHOTS=<dir>` keeps screenshots of the page there.
  */
@@ -24,7 +24,10 @@ window.turnstile = {
 `;
 
 /** Signed in as the mock's account (an admin unless `admin: false`), at a width and theme. */
-async function signIn(page: Page, { width, theme, admin = true }: { width: number; theme: Theme; admin?: boolean }): Promise<void> {
+async function signIn(
+  page: Page,
+  { width, theme, admin = true }: { width: number; theme: Theme; admin?: boolean },
+): Promise<void> {
   await page.setViewportSize({ width, height: width < 640 ? 844 : 900 });
   await page.addInitScript(FAKE_TURNSTILE);
   await page.addInitScript(`localStorage.setItem('casebook-theme', '${theme}');
@@ -37,7 +40,9 @@ async function signIn(page: Page, { width, theme, admin = true }: { width: numbe
 }
 
 async function fitsTheWidth(page: Page): Promise<void> {
-  const overflow = await page.evaluate<number>('document.documentElement.scrollWidth - window.innerWidth');
+  const overflow = await page.evaluate<number>(
+    'document.documentElement.scrollWidth - window.innerWidth',
+  );
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
@@ -47,10 +52,16 @@ async function shot(page: Page, name: string): Promise<void> {
   if (!dir) return;
   mkdirSync(dir, { recursive: true });
   await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
-  const { width, height } = await page.evaluate<{ width: number; height: number }>('({ width: window.innerWidth, height: document.documentElement.scrollHeight })');
+  const { width, height } = await page.evaluate<{ width: number; height: number }>(
+    '({ width: window.innerWidth, height: document.documentElement.scrollHeight })',
+  );
   if (width >= 640) return;
   for (let y = 0, n = 1; y < height; y += 1600, n++) {
-    await page.screenshot({ path: join(dir, `${name}-part${n}.png`), fullPage: true, clip: { x: 0, y, width, height: Math.min(1600, height - y) } });
+    await page.screenshot({
+      path: join(dir, `${name}-part${n}.png`),
+      fullPage: true,
+      clip: { x: 0, y, width, height: Math.min(1600, height - y) },
+    });
   }
 }
 
@@ -58,7 +69,9 @@ for (const [width, theme] of [
   [1280, 'day'],
   [390, 'night'],
 ] as const) {
-  test(`an admin reaches the admin page from the header and reads users, usage, costs and the system (${width}px, ${theme})`, async ({ page }) => {
+  test(`an admin reaches the admin page from the header and reads users, usage, costs and the system (${width}px, ${theme})`, async ({
+    page,
+  }) => {
     await signIn(page, { width, theme });
     const banner = page.getByRole('banner');
     if (width < 640) await banner.getByRole('button', { name: 'Menu' }).click();
@@ -66,41 +79,62 @@ for (const [width, theme] of [
     await expect(page).toHaveURL(/\/admin$/);
     await expect(page.getByRole('heading', { level: 1, name: 'Admin' })).toBeVisible();
     await expect(page).toHaveTitle('Admin · AirCase');
-    await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'noindex, nofollow');
-    await expect(page.locator('[data-as-of]')).toContainText('Times are in your time zone, ');
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+      'content',
+      'noindex, nofollow',
+    );
+    await expect(page.locator('[data-as-of]')).toContainText(
+      'Times are in your time zone, ',
+    );
 
     // Users: on a desktop a table, on a phone a list of blocks.
     const users = page.getByRole('region', { name: 'Users' });
     await expect(users.locator('[data-stat="Accounts"] dd')).toHaveText('37');
     if (width >= 640) {
-      await expect(users.getByRole('table', { name: 'Accounts, most recently active first' })).toBeVisible();
+      await expect(
+        users.getByRole('table', { name: 'Accounts, most recently active first' }),
+      ).toBeVisible();
       await expect(users.locator('[data-users-list]')).toBeHidden();
     } else {
-      await expect(users.getByRole('list', { name: 'Accounts, most recently active first' })).toBeVisible();
+      await expect(
+        users.getByRole('list', { name: 'Accounts, most recently active first' }),
+      ).toBeVisible();
       await expect(users.locator('[data-users-table]')).toBeHidden();
     }
     // (both layouts are in the page; the one for this width shows)
-    await expect(users.getByText('Alex Example').filter({ visible: true })).toHaveCount(1);
+    await expect(users.getByText('Alex Example').filter({ visible: true })).toHaveCount(
+      1,
+    );
 
     // Usage: the chart's four rows, a day read with the keyboard, the figures as a table, the ratings.
     const usage = page.getByRole('region', { name: 'Usage' });
     await expect(usage.locator('[data-usage-row]')).toHaveCount(4);
-    const plot = usage.getByRole('group', { name: /^AI searches per UTC day, last 30 days/ });
+    const plot = usage.getByRole('group', {
+      name: /^AI searches per UTC day, last 30 days/,
+    });
     await plot.focus();
     await page.keyboard.press('ArrowLeft');
     await expect(usage.locator('[data-usage-tooltip]')).toContainText('so far');
     await page.keyboard.press('ArrowLeft');
     await expect(usage.locator('[data-usage-tooltip]')).not.toContainText('so far');
     await usage.getByRole('button', { name: 'Show the figures' }).click();
-    await expect(usage.getByRole('table', { name: 'AI searches per UTC day, last 30 days' })).toBeVisible();
-    await expect(usage.getByRole('table', { name: 'Search ratings' })).toContainText('Rated useful');
+    await expect(
+      usage.getByRole('table', { name: 'AI searches per UTC day, last 30 days' }),
+    ).toBeVisible();
+    await expect(usage.getByRole('table', { name: 'Search ratings' })).toContainText(
+      'Rated useful',
+    );
 
     // Costs: the budgets as meters; System: the ranking in words, and the importer's daily schedule.
     const costs = page.getByRole('region', { name: 'Costs' });
     await expect(costs.getByRole('meter')).toHaveCount(4);
     const system = page.getByRole('region', { name: 'System' });
-    await expect(system.locator('[data-fact="Ranking"] dd')).toContainText('The question as asked; AI reranks the top 50');
-    await expect(system.locator('[data-fact="Schedule"] dd')).toHaveText('Daily at 05:30, Europe/Prague');
+    await expect(system.locator('[data-fact="Ranking"] dd')).toContainText(
+      'The question as asked; AI reranks the top 50',
+    );
+    await expect(system.locator('[data-fact="Next check"] dd')).toContainText(
+      'Every day at 05:30, Europe/Prague',
+    );
     await fitsTheWidth(page);
     await usage.getByRole('button', { name: 'Hide the figures' }).click();
     await page.evaluate('document.activeElement && document.activeElement.blur()');
@@ -109,138 +143,160 @@ for (const [width, theme] of [
   });
 }
 
-/** Each state of the mock importer (web/mock/imports.ts): words its block must hold. */
+/** The approved states, including each safety-sensitive recovery state, on desktop and phone. */
 const IMPORT_STATES = [
-  ['needs_review', 'the new file differs from the current data in a way the automatic checks do not accept'],
-  ['blocked', 'Blocked: an earlier run is waiting for review'],
-  ['after_switch', 'The new data may already be live'],
-  ['rolled_back', 'Rolled back: the previous dataset serves again'],
-  ['recertification', 'Re-check of the serving data failed'],
-  ['restore_hold', 'Paid operations after a restore'],
-  ['retired', 'Automatic imports have ended'],
-  ['unreadable', 'could not be read'],
-  ['overdue', 'No check has completed for over 36 hours.'],
-  ['healthy', 'No new file (NTSB still lists the 16 Oct 2026 file)'],
-  ['published', 'Imported generation 8'],
-  ['disabled', 'Off'],
+  'healthy',
+  'published',
+  'delayed',
+  'fix',
+  'monthly_budget',
+  'shrunk',
+  'restored',
+  'restore_unverified',
+  'alias_unknown',
+  'post_success_storage',
+  'overdue',
+  'unreadable',
+  'disabled_unreadable',
+  'restore_hold',
+  'never_run',
+  'manual_rollback',
+  'disabled',
 ] as const;
-
-/** The admin overview the page itself reads (the mock's, through its service worker): the importer's flags. */
-async function importFlags(page: Page): Promise<{ attentionRequired: boolean; overdue: boolean }> {
-  return (await page.evaluate("fetch('/api/admin/overview').then((r) => r.json()).then((o) => o.system.imports)")) as { attentionRequired: boolean; overdue: boolean };
-}
-
 for (const [width, theme] of [
   [1280, 'day'],
+  [1024, 'day'],
   [390, 'night'],
 ] as const) {
-  test(`the automatic import, state by state: a stop for review first, then the facts and the recent runs (${width}px, ${theme})`, async ({ page }) => {
-    // Twelve states, each its own page load (and screenshot).
+  test(`automatic import alerts and facts (${width}px, ${theme})`, async ({ page }) => {
     test.setTimeout(150_000);
     await signIn(page, { width, theme });
-    for (const [state, words] of IMPORT_STATES) {
-      await page.evaluate(`sessionStorage.setItem('casebook-mock-admin-imports', '${state}')`);
-      await page.goto('/admin');
-      const system = page.getByRole('region', { name: 'System' });
-      const block = system.locator('[data-imports]');
-      await expect(block).toContainText(words);
-      // The notices and the line at the head of the page follow the server's flags, attention first.
-      const flags = await importFlags(page);
-      const pointer = page.locator('[data-import-pointer]');
-      await expect(block.locator('[data-import-notice="attention"]')).toHaveCount(flags.attentionRequired ? 1 : 0);
-      await expect(block.locator('[data-import-notice="overdue"]')).toHaveCount(flags.overdue ? 1 : 0);
-      await expect(pointer).toHaveCount(flags.attentionRequired || flags.overdue ? 1 : 0);
-      if (flags.attentionRequired) await expect(block.locator(':scope > *').first()).toHaveAttribute('data-import-notice', 'attention');
-      // The runs: a table where there is room, blocks on a phone; none while nothing has run.
-      const table = block.getByRole('table', { name: 'Recent import runs, newest first' });
-      const list = block.getByRole('list', { name: 'Recent import runs, newest first' });
-      if (state === 'disabled' || state === 'unreadable') {
-        await expect(block).toContainText('No runs yet.');
-      } else if (width >= 640) {
-        await expect(table).toBeVisible();
-        await expect(list).toBeHidden();
-        // The table fits its column beside Costs: nothing scrolls inside it.
-        const wrap = block.locator('[data-import-runs-wrap]');
-        expect(await wrap.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
-      } else {
-        await expect(list).toBeVisible();
-        await expect(table).toBeHidden();
-      }
-      // No identifier with an underscore shows outside the secondary code lines and the commands.
-      const text = String(
-        await block.evaluate(
-          '(el) => { const copy = el.cloneNode(true); for (const code of copy.querySelectorAll("[data-code], [data-import-commands]")) code.remove(); return copy.textContent || ""; }',
-        ),
+    for (const state of IMPORT_STATES) {
+      await page.evaluate(
+        (state) => sessionStorage.setItem('casebook-mock-admin-imports', state),
+        state,
       );
-      expect(text).not.toMatch(/\b[a-z]+_[a-z_]+\b/);
+      await page.goto('/admin');
+      const block = page
+        .getByRole('region', { name: 'System' })
+        .locator('[data-imports]');
+      await expect(block).toBeVisible();
+      const alert = page.locator('[data-import-alert]');
+      await expect(alert).toHaveCount(
+        ['healthy', 'published', 'disabled', 'disabled_unreadable', 'never_run'].includes(
+          state,
+        )
+          ? 0
+          : 1,
+      );
+      if (await alert.count()) {
+        await expect(alert.getByRole('button', { name: 'Copy details' })).toBeVisible();
+        await expect(alert).toContainText(
+          state === 'delayed' || state === 'monthly_budget'
+            ? 'Automatic import is delayed'
+            : 'Automatic import needs a fix',
+        );
+      }
+      if (state === 'disabled' || state === 'never_run')
+        await expect(block).toContainText('No runs recorded yet.');
+      else if (state === 'unreadable' || state === 'disabled_unreadable')
+        await expect(block).toContainText('Unknown: the status could not be read.');
+      else
+        await expect(
+          block.getByRole('list', { name: 'Recent import runs' }),
+        ).toBeVisible();
+      await expect(block).not.toContainText('pnpm importer');
+      if (state === 'disabled')
+        await expect(block).toContainText('Automatic import is turned off.');
+      if (state === 'published')
+        await expect(block).toContainText('152 new cases, 501 updated, 2 removed');
+      if (state === 'alias_unknown')
+        await expect(alert).toContainText('may show mixed data');
+      if (state === 'restored')
+        await expect(alert).toContainText('The site checks passed.');
       await fitsTheWidth(page);
-      await block.scrollIntoViewIfNeeded();
-      await page.evaluate('document.activeElement && document.activeElement.blur()');
+      expect(
+        await block.evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeLessThanOrEqual(0);
+      if (width === 1024) {
+        const starts = await block
+          .locator('li > span:first-of-type')
+          .evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect().x));
+        expect(new Set(starts.map((x) => Math.round(x))).size).toBeLessThanOrEqual(1);
+      }
       await blockShot(page, block, `admin-imports-${state}-${width}-${theme}`);
     }
-    // The line at the head of the page takes the reader to the notice, at the foot of the page.
-    await page.evaluate("sessionStorage.setItem('casebook-mock-admin-imports', 'blocked')");
+    await page.evaluate(() =>
+      sessionStorage.setItem('casebook-mock-admin-imports', 'fix'),
+    );
     await page.goto('/admin');
-    await expect(page.locator('[data-import-pointer]')).toBeVisible();
-    await expect(page.getByRole('region', { name: 'System' }).locator('[data-imports]')).toBeVisible();
-    await page.evaluate('window.scrollTo(0, 0)');
+    await expect(page.locator('[data-import-alert]')).toBeVisible();
     await shot(page, `admin-imports-page-${width}-${theme}`);
-    await page.locator('[data-import-pointer]').getByRole('link', { name: 'The automatic import needs a review.' }).click();
-    const notice = page.getByRole('region', { name: 'System' }).locator('[data-import-notice="attention"]');
-    await expect(notice).toBeFocused();
-    await expect(notice).toBeInViewport();
   });
 }
 
-test('beside Costs below 1280px the recent runs are blocks, not a squeezed table (1024px)', async ({ page }) => {
-  await signIn(page, { width: 1024, theme: 'day' });
-  await page.evaluate("sessionStorage.setItem('casebook-mock-admin-imports', 'blocked')");
-  await page.goto('/admin');
-  const block = page.getByRole('region', { name: 'System' }).locator('[data-imports]');
-  await expect(block.getByRole('list', { name: 'Recent import runs, newest first' })).toBeVisible();
-  await expect(block.getByRole('table', { name: 'Recent import runs, newest first' })).toBeHidden();
-  await fitsTheWidth(page);
-  await block.scrollIntoViewIfNeeded();
-  await blockShot(page, block, 'admin-imports-blocked-1024-day');
-});
-
 /** A screenshot of one block, under `E2E_SCREENSHOTS` when set. */
-async function blockShot(page: Page, block: ReturnType<Page['locator']>, name: string): Promise<void> {
+async function blockShot(
+  page: Page,
+  block: ReturnType<Page['locator']>,
+  name: string,
+): Promise<void> {
   const dir = process.env.E2E_SCREENSHOTS;
   if (!dir) return;
   mkdirSync(dir, { recursive: true });
   await block.screenshot({ path: join(dir, `${name}.png`) });
 }
 
-test('on a 640px tablet an admin’s three links leave the AI counter whole', async ({ page }) => {
+test('on a 640px tablet an admin’s three links leave the AI counter whole', async ({
+  page,
+}) => {
   await signIn(page, { width: 640, theme: 'day' });
   const banner = page.getByRole('banner');
   await expect(banner.getByRole('link', { name: 'Admin' })).toBeVisible();
   await expect(banner.getByText('AI left today:')).toBeVisible();
   await page.evaluate('document.fonts.ready');
-  const cut = await page.locator('header .truncate').evaluate((el) => el.scrollWidth - el.clientWidth);
+  const cut = await page
+    .locator('header .truncate')
+    .evaluate((el) => el.scrollWidth - el.clientWidth);
   expect(cut).toBe(0);
   await fitsTheWidth(page);
 });
 
-test('for an account that is not an admin, and when signed out, /admin is the ordinary “not found” page with no Admin link', async ({ page }) => {
+test('for an account that is not an admin, and when signed out, /admin is the ordinary “not found” page with no Admin link', async ({
+  page,
+}) => {
   await signIn(page, { width: 1280, theme: 'day', admin: false });
-  await expect(page.getByRole('banner').getByRole('link', { name: 'Account' })).toBeVisible();
-  await expect(page.getByRole('banner').getByRole('link', { name: 'Admin' })).toHaveCount(0);
+  await expect(
+    page.getByRole('banner').getByRole('link', { name: 'Account' }),
+  ).toBeVisible();
+  await expect(page.getByRole('banner').getByRole('link', { name: 'Admin' })).toHaveCount(
+    0,
+  );
   await page.goto('/admin');
-  await expect(page.getByRole('heading', { level: 1, name: 'There is no page here.' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'There is no page here.' }),
+  ).toBeVisible();
   await expect(page).toHaveTitle('Page not found · AirCase');
-  const reads = await page.evaluate<number>(`performance.getEntriesByType('resource').filter((e) => e.name.includes('/api/admin/')).length`);
+  const reads = await page.evaluate<number>(
+    `performance.getEntriesByType('resource').filter((e) => e.name.includes('/api/admin/')).length`,
+  );
   expect(reads).toBe(0);
   await shot(page, 'admin-not-found-1280-day');
 
-  await page.getByRole('banner').getByRole('link', { name: 'Account', exact: true }).click();
+  await page
+    .getByRole('banner')
+    .getByRole('link', { name: 'Account', exact: true })
+    .click();
   await expect(page).toHaveURL(/\/account$/);
   const signOut = page.getByRole('button', { name: 'Sign out', exact: true });
   await expect(signOut).toBeVisible();
   await signOut.click();
-  await expect(page.getByRole('banner').getByRole('button', { name: 'Sign in' })).toBeVisible();
+  await expect(
+    page.getByRole('banner').getByRole('button', { name: 'Sign in' }),
+  ).toBeVisible();
   // Reloaded signed out: the sign-out is kept in this tab's session storage.
   await page.goto('/admin');
-  await expect(page.getByRole('heading', { level: 1, name: 'There is no page here.' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'There is no page here.' }),
+  ).toBeVisible();
 });

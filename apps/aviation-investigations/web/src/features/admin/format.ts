@@ -4,7 +4,7 @@
  * need, and the server's configuration identifiers in plain words. Builder copy for the owner's
  * review.
  */
-import { formatCount } from '../../lib/format';
+import { formatCount } from '../../lib/format.js';
 
 /** The viewer's time zone as the browser names it ("Europe/Prague"); UTC when it names none. */
 export function viewerTimeZone(): string {

@@ -964,15 +964,74 @@ again there before relying on them.
 ## Ingestion
 
 The automatic snapshot worker is documented in [IMPORTER.md](IMPORTER.md), including
-migrations 0027–0028, the no-change/forced-dev exercises, the fixed $0.50 artifact
-cap and 89-day resumption boundary, concrete-index protection, named approvals,
-rollback/rebaseline, free re-certification and the installation gate. Rebaseline is
-the explicit dry-run-first recovery step after rollback or a manual publication;
-it never clears an accounting or restore hold. The importer is disabled by default. Do not enable its timer before mutual exclusion with AirCase's
-own manual and scheduled database backups, a separately running pinned dev app, and
-actual PG/ES/filesystem headroom have been verified. Langfuse backup I/O belongs in
-the headroom assessment; its mutex is optional. The manual commands below remain useful
-for reviewed operator work; only the PostgreSQL manifest selects the serving pair.
+migrations 0027–0029, the $2 per-file/environment cap, the unchanged monthly budgets and
+89-day accounting boundary. Source comparisons are informational; the count guard rejects
+only a file below 90% of either serving total or answer-eligible count. Dev-first checks,
+concrete-index protection, backup exclusion and restore protections remain mandatory.
+Routine updates and recoveries need no approval. Free re-certification proves the serving
+pair during a release even while a file waits.
+
+### Automatic import alerts and emergency rollback
+
+Admin is the only alert channel. Its top box says what failed, which file serves, and what
+happens next. Copy details gives bounded technical IDs and enums for diagnosis. Off means
+the schedule is disabled and emits no alert. Enabled schedules show a fix if no run started
+for 36 hours, even if an earlier file failure or hold is still open. The active hold stays stated in the alert and its details. Temporary failures on 3 schedule-zone dates give delayed; on 7 dates, fix.
+A successful check clears resolved causes. Suppressed work still records daily checks;
+re-certification cannot hide an unfixed candidate. A delay’s Since date is the first
+unresolved temporary failure. A fix uses the first unresolved date for the same reason
+and origin; daily retries do not move it. Unreadable status labels each fact unknown; it does not
+mean the history disappeared. Costs appear only on published rows. Quiet daily dev checks
+refresh the serving-data canary when needed; they count as Last check and Recent runs and
+say "No new file." when they pass. Only a passing explicit `recertify` command is hidden
+from those two places; failed checks and live skips held back by dev remain visible.
+
+| Cause | Operator action and automatic next step |
+| --- | --- |
+| NTSB/app unavailable, download changed, interrupted/timeout, cache unavailable, busy/backup/lock loss, baseline changed | The system retries daily and adopts a changed serving baseline on the next run. After persistent failures, inspect the service, connectivity, cache and maintenance schedule. |
+| Monthly budget | The import continues on the first of next month; no new allowance is created for that file. |
+| Schema, integrity, verification, mapping, probe/site check, shrunk, unclassified during file processing | Diagnose using private reports. Release changed code/image or wait for new source bytes; identical work is suppressed. A deliberately smaller corpus needs a code change. |
+| Preflight or serving-data re-certification failure | Preflight and serving-data re-certification failures never suppress an untouched waiting file. Only probe, site-check, verification, mapping, integrity or schema failures say "The data on the site failed the release checks." Other causes keep their own words and next steps: unavailable services retry daily; settings need a server fix. |
+| Changed NTSB listing | This needs a code change. The system still checks every day, and this alert goes away after the first good import. |
+| Import cap | The file reached its $2 limit; no bypass/reset. Diagnose the input and embedding plan in code. |
+| Storage, cleanup, configuration during suppressed file processing | Fix the server, then release. The file is tried again after the release or when NTSB posts a newer file. Repairing settings alone does not retry a suppressed tuple. |
+| Restore hold | A person must check the cost records. Follow the restore procedure below, including the separate importer latch. The alert goes away after the next good import. |
+| Accounting | The file’s cost records refuse more work (for example its first charge is 89 days old). Check the private report; a newer NTSB file is imported normally. Never erase histories or original reservation markers. |
+| Source retired | A new NTSB source needs a code change. Disable the old timer and enabled intent until its replacement is deployed. |
+| Overdue | Check the user timer, clean pinned checkout, service and host logs. Host refusal can happen before a database run exists. |
+| Status unavailable | Repair the status/database connection or missing migration. The app must not guess that imports are healthy. |
+| Switch unknown or rollback commit failed | The site may show mixed data. Both pairs stay protected; a release permits automatic reconciliation. Do not clear unknown attempts on elapsed time alone. |
+| Failure after recorded success | The data stays published. Storage alerts immediately; other incidents follow 3/7 dates. Repair the reported cause; the system still retries every day, with no release required. Do not roll back good data for cleanup/report failure. |
+
+The worker automatically restores the exact previous pair when switching or canaries fail
+before recorded success, then checks the restored site. It says “restored” only after those
+checks. Interrupted recovery runs before new work. External publications become the new
+baseline without an adoption command. If the switch-back committed but its site check
+did not pass, Admin says “AirCase switched back to the data from <date>. Its site check
+has not passed yet.” The file stays suppressed; the next daily run checks the restored
+site again. This state takes no switch hold.
+
+For an emergency only, return a known importer publication to its previous pair:
+
+```sh
+pnpm importer rollback --config "$IMPORT_CONFIG" --env dev \
+  --artifact "$ARCHIVE_SHA256" --publication-sha256 "$PUBLICATION_IDENTITY_SHA256"
+```
+
+The publication hash is the canonical digest of the exact publication object from the
+private activation report, including its timestamp, not the ZIP hash. The command proves
+that exact candidate still serves, restores its protected previous pair, and checks it.
+It does not change operational aliases, erase spend or require another command afterwards.
+The rejected file is suppressed under its code/image until new bytes or a release arrive.
+A committed emergency rollback whose site check fails records `manual_rollback` /
+`rolled_back` with `restore_unverified` (the command still reports `site_check`), with no
+switch hold; the next daily run repeats the site check. Only a failed rollback commit
+or unknown alias state keeps the switch hold. Use `--env live` only for a deliberate live
+emergency with the exact live publication identity.
+
+The importer is disabled by default. Before installation, prove mutual backup exclusion,
+a separately running pinned dev app, and actual PG/ES/filesystem headroom. The manual
+commands below remain available for operator ingestion; the manifest alone selects what serves.
 
 Extraction needs the Docker CLI to start its sandbox containers, so it runs on the
 host, never in the `aviation-ingest` container (which has no Docker socket):
@@ -1478,6 +1537,47 @@ else, or a figure cannot be split between the two amounts, the larger figure is 
 one. After moving the database to another server by dump and restore, the ledger is
 complete: reconcile with `--interactive-usd 0 --ingestion-usd 0`.
 
+
+### The importer's separate restore latch
+
+Global `restore-reconcile` deliberately does **not** clear `import_control.restore_required`.
+A release, a new month and a free re-certification cannot clear it either. Keep the importer
+stopped and hold its configured host and maintenance locks during recovery. First finish
+`restore-check` and the general reconciliation above. Compare the backup's importer rows
+and reports with the original post-backup ledger, publication records and retained files:
+
+- Preserve every artifact ID, archive/content mapping, attempt count, original first-charge
+  timestamp, pending fetch, processing row, index reference and uncertain reservation.
+- Restore missing per-file charges under the same artifact identity as well as the global
+  totals. Charging the remaining global budget alone is not proof of a per-file allowance:
+  next month must not reopen a file's spent $2. If exact provenance/costs cannot be recovered,
+  leave the importer held and retain the private evidence for a specific recovery repair.
+- Confirm the serving manifest and protected previous/candidate pair against PostgreSQL and
+  Elasticsearch. Unknown switch outcomes remain protected; releasing this restore latch
+  does not resolve them or clear `switch_hold`.
+
+After that reconciliation is independently evidenced in the private restore report, the
+migrator may clear only the restore latch in a SQL session for this environment. This is
+exceptional restore repair, not a routine import approval or a worker permission:
+
+```sql
+BEGIN;
+SELECT pg_advisory_xact_lock(7311905027); -- excludes importer sessions
+SELECT pg_advisory_xact_lock(7311905028); -- excludes importer writes
+SELECT pg_advisory_xact_lock(7311905023); -- excludes spending/restore reconciliation
+UPDATE import_control
+SET restore_required = false, updated_at = clock_timestamp()
+WHERE id = 1 AND restore_required AND fence IS NULL AND owner_pid IS NULL
+  AND EXISTS (SELECT 1 FROM paid_operations_hold WHERE id = 1 AND held_at IS NULL);
+-- Require UPDATE 1; otherwise ROLLBACK and investigate the state.
+COMMIT;
+```
+
+The ingest role cannot perform this update. Record the evidence reference and update count
+in the private restore report. Do not alter histories, charges, first-charge dates, fences,
+pending work or switch holds to make this statement pass. Resume the normal schedule only
+after releasing the maintenance locks; the next good import clears the resolved alert.
+
 ## Retention and maintenance
 
 Nothing grows without bound, but two kinds of retention run differently:
@@ -1830,4 +1930,4 @@ that processing bound with 503 and log category `admin_overview_user_limit`.
 The whole overview has a 15-second deadline in addition to five-second SQL statement
 limits; timeout returns 503 with `admin_overview_timeout`. Any held overview transaction
 is destroyed on timeout. Expand this implementation before reaching the account bound.
-The dataset's next automatic import stays null: none is scheduled.
+The dataset's next automatic import reflects the configured schedule; it is null when scheduling is off.

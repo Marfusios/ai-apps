@@ -1,205 +1,202 @@
 # Automatic NTSB snapshots
 
-The snapshot worker checks the NTSB avall listing daily at **05:30 Europe/Prague**.
-It is disabled by default. Installing or enabling its host user-systemd timer is an
-operator action after the implementation and data gates, backup exclusion test and
-measured storage review. It never deploys application code.
+The worker checks the NTSB avall listing every day at **05:30 Europe/Prague**. A new
+file goes through dev and its site checks, then the identical file goes through live.
+Routine updates need no approval, exception file or operator command. The Admin page
+is the only alert channel. Scheduling is disabled by default until installation is complete.
 
-The adapter uses only `https://data.ntsb.gov/avdata/` and the fixed avall ZIP download
-endpoint. It refuses redirects, ambiguous listing rows, changed download metadata,
-unexpected content encoding and oversized streams. The source's advertised date is
-kept without a timezone: the listing supplies none. An unchanged advertisement can
-skip retrieval for at most seven days after a successful unconditional byte fetch.
-An unknown fetch time means retrieval is owed. An explicitly abandoned advertisement
-is the exception: it stays resolved until its advertised date or size changes. A changed
-advertisement may be fetched once, but already abandoned bytes or canonical content
-remain resolved and receive no new attempts or allowance, including pre-registration
-failures. A local seed/hash or a listing read
-does not advance that clock. A fixed journal reminder starts **2027-03-01 UTC**;
-automatic acquisition stops at **2027-04-05T00:00:00Z**. The accepted dataset remains
-servable. An Enterprise API adapter needs its own reviewed completeness contract;
-weekly deltas and pre-2008 backfill are outside this implementation.
+## Data and discovery
 
-## State and publication
+The fixed HTTPS listing and ZIP endpoints are under `https://data.ntsb.gov/avdata/`.
+The worker refuses redirects, ambiguous listing rows, unexpected encoding, changed
+metadata during a download and oversized streams. Listing dates have no timezone.
+It fetches new advertisements daily, and fetches unchanged advertisements unconditionally
+at least every seven days to discover files replaced without a new date. Suppression
+never disables discovery. A local seed or listing read does not reset the fetch clock.
+The existing retirement cutoff remains **2027-04-05T00:00:00Z**, with a fixed reminder
+from **2027-03-01 UTC**. A replacement source requires an adapter with its own completeness
+contract. Deltas and pre-2008 backfill are outside this worker.
 
-Migration **0027**, after 0026, adds importer control, artifact, run and concrete-index
-reference tables, an immutable reservation tag, narrow status functions and guards.
-Migration **0028** adds durable pending acquisition and last-fetched state, append-only
-acceptance/recovery attestations, exact successful-publication identity, pre-artifact
-acknowledgement and audited baseline recovery. It replaces the relevant functions
-without changing the applied 0027 file.
-Use the migrator for migration, the ingestion role for the worker, and the app role
-only for the trimmed status projection. Do not reapply or edit an applied migration.
+`snapshot-automatic.v2` makes every source comparison informational: additions,
+changes, removals, reassociations, US membership, eligibility, codes, dictionaries,
+quarantine and narrative differences, same-date reissues, long gaps and absent history.
+New/updated/removed counts appear in Recent runs; detailed differences stay in bounded
+private reports. If the old archive is unavailable, canonical PostgreSQL records and
+revisions provide the baseline; unavailable raw comparisons remain unknown.
 
-Every logical artifact is identified by environment, pinned ZIP and canonical
-projected-source digest. Row order and extraction timestamps do not change the
-digest; duplicate multiplicity, all nine allowlisted tables, raw provenance and
-dictionary meanings do. Repackaging pending content reuses the original artifact,
-cap and attempt allowance. Dev acceptance cannot advance live acceptance. The fetched
-ZIP, observation, originating run and processing state are saved before extraction,
-separately from accepted content. Pending work and all unresolved reviews are checked
-before the metadata shortcut or another acquisition. A newer listing while a review
-is unresolved is recorded only as a pending observation. Repackaging acceptance keeps
-the canonical artifact identity and separately records the fetched ZIP as accepted.
+The one comparative refusal is **shrunk**: either normalized total cases or US
+answer-eligible cases are less than 90% of the serving data. Exactly 90% passes.
+Dev checks against both environments before loading, through the host's metadata bridge.
+Each environment checks again under the publication lock immediately before switching.
+If live changes after dev finishes and the file is then too small for live, dev can have
+the new file while live keeps its previous one; the alert states this. There is no override.
 
-The worker checks the unchanged normalizer and generic verifier, then frozen
-`snapshot-monthly.v1` comparisons. Events and US cases cannot fall or grow more than
-3%; a disappearing identity, reassociation or US-membership loss requires a named review. At most 5% of
-existing cases may change. Eligible counts are bounded by −0.5%/+5%, losses by
-0.5%, and eligible share by two percentage points. Narrative sections and characters
-are bounded by −2%/+10%. Per-source narrative loss, raw future/backwards dates,
-changed codes/dictionaries and new quarantine are checked independently of totals.
-At most ten new reviewed foreign-coordinate anomalies are allowed; a new US or
-critical anomaly is never absorbed into an old count. An exception cannot waive
-integrity, mapping, quarantine, money, servability or fencing. Changed content with
-no advancing advertised date requires `source_reissued` review; an advertisement gap
-over 62 days requires `baseline_required` review. Both are checked during the actual
-run, including the weekly unconditional refresh.
+Structural and safety checks remain: bounded extraction, explicit columns, unique keys,
+canonical provenance, normalization, generic verification, coherent generation/index
+contracts, complete Elasticsearch responses and application checks. They are not
+comparison limits. Probes sample the candidate deterministically, including available
+multi-aircraft, eligibility and cause boundaries, and check removed IDs are absent.
+No particular historical case or phrase has to survive. Vector probes use cached inputs;
+they make no AI question or query-embedding call.
 
-The consumed-code inventory in `worker/importer/codes.ts` is explicit:
+## Durable processing and failures
 
-| Projected table | Consumed code/flag columns |
-| --- | --- |
-| `events` | `ev_type`, `ev_dow`, `ev_tmzn`, `ev_state`, `ev_country`, `light_cond`, `sky_cond_nonceil`, `sky_cond_ceil`, `wind_dir_ind`, `wind_vel_ind`, `gust_ind`, `wx_int_precip`, `wx_cond_basic`, `ev_highest_injury` |
-| `aircraft` | `acft_category`, `far_part`, `type_fly`, `damage`, `homebuilt`, `afm_hrs_since` |
-| `engines` | `eng_type`, `carb_fuel_injection` |
-| `findings` | `finding_code`, `category_no`, `subcategory_no`, `section_no`, `subsection_no`, `modifier_no`, `cause_factor`, `cm_inpc` |
-| `events_sequence` | `phase_no`, `eventsoe_no`, `occurrence_code`, `defining_ev` |
-| `ntsb_admin` | `rec_stat` |
+Migration **0029** is forward-only and idempotent. It leaves 0027/0028 intact and keeps
+artifact, run, acceptance and financial history. Legacy pending flags and stopped or
+abandoned records no longer block processing. Their original money and identity remain.
+The first daily cycle after upgrade resumes a waiting file automatically.
 
-A newly observed semantic value requires `codes` review even in one row with an
-unchanged dictionary. Both dictionaries are compared in full separately. Numeric
-measurements, dates, identities and free text remain in the full provenance digest;
-they are not code vocabularies. Quarantine attribution joins the complete diagnostic
-`ev_id=<full ID>` key, including any commas; unknown or ambiguous identities fail
-closed.
+Permanent artifact identity separates money from processing: canonical content and
+pinned bytes identify the environment's original allowance; repackaging identical content
+reuses it. `import_processing` stores builds and recovery phases for new code/image
+attempts. New processing never resets reservations, first-reservation time or counters.
 
-The PostgreSQL manifest is the **only serving switch**. Builders keep their existing
-independent operational aliases. The importer retains concrete candidates before a
-builder releases its protection, and pins the full baseline pair. Certification and
-activation use the import fence and the existing lifecycle lock on the publication
-connection. The certificate binds archive, content, full baseline (including
-microsecond publication time), generation, concrete pair/builds, comparison and
-verification reports, probes, worker Git commit and deployed image. A manual
-publication, including the same generation with a new pair or timestamp, invalidates
-the certificate. An ambiguous COMMIT is reconciled against the authoritative manifest.
+A failure that needs a fix **while processing a file** suppresses the same **environment +
+archive digest + code commit + image digest**. Preflight and serving-data re-certification
+failures never suppress an untouched waiting file. Daily
+discovery still runs; identical suppressed work records a waiting
+run and retains the original alert. Different bytes, code or image permit a retry.
+Successful work resolves its issue; a suppressed check or serving-data re-certification
+cannot clear a waiting-file issue.
 
-Candidate probes reject partial shards, timeouts, capped totals, incomplete pages,
-aggregation truncation and bulk-item errors. They check full totals/provenance and
-fixed plus changed-case samples, with multi-aircraft/cause variants and non-US and
-non-eligible boundaries. Vector probes use an exact cached input; no AI question,
-scope, rerank or query-embedding call is made. After activation, actual application
-read paths must expose the new coherent revision within five minutes, then pass two
-checks ten minutes apart. Live additionally requires the exact dev publication and
-same worker/image, with a successful canary no older than 24 hours. This canary checks
-availability/contracts, not retrieval quality. Dev and live image pins must be equal;
-the observed running dev image must still match its canary and the live pin at
-promotion. The dev app must already be running separately at that pinned image. The
-importer never starts, updates or stops an application container; missing/stopped or
-unreachable apps defer before candidate work where possible.
+| Kind | Reasons | Behavior |
+| --- | --- | --- |
+| Temporary | NTSB/app unavailable, file changed during download, busy/backup window, lost lock, timeout, interrupted worker, monthly budget, cache unavailable, serving baseline changed | Retry daily, without an attempt limit. A changed baseline is adopted on the next run. |
+| Needs a fix | Schema, integrity, verification, mapping, probe/site check, per-file cap, storage, configuration, cleanup, restore/accounting hold, changed listing, retired source, shrunk file, unclassified error | Alert immediately. File-processing failures suppress identical work until new bytes or a release; preflight/re-certification incidents do not suppress a file. Restore/accounting holds still require reconciliation. |
+| Unknown switch or failed rollback commit | Alias state unknown, rollback failed | Keep both datasets protected. Block switches; a release permits reconciliation, never a timed waiver. |
 
-Canary acceptance, its immutable attestation and the run's exact successful generation
-commit in one fenced transaction. A lost acknowledgement or report-file failure
-cannot downgrade that success. Later code/image changes use the free re-certification
-path, including the full ten-minute canary, rather than waiting for a new NTSB file.
-For routine application releases, [the release command](RUNBOOK.md#release-command)
-updates the worker/image pins and performs this check as part of `pnpm app:release`.
+Historical attempt counters remain for accounting and diagnostics. Four interruptions
+no longer stop retries. A dead worker is recorded once when the next fenced run recovers it.
+Errors are sanitized to fixed categories; raw provider messages never enter normal logs.
 
-After a possibly committed switch, failure status does not claim that the previous
-dataset is still serving. Both pairs stay protected. A network outage does not cause
-automatic rollback. The operator can activate the revalidated previous pair once,
-conditional on the exact failed publication still being current.
+## Publication and automatic recovery
 
-## Money, isolation and recovery
+PostgreSQL's manifest is the **only serving switch**. Elasticsearch aliases remain
+independent operational aliases. Each candidate binds archive/content, baseline, verified
+generation, concrete index pair/builds, comparison/probe reports, code and image in a
+certificate. Candidate and previous data stay pinned through the switch and recovery.
+Baseline changes outside the importer are adopted under the lifecycle lock. They do not
+require a separate command. A third-party publication is never blindly overwritten.
 
-The **$0.50 per logical artifact per environment** cap includes settled, uncertain,
-open and expired-outstanding reservations across attempts and month boundaries.
-The tag is inserted in the production reservation transaction; there is no separate
-cap ledger or accounting compaction. Plan admission includes up to three provider
-attempts. Every attempt also reserves under normal monthly/ingestion budgets.
-Cache-only mode cannot call a provider. Cache misses defer as `cache_miss`; run without
-that option to admit paid misses through the normal gates, or explicitly abandon the
-candidate with rebaseline. Neither a cache miss nor a short monthly allowance is a data
-latch. At or after
-**89 days (2,136 hours on database time)** from the immutable database
-first-reservation time, the artifact refuses even a cache-only resume: the one-day
-margin precedes the 90-day ledger pruning boundary. Restoring a
-database latches the importer separately; global spend reconciliation does not clear
-that latch. A restore needs reviewed importer/accounting reconciliation before any
-further import, not an automated reset or a new artifact identity.
+Before switching, persist the exact previous pair, candidate and phase. Activation and
+its publication identity commit together under the import fence and lifecycle lock.
+A lost acknowledgement is reconciled against that record and the actual manifest.
+After switching, the app must expose the coherent revision within five minutes, then pass
+two checks ten minutes apart. Live requires the exact dev result, code and image, with
+a successful dev canary no older than 24 hours. The observed dev app must still match.
+The importer never starts or deploys an app.
 
-An artifact gets at most four completed or failed work attempts. Temporary deferrals
-do not increment that counter. A worker that disappears during work is counted once
-when the next fenced run recovers it; completed publications and non-deferred failures
-also count. Extraction before registration has its separate durable four-try bound.
-Data, integrity, accounting and contract failures latch; a new run row or a
-repackaging does not reset them. A short monthly allowance, dev not yet certified, non-200/network source
-response or unavailable app is `deferred`, not a data review. The fixed
-`source_unavailable` reason covers both NTSB availability and app HTTP availability;
-the private step log and the preflight/canary context distinguish them. A dirty worker
-checkout is a deferred `configuration` refusal and can resume after correcting the
-checkout. Unknown failures are
-`failed/interrupted` and use the same bounded retry history; loss of the fence or
-session cancels with `lock_lost`. A lost settlement or cache-write acknowledgement
-never loses the original reservation tag or creates a fresh allowance.
-Session loss prevents further reservation or publication through database checks.
-The nonqueuing host lock covers dev, live, manual runs, approvals, rollback and daemon
-cleanup. A second maintenance lock must also be held by **AirCase database backup
-entry points, scheduled and manual**, in both directions:
-a backup blocks an importer and an importer blocks a backup. This mandatory mutex
-does not cover Langfuse backups. Runs caught between 04:00 and 05:15 Prague time defer.
+Any failure after a possible switch and before recorded canary success starts automatic
+restoration of the exact previous publication. The restored site's checks must pass
+before the status says **restored**. If the worker dies, the next run resumes the recorded
+switch or restoration before any new work. A committed switch-back whose site check fails
+stays unverified, with the file suppressed as `site_check`; the next daily run repeats
+propagation and the restored site checks without a switch hold. Only a failed rollback
+commit or ambiguous alias state keeps a durable switch hold and the alert that the site may show mixed data. New code/image
+allows recovery to be attempted; uncertainty itself never expires.
 
-The whole host invocation, including dev, live and cleanup, has a three-hour deadline.
-The final two minutes are reserved for termination/cleanup. Inherited lock descriptors
-and a child deadline survive host-process loss. Docker container names are durably
-registered before creation and reconciled before scratch reuse. All MDBTools helpers
-and exporters use `--log-driver=none`, no network, a read-only root, no capabilities,
-**65534:65534 (`nobody`)** and fixed memory/CPU/process limits. The MDB copy is 0644
-inside a 0700 directory owned by the non-root operator. Other host users cannot
-traverse that directory, while the file bind mount gives `nobody` access to that
-single file. Root host users or groups remain refused. Attached stdout enters only
-the bounded private projection pipeline. Killing a Docker CLI alone is not cleanup.
+Recorded success cannot be downgraded by a later error. A report or cleanup failure after
+success is a separate incident, with the import still shown as done. Storage is an
+immediate fix; other post-success errors follow the temporary 3/7-day rule. Data is never
+rolled back solely for a failure after recorded success.
+Cleanup/report incidents clear only after cleanup and the final report write succeed.
+The host's final cleanup records its own incidents and clears them itself; a child
+worker's successful check cannot clear a recurring host cleanup failure. Ordinary
+unchanged checks keep their recorded success if a later report write fails too.
 
-Write-time limits are 200 MiB compressed, 1 GiB expanded MDB, 2 GiB aggregate raw
-exports, 1 GiB projected CSV, 5 GiB workspace and 10 GiB managed root, with a 2 GiB
-filesystem free-space reserve checked during writes. Private JSON reports are at
-most 4 MiB each; all also count against the root bound. Directories are 0700 and
-files 0600, except the protected MDB file described above. CSV hashes are checked
-again at use; complete artifacts use fsync,
-read-back checks and atomic rename. Reuse/deletion never follows symlinks.
+`recertify` proves the currently serving pair for a new code/image even while a candidate
+waits. It preserves pending work, money and acquisition clocks and returns `complete` /
+`unchanged`. The release command needs no bypass. The next daily cycle handles the waiting
+file with the new code. Re-certification includes the full site canary, without provider calls.
+Failures in re-certification or preflight never suppress a
+waiting file that was not processed. A successful preflight resolves only its explicitly
+marked fixed preflight incidents. Listing failures, other temporary incidents and
+file-suppression rows remain until a completed check or successful import resolves them.
+Persistent fixed preflight and listing failures reuse one open incident episode; a recurrence
+after resolution gets a new row, start date and run. Successful re-certification resolves
+only its own warnings. Neither operation changes
+acquisition dates or monetary identity.
 
-These are application bounds and sampled filesystem checks, **not a filesystem
-quota**. Installation must measure/protect capacity for archive scratch, retained and
-candidate PostgreSQL/ES copies, WAL/temp files and ES merge/build overhead, including
-unrelated writers and concurrent Langfuse backup I/O. Optional serialization with
-that backup may reduce contention, but cannot substitute for measured headroom.
-The worker reports a conservative allocation high-water bound
-(`peakBytes`); the release exercise also needs measured filesystem high-water marks.
-Protected data takes precedence over deletion targets; insufficient space stops work.
+## Money, isolation and retention
 
-Retention runs after the canary. It keeps active/previous generations, 48-hour
-supersession grace, unresolved
-import references, and existing private evidence/brief references. Host cleanup only
-touches registered owned artifacts; it consults both environments before releasing
-shared files through a host-mediated metadata bridge. An environment worker never
-loads the other environment's files or opens its database. A latched artifact's ZIP,
-extraction and indexes stay protected without an age limit until an audited
-resolution; rebaseline releases that protection subject to the active/previous
-references and 48-hour grace. Removed owned paths are unregistered. Completed run
-history is pruned while retaining last source/success, immutable attestations,
-acknowledgements and unresolved evidence. Artifact identity, first-reservation markers and spend
-history are never compacted into a new allowance. Private comparison/certification
-reports remain bounded by the managed-root cap; review them before removing any
-unresolved evidence.
+The **$2.00 per logical artifact and environment** limit is enforced both in the worker
+and in the reservation transaction. Settled, uncertain, open and expired-outstanding
+charges across all attempts and months count. Up to three provider attempts are included
+in plan admission. Every attempt also passes the configured total and ingestion monthly
+budgets; those budgets are unchanged by this task. Cache-only mode cannot call a provider.
+At **89 days** from the immutable first reservation, resumption refuses before the
+90-day ledger pruning boundary, even with cached vectors. Neither a release nor a new
+processing row creates another allowance.
 
-Only fixed step/result/reason enums enter normal journals. The March reminder is
-separate fixed literal text. Child stderr and arbitrary stdout are discarded; tracing
-is disabled. Admin status receives only the approved dates, digests, counts, money and
-enums, never case IDs, narratives, filenames, URLs, credentials or exception text.
-One bounded private outage spool per environment is replayed when its database
-returns; it cannot make `lastCheck` fresh. Stale/unknown status remains attention-worthy.
+A database restore keeps both the general spending hold and importer accounting
+protections. Reconcile actual missing spend and importer provenance before enabling work;
+there is no automatic reset, age waiver or routine command that clears these protections.
+See [the restore procedure](RUNBOOK.md#paid-operations-after-a-restore).
 
-## Configuration and operator commands
+The nonqueuing host lock covers both environments, emergency commands and cleanup. A
+shared maintenance lock excludes every scheduled/manual AirCase backup and restore in
+both directions. The 04:00–05:15 Prague backup window defers runs. The host deadline is
+three hours with two minutes reserved for termination; inherited locks and child deadlines
+survive host loss. Database fencing prevents a lost session from spending or publishing.
+
+MDB helpers are networkless, read-only-root, capability-free containers, UID/GID 65534,
+with CPU/memory/process bounds and Docker logging disabled. The one MDB bind mount is
+0644 under an owner-only 0700 directory; other users cannot traverse it. Containers are
+registered before creation and reconciled before scratch reuse. Killing the CLI alone
+is not cleanup.
+
+Bounds: ZIP 200 MiB, expanded MDB 1 GiB, raw export aggregate 2 GiB, projected CSV 1 GiB,
+workspace 5 GiB, managed root 10 GiB, filesystem free-space reserve 2 GiB, individual private
+JSON reports 4 MiB. Atomic writes use fsync and read-back checks; CSV hashes are checked
+at use and symlinks are refused. These checks are not a filesystem quota. Installation
+must measure PG/ES/WAL/merge headroom, concurrent writers and backup I/O.
+
+Retention preserves active/previous data, at least 48 hours after supersession, unresolved
+processing and private evidence references. File retention consults both environments
+through bounded host metadata; a worker never opens the other environment's database or
+loads its keys. Completed run history is bounded, but durable issues retain distinct
+failure dates beyond the 20 visible runs. Financial identity and original reservation
+markers never disappear to create a new allowance. Protected data takes precedence
+over disk targets; insufficient space stops work.
+
+## Admin status
+
+The app role can only execute narrow status projections; it cannot read importer tables
+or private reports. Status includes dates, counts, costs, fixed enums and typed diagnostic
+IDs, not case text, exception messages, paths, URLs or credentials. Admin authorization,
+private/no-store responses and client forgetting remain unchanged.
+
+When enabled, a needs-fix cause alerts at once. No run **start** for 36 hours is a fix,
+including an installation that has never started (measured from migration/monitoring start).
+Overdue takes priority over an existing file issue or hold, while that earlier cause stays
+in Waiting and details. Waiting reasons are matched to that file’s archive, never borrowed
+from an unrelated incident or a serving-data release check. Active restore and switch holds also stay in the alert text,
+including when no issue row exists. When a hold is the alert cause, its own timestamp and
+run supply Since and details; unknown original metadata stays unknown. The delayed Since date is the earliest unresolved
+temporary failure; a fixed warning uses the earliest unresolved issue with the newest
+issue’s reason and origin, not the latest daily run. Fixed live skips share a key for
+dev’s archive, code and image plus the finite reason/suppression scope, so daily skips
+do not accumulate rows or preserve an obsolete cause after it changes. Once resolved, a
+recurrence starts a new episode. Temporary skips
+retain separate daily evidence.
+Temporary failures on **three distinct dates in the schedule zone** give a delayed alert;
+**seven dates** give a fix. Several failures on one day count once. Monthly-budget failure
+uses the same rule and says the import continues on the first of next month. A good check
+clears resolved temporary failures; candidate failures remain until dealt with.
+
+Off means **Off**, “Automatic import is turned off.”, and no alert. While enabled,
+unreadable status, restore trouble and uncertain switches fail closed to a fix alert.
+Live skips include dev's actual reason and originating run. The newest finished check and
+last good check are separate. Serving metadata comes from the actual manifest, not the
+last successful run in the recent window. A process outage is replayed from a bounded
+private spool; it does not invent a successful check. An unreadable status shows unknown
+facts rather than claiming history is missing, including while the schedule is off
+(`readable: false`, no alert); its Since date is unknown too. Normal
+pending alias switches and declared-abandoned attempts do not create a mixed-data alert.
+An unresolved unknown outcome or a durable switch hold does. Recent runs show the file’s
+total cost only on published rows, never as a new charge on every waiting check.
+
+## Configuration and commands
 
 Use Node 24, pinned pnpm dependencies, the local extraction image and a clean checkout
 of the exact reviewed commit. A private 0600 JSON file outside the checkout contains:
@@ -243,8 +240,7 @@ visitor HMAC, Langfuse or infrastructure/admin credentials belong in the worker.
 Keep credentials out of command arguments. Examples use shell variables for paths
 and public digests only, never for key values.
 
-Seed the verified current corpus with the already pinned ZIP and its recorded listing
-advertisement; no new matching expectation profile is generated:
+An initial local seed can prove the existing dataset without downloading or paying:
 
 ```sh
 pnpm importer run --config "$IMPORT_CONFIG" --env dev --no-change --cache-only \
@@ -253,154 +249,18 @@ pnpm importer run --config "$IMPORT_CONFIG" --env dev --no-change --cache-only \
 pnpm importer run --config "$IMPORT_CONFIG" --env dev --forced-dev --cache-only
 ```
 
-The first command may extract/verify local material but performs no load, index or
-provider call and never claims a remote refresh. A forced dev run uses the same
-artifact, creates one new generation and publishes only dev. It cannot repeatedly
-create new generations after that logical artifact has already completed. Once
-configured and reviewed, run an ordinary cycle or one environment explicitly:
+A forced dev exercise uses the original artifact allowance. Repeating it reuses the
+original artifact and generation, increments the attempt count and records another
+successful exercise; it does not create a new financial allowance or reset history. Normal scheduled operation
+is `pnpm importer cycle --config "$IMPORT_CONFIG"`; a single environment can be run with
+`pnpm importer run --config "$IMPORT_CONFIG" --env dev`. `cycle` requires enabled intent
+and installation evidence. Paid misses remain subject to all budgets; `--cache-only`
+requires all vectors already cached.
 
-```sh
-pnpm importer cycle --config "$IMPORT_CONFIG"
-pnpm importer run --config "$IMPORT_CONFIG" --env dev
-```
-
-`cycle` requires installation evidence and enabled schedule intent. Normal monthly
-updates can have cache misses; these commands permit them only within the existing
-plan, artifact and monthly budget gates. Add `--cache-only` only to require a fully
-cached update; otherwise it defers without using a work attempt.
-For a named comparative exception, write a 0600 approval JSON with the exact `archive`,
-`environment`, full `baseline`, `policy`, full worker `code`, comparison `report` hash
-and the exact `cases` array and sorted `reasons` from the bounded private comparison
-report. Supported source-change reasons include `removals`, `reassociations`,
-`us_membership`, `codes`, `source_reissued` and `baseline_required`, alongside the
-other named comparative bounds. There is no blanket
-force flag. An altered baseline/report/code or an unreviewable reason refuses:
-
-```sh
-pnpm importer approve --config "$IMPORT_CONFIG" --env dev \
-  --artifact "$ARCHIVE_SHA256" --approval "$APPROVAL_JSON"
-pnpm importer run --config "$IMPORT_CONFIG" --env dev
-pnpm importer rollback --config "$IMPORT_CONFIG" --env dev \
-  --artifact "$ARCHIVE_SHA256" --publication-sha256 "$PUBLICATION_IDENTITY_SHA256"
-```
-
-The publication identity hash is the canonical digest of the exact `publication`
-object saved for the artifact (including microseconds), not the archive hash. Read it
-from the private activation report. Rollback does not change operational aliases,
-restore a backup, delete spend or delete candidate data still referenced by users.
-
-### Free re-certification and baseline recovery
-
-Use [the release command](RUNBOOK.md#release-command) for a reviewed application
-upgrade: it deploys live and the private dev canary, updates this config's worker/image
-pins under the importer/maintenance locks, releases them, then runs the free check.
-To repeat just re-certification of the exact accepted serving pair after repairing a
-failed check (with the reviewed pins already correct):
-
-```sh
-pnpm importer recertify --config "$IMPORT_CONFIG" --env dev
-```
-
-This makes no provider call, load, new generation, attempt increment or allowance
-reset. It verifies projected provenance, the current generic verifier, strict
-candidate probes and the full ten-minute application canary; any intervening full
-manifest change refuses. Generic verification is read-only: the serving generation’s
-verification stamp is never rewritten by re-certification. A failure records a deferred
-check and invalidates older dev proof without latching the serving artifact. Repeating
-re-certification after fixing the cause recovers the proof. Success records `unchanged`,
-with its canary in an attestation; it does not change last successful import or add a
-publication to the recent-run window. Original publication certificates remain.
-Existing integrity/accounting/restore reviews refuse this operation. With live
-configured, the ordinary dev cycle takes this path when its certificate is absent,
-older than 23 hours, or from another code/image/publication. Live then uses the fresh
-exact dev proof; a temporary inability to certify dev defers live.
-
-After a rollback or a reviewed manual publication, adopt the **currently active**
-manifest explicitly. A canonical manifest digest is available from the private
-publication/rollback report (`digest` in `worker/importer/provenance.ts` hashes sorted
-JSON keys, preserving the microsecond timestamp). Rebaseline never selects a
-publication itself:
-
-```sh
-pnpm importer rebaseline --config "$IMPORT_CONFIG" --env dev \
-  --publication-sha256 "$CURRENT_PUBLICATION_SHA256"
-# Inspect the bounded private rebaseline report, then repeat with --apply.
-pnpm importer rebaseline --config "$IMPORT_CONFIG" --env dev \
-  --publication-sha256 "$CURRENT_PUBLICATION_SHA256" --apply
-```
-
-Dry-run is the default. Both forms hold the host/import locks and a fresh fence,
-check provenance, run generic verification and strict probes, then exercise the same
-final guarded adoption transaction; dry-run rolls that adoption back. The current
-publication, code, generic report and probe hashes are recorded in an append-only
-attestation on apply. A local seed may be supplied with the same three `--seed-*` /
-`--sha256` options as `run` if the exact archive is absent; its advertised date is
-required and does not count as a remote refresh.
-
-One reviewed abandoned data candidate or pre-registration pending fetch may be
-resolved by this operation while keeping its failure reason, attempts, original
-certificate and ledger history. A registered pending candidate that is waiting for dev
-can also be abandoned; such a pending dev refusal is visible as attention. `import_cap`
-and an 89-day age refusal may be abandoned because adoption spends nothing and never
-resets accounting. The age limit continues to prohibit resuming the candidate.
-The existing validated serving baseline is adopted;
-the rejected candidate is never implicitly promoted. A resolved artifact cannot
-resume under a new identity. Unknown aliases/publication outcomes, outstanding
-extraction/outage spool, multiple unresolved candidates, an active failed publication
-that has not been rolled back, unresolved accounting (apart from the age-only refusal),
-and actual restore holds refuse. Restored accounting still requires the reviewed
-[restore checks](RUNBOOK.md#paid-operations-after-a-restore); these commands cannot clear those holds.
-
-Rebaseline can also resolve exact pre-download reviews after a manual publication,
-verifier upgrade, incorrect seed, corrected listing format/UTF-8, or a replayed restore
-spool after the actual restore holds have been reconciled. It rechecks the listing,
-current serving provenance, verification and probes. The dry-run report lists each
-original run UUID and immutable-row fingerprint. PostgreSQL verifies that list and
-writes the resolution attestation inside the guarded function on apply; the ingestion
-role cannot insert a resolution attestation. Blocked daily runs retain the original
-reason. No run history, reservation, original retry count or restore hold is reset.
-
-### Acknowledge a proved pre-artifact setup failure
-
-`acknowledge-preartifact` covers only a finished reviewed setup failure **before any
-artifact existed**. It cannot clear an artifact-bound, accounting, restore, uncertain
-publication or uncleared extraction/spool outcome. Ambiguous later failures require
-a separate reviewed repair. The command proves database absence as well as private
-cleanup/container absence, preserves every original run field and appends only the
-acknowledgement timestamp and evidence hash through a narrowly granted SQL function.
-
-After reviewing the original run and proving cleanup, prepare a 0600 JSON file under
-`<root>/reconciliation/preartifact-<SHA256_OF_EXACT_FILE_BYTES>.json`:
-
-```json
-{
-  "version": "preartifact-ack.v1",
-  "environment": "dev",
-  "runId": "REPLACE_WITH_RUN_UUID",
-  "runFingerprint": "REPLACE_WITH_ORIGINAL_ROW_FINGERPRINT",
-  "cleanupChecked": true
-}
-```
-
-Compute the original fingerprint with the parameterized query used by
-`preartifactFingerprint` in `worker/importer/durable.ts`: SHA-256 of the PostgreSQL
-`to_jsonb(import_runs row)` text, excluding `acknowledged_at` and
-`acknowledgement_sha256`. Do not copy diagnostic text or credentials into the evidence.
-The exact file hash and original fingerprint are rechecked at acknowledgement:
-
-```sh
-pnpm importer acknowledge-preartifact --config "$IMPORT_CONFIG" --env dev \
-  --run "$RUN_UUID" --evidence-sha256 "$EVIDENCE_SHA256"
-# Apply only after reviewing the same proof and dry-run result.
-pnpm importer acknowledge-preartifact --config "$IMPORT_CONFIG" --env dev \
-  --run "$RUN_UUID" --evidence-sha256 "$EVIDENCE_SHA256" --apply
-```
-
-Dry-run is the default. An exact repeat is idempotent; a different evidence hash or
-changed failure refuses. Concurrent invocations serialize under the host/import
-locks and database row guard. This operation removes only that proved setup failure
-from the attention calculation; it neither claims a source check nor a successful
-import.
+A release uses `pnpm importer recertify --config "$IMPORT_CONFIG" --env dev` after deploying
+its pinned apps. It remains valid with pending work. The emergency-only rollback command
+is documented in [RUNBOOK](RUNBOOK.md#automatic-import-alerts-and-emergency-rollback).
+Routine processing needs none of these manual commands.
 
 ## Installation gate
 
@@ -439,7 +299,7 @@ To disable, run `systemctl --user disable --now aircase-importer.timer`, then
 `systemctl --user stop aircase-importer.service`. Set configured enabled intent false
 and deploy that setting so the admin next-check hint agrees. Inspect durable cleanup
 state before any manual run after interruption. Never delete lock files to break a
-lock or clear restore/review/accounting state to obtain another allowance.
+lock or clear restore/accounting state to obtain another allowance.
 
 ## Offline validation
 

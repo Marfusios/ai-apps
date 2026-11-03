@@ -217,6 +217,6 @@ describe('the mock admin overview', () => {
     expect(o.costs.byStage.map((s) => s.usd)).toEqual([...o.costs.byStage.map((s) => s.usd)].sort((a, b) => b - a));
     expect(o.usage.feedback).toEqual({ useful: 43, notUseful: 14, usefulLast30Days: 19, notUsefulLast30Days: 7 });
     // The automatic importer as live runs it, healthy by default (its states: tests/unit/import-status-mock.test.ts).
-    expect(o.system).toMatchObject({ ranking: 'er-q-h50-v1', automaticFilters: 'none', imports: { enabled: true, attentionRequired: false, overdue: false }, appEnv: 'dev' });
+    expect(o.system).toMatchObject({ ranking: 'er-q-h50-v1', automaticFilters: 'none', imports: { enabled: true, status: 'working', alert: null }, appEnv: 'dev' });
   });
 });

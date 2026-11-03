@@ -72,13 +72,18 @@ import { assertServablePassagesIndex } from '../../server/search/hybrid.js';
 import { FIXTURE_EMBEDDING, deleteIndices, fixtureEmbedder, publishFixtureDataset, type FixtureDataset } from '../support/api-dataset.js';
 import { FakeRetriever, type FakeRetrieverOptions } from '../support/fake-retriever.js';
 import { FakeSiteverify, REAL_SECRET, REAL_SITE_KEY } from '../support/fake-siteverify.js';
+import { testEpoch } from '../support/test-epoch.js';
 import { sqlState } from './corpus-helpers.js';
 import { TEST_INDEX_PREFIX, resetControls, resetCorpus, testDb, testEs, testEsReader } from './helpers.js';
 
 const IDENTITY_SECRET = 'test-identity-hmac-secret-0123456789';
 const NETWORK_SECRET = 'test-network-hmac-secret-0123456789';
 const HOST = 'casebook.example';
-const T0 = new Date('2026-11-01T10:00:00Z');
+/** 10:00 UTC today or a day or two on (tests/support/test-epoch.ts): briefs written at it are live by the database's clock too. */
+const T0 = testEpoch();
+/** T0's UTC accounting day, and the UTC midnight that ends it. */
+const T0_DAY = T0.toISOString().slice(0, 10);
+const T0_NEXT_MIDNIGHT = Date.UTC(T0.getUTCFullYear(), T0.getUTCMonth(), T0.getUTCDate() + 1);
 const MIN = 60_000;
 const VISITOR = '203.0.113.9';
 const RUN = randomBytes(4).toString('hex');
@@ -909,8 +914,7 @@ describe('POST /api/briefs: the pipeline', () => {
     advance(MIN);
     const refused = await ask(h, 'Loss of oil pressure after an engine overhaul', { cookie: first.cookie });
     expect([refused.status, (refused.json as { error?: string }).error]).toEqual([429, 'quota_exhausted']);
-    const midnight = Date.parse('2026-11-02T00:00:00Z');
-    expect((refused.json as { retryAfter?: number }).retryAfter).toBe(Math.ceil((midnight - clock.getTime()) / 1000));
+    expect((refused.json as { retryAfter?: number }).retryAfter).toBe(Math.ceil((T0_NEXT_MIDNIGHT - clock.getTime()) / 1000));
     // The trial keeps its last search for another day; nothing was reserved for the refusal.
     expect(await trialUsed()).toEqual([2]);
     expect(await reservations()).toHaveLength(2);
@@ -2887,7 +2891,7 @@ describe('orphaned and interrupted steps', () => {
     const open = (
       await rows<{ id: number }>(sql`
         INSERT INTO reservations (category, principal_kind, principal_hash, usd, status, lease_expires_at, accounting_day, quota_counted, created_at)
-        VALUES ('interactive', 'trial', ${'f'.repeat(64)}, 0.14, 'open', ${new Date(clock.getTime() + 90_000)}, '2026-11-01', true, ${clock})
+        VALUES ('interactive', 'trial', ${'f'.repeat(64)}, 0.14, 'open', ${new Date(clock.getTime() + 90_000)}, ${T0_DAY}, true, ${clock})
         RETURNING id::int AS id`)
     )[0]!.id;
     const owner = (await rows<{ read_owner: string }>(sql`SELECT read_owner FROM briefs WHERE id = ${first.briefId}::uuid`))[0]!.read_owner;
@@ -3117,21 +3121,24 @@ describe('admission: the paced daily budget and other checks before spend', () =
   async function openReservation(usd: number): Promise<void> {
     await migrator.execute(sql`
       INSERT INTO reservations (category, principal_kind, principal_hash, usd, status, lease_expires_at, accounting_day, quota_counted, created_at)
-      VALUES ('interactive', 'account', ${'e'.repeat(64)}, ${usd}, 'open', ${new Date(clock.getTime() + 90_000)}, '2026-11-01', true, ${clock})`);
+      VALUES ('interactive', 'account', ${'e'.repeat(64)}, ${usd}, 'open', ${new Date(clock.getTime() + 90_000)}, ${T0_DAY}, true, ${clock})`);
   }
 
   it('the brief route admits through the $3/day paced allowance and counts open reservations', async () => {
-    // A fresh 30-day month: today's allowance is min($3, $80 / 30) = $2.666666; a brief
-    // reserves its worst case (RESERVATIONS). Leave room for one and a half briefs.
+    // Nothing spent earlier this month: today's allowance is min($3, $80 / the days left in
+    // the month, today included), in whole micro-dollars ($2.666666 with 30 days left); a
+    // brief reserves its worst case (RESERVATIONS). Leave room for one and a half briefs.
+    const daysLeft = new Date(Date.UTC(T0.getUTCFullYear(), T0.getUTCMonth() + 1, 0)).getUTCDate() - T0.getUTCDate() + 1;
+    const allowance = Math.min(3, Math.floor(80_000_000 / daysLeft) / 1_000_000);
     const reserve = RESERVATIONS['claude-opus-5-5']!;
-    await openReservation(Number((2.666666 - 1.5 * reserve).toFixed(6)));
+    await openReservation(Number((allowance - 1.5 * reserve).toFixed(6)));
     const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 2_000 } });
     const a = await ask(h, 'Engine power loss shortly after maintenance');
     expect(a.status).toBe(202);
     // While A's reservation is open, B does not fit: refused before any token work.
     const calls = h.sv.calls.length;
     const b = await ask(h, 'Engine power loss shortly after maintenance', { cookie: null });
-    const untilMidnight = Math.ceil((Date.parse('2026-11-02T00:00:00Z') - clock.getTime()) / 1000);
+    const untilMidnight = Math.ceil((T0_NEXT_MIDNIGHT - clock.getTime()) / 1000);
     expect([b.status, (b.json as unknown as { error: string }).error, (b.json as unknown as { retryAfter: number }).retryAfter]).toEqual([503, 'ai_paused', untilMidnight]);
     expect(h.sv.calls.length).toBe(calls);
     // Admission itself applies the same pacing with the same open reservations.
