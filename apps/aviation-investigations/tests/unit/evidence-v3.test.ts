@@ -22,7 +22,7 @@ const now = new Date('2026-10-25T12:00:00Z');
 const question = 'Find engine failures in California';
 const rawSuggestion = { terms: 'power loss', filters: { state: ['CA'], yearFrom: 2019 } };
 function row(): EvidenceRow {
-  return { id: '0b6f2c1e-8d4a-4c51-9f0e-1a2b3c4d5e6f', readOwner: 'a'.repeat(64), readOwnerKind: 'trial', ownerMovedAt: null,
+  return { traceId: null, feedbackRating: null, feedbackDay: null, id: '0b6f2c1e-8d4a-4c51-9f0e-1a2b3c4d5e6f', readOwner: 'a'.repeat(64), readOwnerKind: 'trial', ownerMovedAt: null,
     billingPrincipal: 'a'.repeat(64), billingKind: 'trial', reservationId: 1, freeUndoReservationId: null,
     generationId: 1, casesIndex: 'test-cases', passagesIndex: 'test-passages', status: 'results', createdAt: now,
     expiresAt: new Date(now.getTime() + 86400_000), data: {

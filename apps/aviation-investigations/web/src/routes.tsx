@@ -20,6 +20,8 @@ const pages: RouteObject[] = [
   { path: 'compare', lazy: async () => ({ Component: (await import('./pages/Compare')).Compare }) },
   { path: 'dashboard', lazy: async () => ({ Component: (await import('./pages/Dashboard')).Dashboard }) },
   { path: 'account', lazy: async () => ({ Component: (await import('./pages/Account')).Account }) },
+  // The admin page: only for an admin account; everyone else sees the normal "not found" page.
+  { path: 'admin', lazy: async () => ({ Component: (await import('./pages/Admin')).Admin }) },
   { path: 'privacy', element: <Privacy /> },
   { path: 'about', element: <About /> },
 ];

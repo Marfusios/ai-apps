@@ -33,6 +33,7 @@ import { SPEND_LOCK_KEY, accountIdentityHash } from '../../server/quota/policy.j
 import { FakeRetriever } from '../support/fake-retriever.js';
 import { FakeSiteverify, REAL_SECRET, REAL_SITE_KEY } from '../support/fake-siteverify.js';
 import { CookieJar, MockGoogle, type GoogleUser } from '../support/mock-google.js';
+import { testEpoch } from '../support/test-epoch.js';
 import { publishedEvidence, sqlState } from './corpus-helpers.js';
 import { resetControls, resetCorpus, testDb, testPool } from './helpers.js';
 
@@ -44,10 +45,12 @@ const CLIENT_SECRET = 'synthetic-google-client-secret';
 const HOST = 'casebook.example';
 const APP = `https://${HOST}`;
 const CALLBACK = `${APP}/api/auth/callback/google`;
-/** A fresh 30-day month, as in the identity tests: the paced allowances are stable. */
-const T0 = new Date('2026-11-01T10:00:00Z');
+/** 10:00 UTC today or a day or two on (tests/support/test-epoch.ts): briefs written at it are live by the database's clock too. */
+const T0 = testEpoch();
 const MIN = 60_000;
 const DAY = 86_400_000;
+/** An account's anti-abuse record is kept through the month's window (T0's) plus 7 days (server/auth/deletion.ts). */
+const RETAIN_UNTIL = new Date(Date.UTC(T0.getUTCFullYear(), T0.getUTCMonth() + 1, 1) + 7 * DAY).toISOString();
 const VISITOR = '203.0.113.21';
 
 let clock = T0;
@@ -305,6 +308,9 @@ async function rows<T>(query: ReturnType<typeof sql>): Promise<T[]> {
 }
 const count = async (table: string): Promise<number> => (await rows<{ n: number }>(sql.raw(`SELECT count(*)::int AS n FROM ${table}`)))[0]!.n;
 
+/** The account's application id (`auth_users.id`), which `/api/account` shows the account's own browser. */
+const userIdOf = async (email: string): Promise<string> => (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users WHERE email = ${email}`))[0]!.id;
+
 const accountHash = (sub: string) => accountIdentityHash(IDENTITY_SECRET, GOOGLE_ISSUER, sub);
 
 /** The anti-abuse records, `retain_until` as an ISO instant. */
@@ -343,7 +349,9 @@ describe('Google sign-in', () => {
     expect(back.status).toBe(302);
     // A new account comes back to the page it started from, with the welcome.
     expect(back.headers.location).toBe('/explore?q=icing&welcome=1');
-    expect(await account(h, jar)).toEqual({ signedIn: true, user: { name: user.name, email: user.email } });
+    // Who is signed in: the account's random application id (never the Google subject), name and e-mail.
+    expect(await account(h, jar)).toEqual({ signedIn: true, user: { id: await userIdOf(user.email), name: user.name, email: user.email } });
+    expect(JSON.stringify(await account(h, jar))).not.toContain(user.sub);
     // The code exchange carried the PKCE verifier and the client secret.
     expect(google.tokenRequests).toMatchObject([{ grantType: 'authorization_code', hasSecret: true, redirectUri: CALLBACK, status: 200 }]);
 
@@ -1336,17 +1344,20 @@ describe('retries and billing after sign-in', () => {
     }
     expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'account', leftToday: 3, limitToday: 5, leftThisMonth: 148 } });
     const firstUser = (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users`))[0]!.id;
+    expect(await account(h, browser)).toMatchObject({ signedIn: true, user: { id: firstUser, email: user.email } });
 
     expect((await deleteAccount(h, browser)).status).toBe(200);
     expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'trial' } });
     // The anti-abuse record: HMAC(issuer, sub) only, kept through the month's window plus 7 days.
-    expect(await abuseRecords()).toEqual([{ identity_hash: accountHash(user.sub), retain_until: '2026-12-08T00:00:00.000Z' }]);
+    expect(await abuseRecords()).toEqual([{ identity_hash: accountHash(user.sub), retain_until: RETAIN_UNTIL }]);
 
     // The same Google account signs up again: a new user, the same counts.
     const again = await signIn(h, browser, user);
     expect(again.headers.location).toBe('/?welcome=1');
     const secondUser = (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users`))[0]!.id;
     expect(secondUser).not.toBe(firstUser);
+    // Its account read says so: a new id under the same e-mail, which the page tells from the account before.
+    expect(await account(h, browser)).toMatchObject({ signedIn: true, user: { id: secondUser, email: user.email } });
     expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'account', leftToday: 3, limitToday: 5, leftThisMonth: 148 } });
     advance(MIN);
     expect((await ask(h, browser, 'Engine power loss again', { token: false })).status).toBe(202);
@@ -1399,7 +1410,7 @@ describe('account deletion', () => {
     expect(await rows(sql`SELECT count(*)::int AS n FROM idempotency WHERE principal_hash = ${accountKey}`)).toEqual([{ n: 0 }]);
     expect(await rows(sql`SELECT count(*)::int AS n FROM idempotency WHERE principal_hash = ${trialHash}`)).toEqual([{ n: 1 }]);
     // Kept: the anti-abuse record (HMAC only) through the month's window plus 7 days, and the charges.
-    expect(await abuseRecords()).toEqual([{ identity_hash: accountKey, retain_until: '2026-12-08T00:00:00.000Z' }]);
+    expect(await abuseRecords()).toEqual([{ identity_hash: accountKey, retain_until: RETAIN_UNTIL }]);
     expect({ reservations: await count('reservations'), ledger: await count('cost_ledger'), buckets: await count('usage_buckets') }).toEqual(kept);
     expect(await count('trial_identities')).toBe(1);
     // The account's brief is gone for good; nothing is left to read.
@@ -1457,7 +1468,7 @@ describe('deleting needs a recent Google sign-in (OWASP re-authentication)', () 
     expect((await send(h, 'POST', '/api/account/delete/start', { jar: thief, body: {} })).json).toEqual({ next: 'reauthenticate' });
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: thief, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
     expect(await count('auth_deletion_confirmations')).toBe(0);
-    expect(await account(h, browser)).toEqual({ signedIn: true, user: { name: user.name, email: user.email } });
+    expect(await account(h, browser)).toEqual({ signedIn: true, user: { id: await userIdOf(user.email), name: user.name, email: user.email } });
 
     // The owner signs in with Google again from the account page; Google is asked for this account.
     const url = await startSignIn(h, browser, DELETE_REAUTH_PATH);
@@ -1489,7 +1500,7 @@ describe('deleting needs a recent Google sign-in (OWASP re-authentication)', () 
     const url = await startSignIn(h, browser, DELETE_REAUTH_PATH);
     await callback(h, browser, google.authorize(url, other));
     expect(reauthLogs(h)).toEqual(['other_account']);
-    expect(await account(h, browser)).toEqual({ signedIn: true, user: { name: other.name, email: other.email } });
+    expect(await account(h, browser)).toEqual({ signedIn: true, user: { id: await userIdOf(other.email), name: other.name, email: other.email } });
     expect(await count('auth_deletion_confirmations')).toBe(0);
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
     expect(await count('auth_users')).toBe(2);

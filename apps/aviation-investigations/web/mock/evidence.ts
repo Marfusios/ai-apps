@@ -57,7 +57,12 @@
  *   response lost after it started (a replay of its key returns it without spending again);
  * - "undo fails": the search's first free undo is admitted, takes the one-use claim and then fails
  *   (a 503, which a replay of its key answers again): the server keeps the claim, so the search's
- *   undo is used and trying again uses one of the visitor's searches.
+ *   undo is used and trying again uses one of the visitor's searches;
+ * - "rating fails": the search's first rating fails (a 503), so a retry can be seen.
+ *
+ * Every reply that started a search says how each stage ended (`progress`, for its checklist:
+ * web/mock/evidence-progress.ts times the stages), and the owner's latest rating of a search is kept
+ * on it (`rate`, Task 25), without the question, for the admin overview's totals.
  */
 import {
   EVIDENCE_CANDIDATE_CEILING,
@@ -71,6 +76,7 @@ import {
   type EvidenceAutomaticFilters,
   type EvidenceCase,
   type EvidenceExcerpt,
+  type EvidenceFeedbackRating,
   type EvidenceNote,
   type EvidencePage,
   type EvidenceRelevance,
@@ -188,6 +194,14 @@ function lexicalText(ranking: EvidenceRankingVersion): 'question' | 'terms' | 'q
 /** How many leading results the configuration's reranker orders, or null without one. */
 function rerankDepth(ranking: EvidenceRankingVersion): number | null {
   return ranking.includes('-h100-') ? 100 : ranking.includes('-h50-') || ranking.includes('-s50-') ? 50 : null;
+}
+
+/** The configuration's reranker (server/evidence/ranking-config.ts): Haiku on the top 50 or 100, Sonnet on the top 50; null without one. */
+export function rerankerOf(ranking: EvidenceRankingVersion): { model: 'haiku' | 'sonnet'; depth: 50 | 100 } | null {
+  if (ranking.includes('-h50-')) return { model: 'haiku', depth: 50 };
+  if (ranking.includes('-h100-')) return { model: 'haiku', depth: 100 };
+  if (ranking.includes('-s50-')) return { model: 'sonnet', depth: 50 };
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -607,6 +621,8 @@ interface MockSearch {
   owner: MockReader;
   /** Reads answer 404 from now on ("expire" in the question). */
   expired: boolean;
+  /** The owner's latest rating of it (`POST /api/evidence/:id/feedback`), kept without the question. */
+  rating: EvidenceFeedbackRating | null;
 }
 
 /** A UTC instant, as the contract writes the search's times (`2026-10-25T22:13:00.000Z`). */
@@ -615,8 +631,25 @@ const stamp = (d: Date): string => d.toISOString();
 const error = (status: number, code: ErrorResponse['error'], message: string): MockReply<never> => ({ status, body: { error: code, message } });
 const NOT_FOUND = (): MockReply<never> => error(404, 'not_found', 'No AI search with that link is available. AI searches expire after 24 hours.');
 
-/** A reply to `POST /api/evidence`; `quotaExempt`: the search is the one free undo, so it uses none of the visitor's searches. */
-export type MockEvidenceReply = MockReply<CreateEvidenceResponse> & { quotaExempt?: boolean };
+/**
+ * How each stage of a search ended, for its checklist (web/mock/evidence-progress.ts times them):
+ * what the question stage gave (`skipped` for an edit), how many cases retrieval found (null when
+ * the search failed there) and the order (`skipped` without a reranker); `failedAt`: the stage a
+ * search admitted and then lost failed at (a 503 after admission).
+ */
+export interface MockStageOutcome {
+  question: 'suggestions' | 'note' | 'nothing_to_suggest' | 'unavailable' | 'skipped';
+  cases: number | null;
+  order: 'ai_relevance' | 'match' | 'skipped';
+  failedAt?: 'search';
+}
+
+/**
+ * A reply to `POST /api/evidence`; `quotaExempt`: the search is the one free undo, so it uses none
+ * of the visitor's searches; `progress`: how its stages ended, when it started any (a refusal or a
+ * replay starts none).
+ */
+export type MockEvidenceReply = MockReply<CreateEvidenceResponse> & { quotaExempt?: boolean; progress?: MockStageOutcome };
 
 type EditRequest = Extract<CreateEvidenceRequest, { kind: 'edited' }>;
 
@@ -689,6 +722,7 @@ export class MockEvidence {
       createdAt: this.now(),
       owner: this.visitor(),
       expired: false,
+      rating: null,
       ...fields,
     };
     this.searches.set(search.id, search);
@@ -749,7 +783,7 @@ export class MockEvidence {
    * search reads (`lexical`), marking `marked`; with a reranker, the leading ones in AI order.
    */
   private start(
-    fields: Omit<MockSearch, 'id' | 'cases' | 'order' | 'createdAt' | 'owner' | 'expired' | 'undoClaimed'>,
+    fields: Omit<MockSearch, 'id' | 'cases' | 'order' | 'createdAt' | 'owner' | 'expired' | 'undoClaimed' | 'rating'>,
     marked: string,
   ): MockSearch {
     const ranked = /\bnothing\b/i.test(fields.question) && !fields.edited ? [] : evidenceCases(fields.appliedFilters, fields.lexical, marked);
@@ -765,9 +799,29 @@ export class MockEvidence {
       createdAt: this.now(),
       owner: this.visitor(),
       expired: false,
+      rating: null,
     };
     this.searches.set(search.id, search);
     return search;
+  }
+
+  /** How the stages of a search that returned results ended (web/mock/evidence-progress.ts times them). */
+  private outcomeOf(search: MockSearch, scopeFailed: boolean): MockStageOutcome {
+    const question: MockStageOutcome['question'] = search.edited
+      ? 'skipped'
+      : search.note !== null
+        ? 'note'
+        : scopeFailed
+          ? 'unavailable'
+          : search.suggestion !== null
+            ? 'suggestions'
+            : 'nothing_to_suggest';
+    return { question, cases: search.cases.length, order: rerankDepth(this.config.ranking) === null ? 'skipped' : search.order };
+  }
+
+  /** The stages of a search admitted and then lost at retrieval (a 503 after admission). */
+  private failedOutcome(edited: boolean): MockStageOutcome {
+    return { question: edited ? 'skipped' : 'nothing_to_suggest', cases: null, order: rerankDepth(this.config.ranking) === null ? 'skipped' : 'match', failedAt: 'search' };
   }
 
   /**
@@ -823,7 +877,7 @@ export class MockEvidence {
         // Admitted as the free undo, its claim taken, then failed: the server keeps the claim.
         from.undoClaimed = true;
         this.failed.add(body.idempotencyKey);
-        return error(503, 'unavailable', 'AI search is temporarily unavailable.');
+        return { ...error(503, 'unavailable', 'AI search is temporarily unavailable.'), progress: this.failedOutcome(true) };
       }
       // Exactly the filters sent; the user's words when sent, the question's own when restored,
       // else the earlier search's query and words. No scope stage, so no suggestion and nothing
@@ -849,12 +903,12 @@ export class MockEvidence {
       // The parent's one free undo is used by this search, whatever happens next.
       if (free) from.undoClaimed = true;
       this.keys.set(body.idempotencyKey, { request, id: search.id });
-      return { status: 201, body: { kind: 'results', search: this.page(search, 1) }, quotaExempt: free };
+      return { status: 201, body: { kind: 'results', search: this.page(search, 1) }, quotaExempt: free, progress: this.outcomeOf(search, false) };
     }
     const q = body.question.toLowerCase();
     if (/\bunavailable\b/.test(q) && this.once('unavailable', q)) {
       this.unfinished.add(body.idempotencyKey);
-      return error(503, 'unavailable', 'AI search is temporarily unavailable.');
+      return { ...error(503, 'unavailable', 'AI search is temporarily unavailable.'), progress: this.failedOutcome(false) };
     }
     if (/\blost before start\b/.test(q) && this.once('lost-before-start', q)) {
       this.unfinished.add(body.idempotencyKey);
@@ -901,7 +955,7 @@ export class MockEvidence {
       marks === 'suggested_terms' && suggestion?.terms ? suggestion.terms : lexical,
     );
     this.keys.set(body.idempotencyKey, { request, id: search.id });
-    const created: MockEvidenceReply = { status: 201, body: { kind: 'results', search: this.page(search, 1) } };
+    const created: MockEvidenceReply = { status: 201, body: { kind: 'results', search: this.page(search, 1) }, progress: this.outcomeOf(search, scope === null && note === null) };
     if (/\bexpire/.test(q)) search.expired = true;
     return /\blost response\b/.test(q) && this.once('lost-response', q) ? { ...created, lost: true } : created;
   }
@@ -925,5 +979,29 @@ export class MockEvidence {
     const search = this.own(id);
     if (!search || !search.cases.some((c) => c.case.ntsbNo === ntsbNo)) return NOT_FOUND();
     return { status: 200, body: CASES[ntsbNo] as CaseDetail };
+  }
+
+  /**
+   * `POST /api/evidence/:id/feedback` → 204: the owner's rating of their search, the latest
+   * counting; only for its owner while it lives (404 otherwise). No quota and no provider call.
+   * "rating fails" in the question fails the search's first rating (a 503), so a retry can be seen.
+   */
+  rate(id: string, rating: EvidenceFeedbackRating): MockReply<null> {
+    const search = this.own(id);
+    if (!search) return NOT_FOUND();
+    if (/\brating fails\b/i.test(search.question) && this.once('rating-fails', search.id)) return error(503, 'unavailable', 'AI search is temporarily unavailable.');
+    search.rating = rating;
+    return { status: 204, body: null };
+  }
+
+  /** The ratings this mock was given, each search's latest (for the admin overview's totals). */
+  ratingCounts(): { useful: number; notUseful: number } {
+    let useful = 0;
+    let notUseful = 0;
+    for (const search of this.searches.values()) {
+      if (search.rating === 'useful') useful += 1;
+      else if (search.rating === 'not_useful') notUseful += 1;
+    }
+    return { useful, notUseful };
   }
 }

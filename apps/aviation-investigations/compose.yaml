@@ -10,7 +10,8 @@
 # extract:image) choose the project, env files and override files. Profiles: `app`
 # (aviation-app), `tools` (aviation-ingest, aviation-migrate, aviation-backup,
 # aviation-restore, extract-image; one-shot with `run --rm`), `tunnel` (cloudflared). Overrides: compose.tunnel.yaml (no app port, tunnel token
-# required) and compose.tracing.yaml (shared observability network).
+# required), compose.tracing.yaml (shared observability network), and
+# compose.dev-release.yaml (wrapper-pinned local release image for the dev canary).
 #
 # Containers get only the variables listed under their `environment`, never a
 # whole env file. `docker compose config` prints resolved secrets; use
@@ -118,6 +119,9 @@ services:
       # Peers whose proxy headers are trusted; compose.tunnel.yaml sets EDGE_SUBNET.
       TRUSTED_PROXY_CIDRS: ""
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      AIRCASE_ADMIN_EMAILS: ${AIRCASE_ADMIN_EMAILS:-}
+      AVIATION_IMPORTS_ENABLED: ${AVIATION_IMPORTS_ENABLED:-false}
+      APP_VERSION: ${APP_VERSION:-dev}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}

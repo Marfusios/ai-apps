@@ -18,7 +18,7 @@ export function localIsoDate(date: Date = new Date()): string {
 }
 
 /** `2024-10-16` → `16 Oct 2024`; shared with the server (its case descriptions). */
-export { formatDate } from '../../../shared/format';
+export { formatDate } from '../../../shared/format.js';
 
 /** `24291` → `24,291`. */
 export function formatCount(n: number): string {

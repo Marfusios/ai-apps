@@ -1,0 +1,11 @@
+[Unit]
+Description=Check NTSB snapshots daily
+
+[Timer]
+OnCalendar=*-*-* 05:30:00 Europe/Prague
+Persistent=true
+AccuracySec=1min
+Unit=aircase-importer.service
+
+[Install]
+WantedBy=timers.target

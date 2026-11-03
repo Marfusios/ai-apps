@@ -1,0 +1,12 @@
+# Explicit dev release mode only (scripts/compose.ts). Inspect the release once and
+# run that immutable local image ID; no build fallback and no registry pull.
+services:
+  aviation-app:
+    image: ${AVIATION_DEV_RELEASE_IMAGE_ID:?set by the compose wrapper}
+    build: !reset null
+  aviation-migrate:
+    image: ${AVIATION_DEV_RELEASE_IMAGE_ID:?set by the compose wrapper}
+    build: !reset null
+  aviation-ingest:
+    image: ${AVIATION_DEV_RELEASE_IMAGE_ID:?set by the compose wrapper}
+    build: !reset null

@@ -336,6 +336,8 @@ export class UnresolvedAliasError extends Error {
 }
 
 export interface RebuildCasesOptions {
+  /** Retain a verified import candidate before the builder gives up its liveness/pin. */
+  onReady?: (candidate: { index: string; buildId: string; generationId: number }) => Promise<void>;
   generationId: number;
   /** Index name prefix (`ELASTICSEARCH_INDEX_PREFIX`). */
   prefix: string;
@@ -565,6 +567,7 @@ export async function rebuildCasesIndex(es: Client, db: Db, opts: RebuildCasesOp
       await es.indices.putSettings({ index, settings: { refresh_interval: '1s' } });
       await es.indices.refresh({ index });
       await verifyIndex(es, index, expected, streamed);
+      await opts.onReady?.({ index, buildId, generationId });
 
       let switched;
       try {

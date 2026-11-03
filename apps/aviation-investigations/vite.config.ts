@@ -13,6 +13,8 @@ const apiTarget = process.env.WEB_DEV_API_URL || 'http://localhost:3000';
 const devPort = Number(process.env.WEB_DEV_PORT) || 5173;
 // WEB_MOCK_API=1 answers /api in the browser from the fixture mocks (dev server only).
 const mockApiRequested = process.env.WEB_MOCK_API === '1';
+// The scale of an AI search's simulated stage times in that mode: 1 (default) as long as live, 0 at once.
+const mockEvidenceTiming = Number(process.env.WEB_MOCK_EVIDENCE_TIMING || '1');
 
 export default defineConfig(({ command }) => {
   const mockApi = command === 'serve' && mockApiRequested;
@@ -29,7 +31,7 @@ export default defineConfig(({ command }) => {
     plugins: [
       react(),
       tailwindcss(),
-      mockApiEntry(mockApi),
+      mockApiEntry(mockApi, { evidenceTiming: Number.isFinite(mockEvidenceTiming) && mockEvidenceTiming >= 0 ? mockEvidenceTiming : 1 }),
       ...(mockApi ? [msw({ mode: 'worker-only' })] : []),
       cspHashGuard(CSP_SCRIPT_HASHES),
       preloadFont(/b612-latin-400-normal-[\w-]+\.woff2$/),

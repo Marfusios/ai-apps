@@ -11,6 +11,9 @@ import type { DatasetResolver } from '../dataset.js';
 import type { Db } from '../db/client.js';
 
 export interface ApiContext {
+  adminEmails?: readonly string[];
+  feedback?: ReturnType<typeof import('../evidence/feedback.js').feedbackExporter>;
+  progress?: import('../evidence/progress.js').EvidenceProgressStore;
   db: Db;
   es: Client;
   datasets: DatasetResolver;

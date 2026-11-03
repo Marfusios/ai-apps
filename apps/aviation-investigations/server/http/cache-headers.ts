@@ -11,7 +11,7 @@
  */
 
 /** Matched-route prefixes whose responses must never be stored, matched on path-segment boundaries. */
-export const NO_STORE_ROUTE_PREFIXES: readonly string[] = ['/ai', '/briefs', '/api/evidence', '/api/ai', '/api/briefs', '/api/auth', '/api/account'];
+export const NO_STORE_ROUTE_PREFIXES: readonly string[] = ['/api/admin', '/ai', '/briefs', '/api/evidence', '/api/ai', '/api/briefs', '/api/auth', '/api/account'];
 
 export const PRIVATE_NO_STORE = 'private, no-store';
 

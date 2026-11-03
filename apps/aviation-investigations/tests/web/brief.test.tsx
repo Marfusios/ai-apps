@@ -1903,8 +1903,8 @@ describe('Write-ahead keys: a reload while the request is in flight pays once (r
     fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*10 free$/ }));
     await waitFor(() => expect(posts.keys).toHaveLength(1), SLOW);
-    // In flight (the server waits for its scope stage): the button says so ...
-    expect(screen.getByRole('button', { name: 'Starting…' }).getAttribute('aria-busy')).toBe('true');
+    // In flight, its checklist showing (UI_DESIGN §4.10): the button says so ...
+    expect(screen.getByRole('button', { name: 'Searching…' }).getAttribute('aria-busy')).toBe('true');
     // ... and the key is already kept for this tab, under the request's hash.
     const id = await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION });
     expect(stored()).toEqual({ [id]: { key: posts.keys[0], at: expect.any(Number) } });

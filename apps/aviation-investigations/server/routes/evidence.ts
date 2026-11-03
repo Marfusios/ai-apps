@@ -1,4 +1,5 @@
 /** Private evidence search creation and free pagination. Matched routes enforce network limits. */
+import { rateEvidence } from '../evidence/feedback.js';
 import { autoFilterPolicy, autoFilterIdentity } from '../evidence/auto-filters.js';
 import { canUndo, isExpiredUndoClaim } from '../evidence/undo.js';
 import { initialExecution } from '../evidence/execution.js';
@@ -7,7 +8,7 @@ import { evidenceJson } from '../evidence/routing.js';
 import { randomUUID } from 'node:crypto';
 import { and, eq, gt, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { EVIDENCE_CONTRACT_VERSION, CreateEvidenceRequestSchema, CreateEvidenceResponseSchema, EvidencePageQuerySchema, EvidenceSearchIdSchema, type CreateEvidenceRequest } from '../../shared/contracts/evidence.js';
+import { EVIDENCE_CONTRACT_VERSION, EvidenceProgressSchema, EvidenceFeedbackRequestSchema, CreateEvidenceRequestSchema, CreateEvidenceResponseSchema, EvidencePageQuerySchema, EvidenceSearchIdSchema, type CreateEvidenceRequest } from '../../shared/contracts/evidence.js';
 import { CaseDetailSchema } from '../../shared/contracts/cases.js';
 import { NtsbNoSchema } from '../../shared/contracts/common.js';
 import { ACCOUNT_GONE, lockLiveAccount, withLiveAccount } from '../auth/lifecycle.js';
@@ -22,7 +23,7 @@ import { insertSearch, pageOf, readOwnedSearch, takeOverSearch, type EvidenceRow
 import { crossSite } from '../http/origin.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import { admitPaidRequest, forgetIdempotency, releaseQuota, setResultRef, type Admission } from '../quota/admit.js';
-import { principalHash, UnknownPrincipalError } from '../quota/policy.js';
+import { principalHash, networkHash, UnknownPrincipalError } from '../quota/policy.js';
 import { settle } from '../quota/settle.js';
 import { setLockTimeout } from '../quota/locks.js';
 import { billing, checkAnonymousRetry, readersOf, sendRejection, visitor } from './briefs.js';
@@ -67,6 +68,11 @@ async function replay(ctx: ApiContext, request: FastifyRequest, reply: FastifyRe
 
 export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: string): void {
   const origin = new URL(appUrl).origin;
+  const progressBinding = (who: Awaited<ReturnType<typeof visitor>>, request: FastifyRequest): string | null => {
+    if (who.account) return `account:${who.account.hash}`;
+    if (who.trial) return `trial:${who.trial.hash}`;
+    return ctx.ai?.policy && request.networkIdentity ? `network:${networkHash(ctx.ai.policy, request.networkIdentity)}` : null;
+  };
   async function create(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
     if (crossSite(request, origin)) return sendError(reply, 403, 'forbidden');
     const parsed = CreateEvidenceRequestSchema.safeParse(request.body);
@@ -81,6 +87,8 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     const runtime = { ai: { ...ai, policy: ai.policy, llm: ai.llm, trials: ai.trials } };
     const { current: requestHash, legacyV2 } = evidenceRequestHashes(body);
     let who = await visitor(ctx, request);
+    // Captured before billing can create a trial: polls present the original identity.
+    const binding = progressBinding(who, request);
     // Replay before availability/budget checks, with a fresh anonymous Turnstile token.
     for (const reader of readersOf(who)) {
       const earlier = await ctx.db.execute(sql`SELECT request_hash, result_ref FROM idempotency
@@ -196,8 +204,11 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     // The admitted operation survives a lost response. Its result remains replayable;
     // only deletion, shutdown or the server deadline may stop paid work.
     svc.runs.set(row.id, { controller });
+    const checklist = binding ? ctx.progress?.start(binding, body.idempotencyKey, row.id, row.data.edited || admission.skipScope === true, Boolean(ranking.rerank), {hash: row.readOwner, kind: row.readOwnerKind}) : undefined;
+    let finished = false;
     try {
-      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(ranking.deadlineMs)]));
+      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(ranking.deadlineMs)]), checklist?.observer);
+      finished = true;
       const current = await visitor(ctx, request);
       // A newly issued trial cookie is on the response, not yet on this request.
       // Sessions are re-read; only the trial just proved/issued by billing can be carried forward.
@@ -208,10 +219,38 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
       request.log.warn({ outcome: 'failed' }, 'evidence request unavailable');
       return sendError(reply, 503, 'unavailable');
     } finally {
+      checklist?.finish(finished);
       svc.runs.delete(row.id);
     }
   }
   app.post('/api/evidence', async (request, reply) => ctx.evidence ? ctx.evidence.track(() => create(request, reply)) : create(request, reply));
+  app.post<{ Params: { id: string } }>('/api/evidence/:id/feedback', async (request, reply) => {
+    if (crossSite(request, origin)) return sendError(reply, 403, 'forbidden');
+    const id = EvidenceSearchIdSchema.safeParse(request.params.id);
+    const body = EvidenceFeedbackRequestSchema.safeParse(request.body);
+    if (!body.success) return sendError(reply, 400, 'bad_request');
+    if (!id.success || !ctx.ai) return notFound(reply);
+    const who = await visitor(ctx, request), readers = readersOf(who);
+    const write = (tx: Parameters<typeof rateEvidence>[0]) => rateEvidence(tx, id.data, readers, body.data.rating, ctx.ai!.now());
+    const changed = who.account ? await withLiveAccount(ctx.db, who.account, write) : await ctx.db.transaction(write);
+    if (changed !== true) return notFound(reply);
+    // No content or identity reaches Langfuse; failures never block this response.
+    ctx.feedback?.enqueue(id.data);
+    return reply.code(204).send();
+  });
+  app.get<{ Params: { key: string } }>('/api/evidence/progress/:key', async (request, reply) => {
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(request.params.key) || !ctx.ai) return notFound(reply);
+    const binding = progressBinding(await visitor(ctx, request), request);
+    const found = binding ? ctx.progress?.read(binding, request.params.key) : null;
+    if (found) {
+      // The request's capability and arrival identity matched. Invalidate it on deletion,
+      // expiry or handover, without ever minting a trial during a poll.
+      const owned = await ctx.db.select({ id: evidenceSearches.id }).from(evidenceSearches).where(and(eq(evidenceSearches.id, found.searchId),
+        eq(evidenceSearches.readOwner, found.owner.hash), eq(evidenceSearches.readOwnerKind, found.owner.kind), gt(evidenceSearches.expiresAt, ctx.ai.now())));
+      if (owned.length) return reply.type(JSON_TYPE).send(JSON.stringify(EvidenceProgressSchema.parse(found.progress)));
+    }
+    return notFound(reply);
+  });
   app.get<{ Params: { id: string } }>('/api/evidence/:id', async (request, reply) => {
     const id = EvidenceSearchIdSchema.safeParse(request.params.id), query = EvidencePageQuerySchema.safeParse(request.query ?? {});
     if (!id.success || !ctx.ai) return notFound(reply);

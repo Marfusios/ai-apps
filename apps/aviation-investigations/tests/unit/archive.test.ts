@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import yazl from 'yazl';
@@ -45,6 +45,7 @@ describe('extractMember', () => {
     const path = await extractMember(zip, 'avall.mdb', out, LIMITS);
     expect(path).toBe(join(out, 'avall.mdb'));
     expect(readFileSync(path)).toEqual(mdb);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
   it('rejects traversal member ../evil.mdb', async () => {

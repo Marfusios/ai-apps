@@ -9,6 +9,7 @@ import yauzl from 'yauzl';
 export interface ArchiveLimits {
   maxCompressed: number;
   maxExpanded: number;
+  beforeWrite?: (bytes: number) => Promise<void>;
 }
 
 export const DEFAULT_LIMITS: ArchiveLimits = {
@@ -80,7 +81,7 @@ export async function extractMember(
   const zf = await openZip(zipPath);
   const target = join(outDir, member);
   // Exclusive create: if the file already exists this call neither writes nor deletes it.
-  const handle = await open(target, 'wx', 0o644).catch((err: unknown) => {
+  const handle = await open(target, 'wx', 0o600).catch((err: unknown) => {
     zf.close();
     throw err;
   });
@@ -108,7 +109,8 @@ export async function extractMember(
         }
         total += chunk.length;
         if (total > limits.maxExpanded) return cb(new Error(`expanded size exceeds limit ${limits.maxExpanded}`));
-        cb(null, chunk);
+        if (limits.beforeWrite) void limits.beforeWrite(chunk.length).then(() => cb(null, chunk), cb);
+        else cb(null, chunk);
       },
     });
     await pipeline(input, guard, handle.createWriteStream());

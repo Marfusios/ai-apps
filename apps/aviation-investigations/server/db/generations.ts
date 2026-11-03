@@ -141,12 +141,13 @@ export const LIFECYCLE_STATEMENT_TIMEOUT_MS = 10 * 60_000;
 export async function withLifecycleLock<T>(
   db: Db,
   fn: (q: NodePgDatabase<Schema>, client: import('pg').PoolClient) => Promise<T>,
-  opts: { statementTimeoutMs?: number } = {},
+  opts: { statementTimeoutMs?: number; outerLockKey?: number } = {},
 ): Promise<T> {
   const timeoutMs = opts.statementTimeoutMs ?? LIFECYCLE_STATEMENT_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new Error('statementTimeoutMs must be a positive integer');
   const client = await db.$client.connect();
   let locked = false;
+  let outerLocked = false;
   let broken: Error | undefined;
   const discard = (e: unknown): void => {
     broken = e instanceof Error ? e : new Error(String(e));
@@ -156,11 +157,16 @@ export async function withLifecycleLock<T>(
   client.on('error', discard);
   try {
     await client.query(`SET statement_timeout = ${timeoutMs}`);
+    if (opts.outerLockKey !== undefined) {
+      await client.query('SELECT pg_advisory_lock($1)', [opts.outerLockKey]);
+      outerLocked = true;
+    }
     await client.query('SELECT pg_advisory_lock($1)', [LIFECYCLE_LOCK_KEY]);
     locked = true;
     return await fn(drizzle({ client, schema }), client);
   } finally {
     if (locked) await client.query('SELECT pg_advisory_unlock($1)', [LIFECYCLE_LOCK_KEY]).catch(discard);
+    if (outerLocked) await client.query('SELECT pg_advisory_unlock($1)', [opts.outerLockKey]).catch(discard);
     if (!broken) await client.query('RESET statement_timeout').catch(discard);
     client.off('error', discard);
     client.release(broken);

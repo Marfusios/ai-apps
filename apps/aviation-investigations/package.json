@@ -18,6 +18,7 @@
     "provision:shared": "tsx scripts/provision-shared.ts",
     "test:pg16": "tsx scripts/test-pg16.ts",
     "app:up": "tsx scripts/compose.ts app-up",
+    "app:release": "node --import tsx scripts/release.ts",
     "app:down": "tsx scripts/compose.ts app-down",
     "app:ps": "tsx scripts/compose.ts app-ps",
     "app:migrate": "tsx scripts/compose.ts migrate",
@@ -48,7 +49,8 @@
     "mock:build": "tsx scripts/build-mock-api.ts",
     "brand:build": "tsx scripts/build-brand-assets.ts",
     "test:e2e": "playwright test",
-    "test:e2e:real": "playwright test -c playwright.real.config.ts"
+    "test:e2e:real": "playwright test -c playwright.real.config.ts",
+    "importer": "tsx worker/importer/host.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.137.0",

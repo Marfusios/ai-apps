@@ -16,6 +16,7 @@ import type { EvidenceRetriever, EvidenceRetrievalResult } from './retrieve.js';
 import { applyRerank, buildRerankInput } from './rerank.js';
 import { RankingStopped, rankingFailureOutcome, type RankingFailureOutcome } from './outcomes.js';
 import { RankingSpendError, type RankingCall, type RankingSpendGate } from './spend.js';
+import { questionQuery, remainingSuggestion } from './disclosure.js';
 
 export type LexicalSource = 'question' | 'terms' | 'question+terms' | 'fallback_question';
 export interface ExecutedTexts { lexical: string; vector: string }
@@ -33,6 +34,9 @@ export interface RankingExecution {
   autoFilterReason: AutoFilterReason;
 }
 export interface RankingObserver {
+  onQuestion?: (result: 'suggestions' | 'note' | 'nothing_to_suggest' | 'unavailable', failed: boolean) => void;
+  onRetrieved?: (cases: number) => void;
+  onOrdered?: (applied: boolean, skipped: boolean) => void;
   onExecution?: (execution: RankingExecution) => void;
   onStage?: (stage: RankingPhase) => void;
   onFallback?: (failure: { stage: 'scope' | 'rerank'; outcome: RankingFailureOutcome }) => void;
@@ -180,6 +184,15 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
     const { state: _applied, ...filters } = suggestion.filters;
     suggestion = { ...suggestion, filters };
   }
+  // Use the page's disclosure rule: terms already executed as keywords and filters
+  // already applied are no longer suggestions. Edited searches stay skipped.
+  if (!input.edited) {
+    const visible = remainingSuggestion(questionQuery(lexicalSource, addedTerms), suggestion);
+    const failed = !['used', 'non_search', 'skipped'].includes(scopeOutcome);
+    try {
+      observer.onQuestion?.(failed ? 'unavailable' : visible ? 'suggestions' : note ? 'note' : 'nothing_to_suggest', failed);
+    } catch { /* progress is optional */ }
+  }
   const execution: RankingExecution = { executed, lexicalSource, addedTerms, appliedFilters, automaticFilters: automatic.filters,
     autoFilterPolicy: autoFilterIdentity(policy), autoFilterReason: automatic.reason };
   enter('retrieval');
@@ -214,6 +227,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
   if (!result || retrieveError) throw new RankingFailure('retrieve', [...usage]);
   if (result.cases.length !== result.ranking.length || new Set(result.cases.map(c => c.case.ntsbNo)).size !== result.cases.length ||
       result.cases.some((c, i) => c.case.ntsbNo !== result!.ranking[i]!.ntsbNo)) throw new RankingFailure('retrieve', [...usage]);
+  try { observer.onRetrieved?.(result.cases.length); } catch { /* progress is optional */ }
   let rerankOutcome: RerankOutcome = config.rerank ? input.uncertainAllowanceReached ? 'skipped_uncertain_allowance' : 'empty' : 'disabled';
   const r = config.rerank;
   if (r && !input.uncertainAllowanceReached && result.cases.length) {
@@ -244,5 +258,6 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
       }
     }
   }
+  try { observer.onOrdered?.((rerankOutcome as RerankOutcome) === 'applied', ['disabled', 'empty', 'skipped_uncertain_allowance'].includes(rerankOutcome)); } catch { /* progress is optional */ }
   return { ...result, ...execution, configuration, suggestion, note, scopeOutcome, rerankOutcome, usage };
 }

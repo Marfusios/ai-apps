@@ -358,7 +358,8 @@ Switching themes (Proposed):
   headers keep their heights; on a tablet the header grows by the line (about
   19px; more where touch targets make the first line taller). It does not
   print (§7).
-- Explore and Dashboard navigation, with the active item underlined in blue
+- Explore and Dashboard navigation, with the active item underlined in blue; for an account the
+  server lists as an admin, "Admin" after them, in the phone menu too (§4.12, Task 25)
 - the AI counter (§5)
 - the Day/Night switch
 - Sign in, or when signed in a person icon linking to the Account page (its name is "Account"; the word shows beside it in the phone menu; Owner, 2026-10-24)
@@ -397,6 +398,7 @@ lives in the URL:
 | `/compare?cases=A,B,C,D&brief=:id&step=n` | Compare plus that brief step's AI columns |
 | `/dashboard?…cohort…` | Dashboard |
 | `/account`, `/privacy`, `/about` | Account, privacy and about pages |
+| `/admin` | The admin page (§4.12): only for an admin account, private and not indexed; for everyone else the ordinary not-found page |
 
 A brief ID in a shared link reveals nothing to another user.
 
@@ -741,6 +743,8 @@ partial answer text. Whether to use polling or SSE is a Builder decision.
 
 Cancel still counts as a search (Owner-approved).
 
+The AI evidence view (§4.9) has a checklist of its own while a search runs: §4.10.
+
 ### 4.5 Case drawer: "Story order" (Owner)
 
 The drawer opens from the right over the results. It is about 58% of the viewport
@@ -939,7 +943,17 @@ then state the processed cohort (DESIGN §5).
     deleted.
 - **Privacy page:** plain-language processing notice, linked from the footer
   and the sign-in dialog. The owner approved the final text on 24 October 2026
-  (Owner), amended on 31 October 2026 to say Claude also orders the investigations found; it was checked statement by statement against the code and is the
+  (Owner), amended on 31 October 2026 to say Claude also orders the investigations found and (Task 25, in the
+  controller's wording after the security review, pending the owner's approval) what is kept of a rating
+  of an AI search, where and for how long (§4.11): with the search for its 24 hours; on the search's
+  trace, kept 30 days, which AirCase can match to the search while the search is kept; and in daily
+  totals linked to no one and no search, kept with no set end; that cost and search-usage records
+  without content, a deleted account's too, are kept 90 days; that the daily backups (14 days) hold
+  those records and totals, trace backups are kept 7 days, and a backup can keep data for those days
+  after it is deleted from the site; measuring search quality as a legitimate interest; and that the
+  operator can see each account's name, e-mail address, sign-up and last sign-in times and AI search
+  counts on a private admin page (§4.12).
+  It was checked statement by statement against the code and is the
   authority on what the site keeps (who is responsible, the site's four cookies,
   what the server, accounts and AI searches keep, the processors, retention,
   legal bases and rights). It names Cloudflare Turnstile (Task 22 review W-14):
@@ -1198,6 +1212,150 @@ case sheet (§6).
 accounts 50 a day, new accounts 20 a day for their first 3 days, 600 a month, reset 00:00 UTC) and the
 visitor's own counts in `/api/ai/status`. Without them a line leaves the number out (§5).
 
+### 4.10 While an AI search runs: "Search checklist" (Task 25, Proposed)
+
+The checklist of §4.4, adapted to the evidence view. While `POST /api/evidence` runs, for a question
+(Ask AI on Home, Explore or the gone page) and for an edit (Search again, Apply) alike, a checklist
+card shows where the visitor waits: under the box or the nudge Ask AI was pressed in, or, for an
+edit, under "Your search" and the suggestion. It goes once the POST settles: the results open, or
+the notice box under the control says what happened. It also goes, and reads nothing more, as soon
+as the visitor changes (a sign-out, a deletion, another account, Task 25b): the search is the
+previous visitor's, and its answer opens nothing. Leaving the page takes it too.
+
+- **Header bar:** ink background, paper text (the engraved placard at night, as §4.4), the title
+  "SEARCH CHECKLIST", and on the right the time since the request left ("0:04"), not announced.
+- **Rows:** B612 Mono with dotted leaders to the result:
+
+  | Row | Result |
+  | --- | --- |
+  | Question | READ · SUGGESTIONS READY, READ · NOTHING TO SUGGEST, NOTE ADDED (a capability note), NOT AVAILABLE (the stage failed: no suggestion); READ when the stage ended without saying what came of it; SKIPPED when the server did not read the question; SKIPPED · YOUR EDIT for an edit, from the start |
+  | Search 24,291 investigations (the default cohort from `/api/config`) | 21 CASES (1 CASE); DONE without a count; DIDN'T FINISH |
+  | Order the leading results | ORDERED BY AI, MATCH ORDER; DONE when the stage ended without its kind of order; NOT USED without an AI reranker |
+
+- Each row fills in its real result as its stage ends, with a magenta ✓ (a stage with nothing to
+  give, or not run, gets none and stays muted). The row under way has the faint magenta wash and a
+  magenta "IN PROGRESS"; rows not reached are muted with "—". The ✓ ticks in over 180ms; with reduced
+  motion it appears at once.
+- **Note under the card:** "AirCase shows NTSB investigations; nothing is written by AI. Usually 5–10
+  seconds." Live takes 5–7 s: the check and admission, then the question about 1.5 s, the embedding and
+  retrieval about 1.7 s and the AI rerank of the top 50 about 2.7 s.
+- **Progress:** read from `GET /api/evidence/progress/:key` with the POST's own idempotency key about
+  every 500 ms while the POST runs, and never after it settles. A 404 is normal until the server has
+  registered the search (after the Turnstile check and admission, a second or two) and is read through
+  for the whole wait, once a second after ten in a row (a network identity that changed mid-search
+  leaves 404s throughout). A 429 is waited out in full, its whole `Retry-After`, never less; one over
+  30 s ends the reading, and the card stays as it is until the POST settles. Nothing reads sooner: no
+  read on focus or reconnect, and a read asked for within the wait (a reset, a replay of the same key)
+  sends nothing; once the server's own deadline has passed, a replay of the key reads again. Until the
+  first answer the card is unticked: no row under way. Statuses and counts only, never model text.
+- **Announcements:** each completion once, through a polite live region ("Question read: suggestions
+  ready.", "Search done: 21 cases.", "Leading results ordered by AI."; "Question read." and "Leading
+  results in order." for a stage that ended without its result). Stages that end between two reads are
+  announced together, in order. Skipped rows are not announced.
+- It works at phone width (a result that does not fit wraps under its row's leader) and in both themes,
+  and it does not print. The control that sent the request says "Searching…" (busy and off) while the
+  card shows, and "Starting…" only in the moment before it appears. The card's code starts loading as
+  the search starts, before its Turnstile check, so it is there by the time the request leaves; if it
+  cannot load, the search goes on without a card and the control stays "Starting…", busy.
+
+### 4.11 Rating a search (Task 25, Proposed)
+
+On the results sheet, under the results and the line that says when the search is deleted: "Was
+this search useful?" and two chips, "Useful" and "Not useful" (the filter chip's shape; the chosen
+one filled blue and `aria-pressed`). A click sends `POST /api/evidence/:id/feedback` (no AI search
+used); while it is on its way the line beside them says "Saving…", and once the server has it the
+chip is chosen and the line says "Thanks — noted.". The reader can change it, the latest counting;
+the chosen one clicked again sends nothing. The page keeps what it sent, per search, in memory only
+(the server never sends a rating back): after a reload the search shows unrated again, and a
+sign-out forgets it. A rating that did not save says "Your rating didn't save." with Try again (the
+rating the server has stays chosen); a search that is gone says "This search is no longer available,
+so it can't be rated." It does not print. The privacy notice says "If you rate an AI search, AirCase
+keeps the rating with that search for its 24 hours and adds it to the search's trace; it also counts
+it in daily totals that aren't linked to you or your search, to measure search quality." (§4.8).
+
+### 4.12 Admin (Task 25, Proposed)
+
+For the accounts the server lists as admins (`/api/account` `isAdmin`). The header's navigation adds
+"Admin" after Dashboard, in the phone menu too; with three links the navigation sits a little closer on
+a tablet, so the AI counter keeps its room. `/admin` is private (its data is the visitor's and is
+forgotten on sign-out) and not indexed. For everyone else, signed in or not, it is the ordinary
+not-found page, as the API answers them 404. Everything on it comes from `GET /api/admin/overview`, in
+plain words and formatted numbers; times are in the viewer's own time zone, named once.
+
+- **Head:** "Admin", "Figures as of 31 Oct 2026, 18:50. Times are in your time zone, Europe/Prague.",
+  Refresh, and links to the four sections, each a card with a serif heading.
+- **Users:** "Accounts" and "New in the last 7 days"; then every account, most recently active first:
+  name (with an "Admin" tag), e-mail, joined, last sign-in, last AI search, and AI searches today and
+  over 7, 30 and 90 days (usage records are kept 90 days). A table from 640px; on a phone each account
+  is a block of labelled lines ("10 in 7 days"). A missing time is "—", said "None" or "Never".
+- **Usage:** AI searches, active trials, active accounts, free undos and failed searches over the last
+  30 days; "AI searches per UTC day, last 30 days" as four small multiples in chart blue, one series
+  each, so no row needs a colour of its own (trials and accounts share a scale; free undos and failed
+  searches each have their own), today hatched as data still coming in, a band and a tooltip for the
+  day under the pointer or picked with the arrow keys, and "Show the figures" for the same as a table;
+  then "Search ratings": useful, not useful and the share rated useful, all time and over 30 days (a
+  share of no ratings is "—", said "None").
+- **Costs:** today (UTC), this month to date, last month, per AI search this month ("—", said "None",
+  with no searches) and uncertain charges (kept at the reserved cost); the budgets as meters on a
+  track of their own wash (all AI spend this month, interactive this month, interactive today against
+  today's interactive spend, indexing and evaluation this month), each with "$12.37 of $100.00 · 12%"; this month by category (bars) and by
+  stage, with provider and model, most expensive first. Small sums show to the hundredth of a cent
+  ("$0.0086").
+- **System:** the app (version, environment, started, with its uptime); AI search (on or off, without an
+  account, account checks, the ranking in plain words, "The question as asked; AI reranks the top 50",
+  with its identifier under it, and the automatic filters likewise); tracing (on or off, the last
+  export, failed exports); the dataset (NTSB snapshot, loaded, published, cases, generation); and the
+  automatic import (below).
+- **Automatic import** (Task 28, owner-approved): the server owns status and severity.
+  At the top of Admin, replace the former pointer with a box only while an alert exists:
+  “Automatic import is delayed” (ink edge), or “Automatic import needs a fix” (magenta edge
+  and title). Use short fixed sentences: what happened, which data still serves, and what
+  happens next. Live held by dev names the dev failure. A live count refusal after dev
+  completes says “Dev has the new file. Live still has the previous file.” Unknown recovery
+  says the site may show mixed data. “Restored” requires the previous site's checks to pass.
+  A committed switch-back with outstanding checks says “AirCase switched back to the data
+  from <date>. Its site check has not passed yet.” and retries those checks daily.
+  Completed imports with later incidents remain done, with the incident described separately.
+  - Technical details (result/reason/step, viewer-zone time, run, file date, code/image,
+    originating dev run) appear only in the mono details line and “Copy details”. The line
+    abbreviates IDs; Copy details keeps them complete. If clipboard copying fails, the
+    selectable line expands to the same full details. Refresh resets the copy result. Long IDs
+    wrap without horizontal overflow. Copy success/failure is announced with `aria-live`.
+    No approval controls, resolution commands or neutral notices appear.
+  - Overdue uses the run **start**: “No import check has run since ⟨date, time⟩.” after
+    36 hours while enabled. Temporary failures on 3 distinct schedule-zone dates give
+    delayed; 7 dates give fix. A single bad day appears only in Recent runs. The monthly
+    budget follows 3/7 and says it continues on the first of next month. Overdue takes
+    precedence over an earlier file issue or hold, keeping that cause in Waiting and details and any active holds in the alert text.
+    The delay’s Since date is its first unresolved temporary failure. A fix uses the first
+    unresolved date with the latest issue’s reason and origin.
+  - **System → Automatic import:** chip Working / Delayed / Needs a fix / Off, plus one
+    line. Off says “Automatic import is turned off.” and has no alert. Healthy says
+    “Each new NTSB file goes in by itself.” Overdue says “No check since <date, time>.”;
+    unreadable status says “The status could not be read.”; monthly budget says
+    “Since <date>. Continues on the 1st of next month.”; other daily retries say
+    “Since <date>, retrying daily.”, and other known start dates say “Since <date>.” Unknown starts say “Start date unknown.”
+  - **Facts:** Data on the site (NTSB date, import or checked restoration time); Last check,
+    or Last good check while alerted; Waiting (file not yet imported); Next check with
+    “Every day at 05:30, Europe/Prague”. Times use the viewer's zone; the source's date is
+    never timezone shifted. Missing metadata says “Not recorded”. An unreadable status
+    shows every fact and the runs as “Unknown: the status could not be read.” instead, even
+    while Off (`readable: false`, no alert).
+    Off shows “None” for Next check. Waiting includes the fixed plain reason for the stop.
+    Without an incident it says “Not imported yet”; temporary reasons say “Not imported
+    yet: the system tries again every day”.
+  - **Recent runs:** newest first, at most 20, a responsive time/outcome/cost list. An import
+    says “Imported the 1 Nov 2026 file: 152 new cases, 501 updated, 2 removed”. Costs are
+    the artifact's total across attempts, shown only for published imports. Failed, deferred
+    and waiting rows never repeat that amount as though they incurred a new charge. Waiting
+    says “No new file. The 1 Dec 2026 file waits for a fix.” A healthy check says “No new
+    file.” All causes have fixed wording in `features/admin/imports.ts`; no raw enums or
+    IDs appear outside technical details. Only failed and cancelled rows use magenta.
+- A failed read says "The admin figures didn't load." with Try again. When who is signed in cannot be
+  read (the account read and its retry failed, Task 25b), the page says "This page didn't load." and
+  "Check your connection and try again." with Try again, rather than not-found; an account the server
+  says is not an admin still gets not-found.
+
 ## 5. States and copy (Owner-approved)
 
 **AI counter in the header:**
@@ -1244,7 +1402,7 @@ the tab gets focus until it can (Task 22).
 | Moment | Copy and behaviour |
 | --- | --- |
 | First Ask AI, anonymous | Panel titled "Quick check before your first AI search", with "Up to ten free AI searches a day, subject to daily availability. Search, cases and comparisons never need this." (Task 23: the number and "a day" from `aiLimits`; with the visitor's status only, "Up to ten free AI searches, subject to daily availability."; with neither, "Free AI searches are subject to daily availability.") The Turnstile widget sits inside it. The explanation is shown once per trial identity. |
-| Later anonymous AI requests (Proposed) | Every anonymous AI request, including refinements and retries, needs a fresh single-use Turnstile token (DESIGN §8: tokens expire after five minutes). The page keeps an invisible or managed widget and gets a new token at click time. The button shows "Checking…" briefly, then "Starting…" while the request is on its way (Task 22, Proposed: the server answers once the scope stage is done, a few seconds). Only if Cloudflare demands interaction does the panel reappear, titled "Quick check before this AI search". The server validates every token; an expired or reused token fails before any spend. |
+| Later anonymous AI requests (Proposed) | Every anonymous AI request, including refinements and retries, needs a fresh single-use Turnstile token (DESIGN §8: tokens expire after five minutes). The page keeps an invisible or managed widget and gets a new token at click time. The button shows "Checking…" briefly, then "Starting…" while the request is on its way (Task 22, Proposed: the server answers once the scope stage is done, a few seconds), and for an AI search "Searching…" once its checklist shows (§4.10, Task 25). Only if Cloudflare demands interaction does the panel reappear, titled "Quick check before this AI search". The server validates every token; an expired or reused token fails before any spend. |
 | Trial used up | "That was your tenth free AI search today." / "Sign in with Google to keep asking. New accounts start with 20 AI searches a day, rising to 50 after three days." / [Continue with Google] / "Free AI searches return at 00:00 UTC. Search, case pages, compare and the dashboard stay open without an account." Shown **only while signed-in capacity remains**. Task 23: the anonymous allowance is daily; every number comes from `aiLimits` and the time from the status's `retryAt`, and a line the API gives no number for leaves it out ("Sign in with Google to keep asking."). Where sign-in is not offered (Task 22, Proposed): "That was your tenth free AI search today." / "Free AI searches return at 00:00 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. |
 | AI paused for today | Ink-edged box: "AI search is done for today." / "This beta runs on a small daily AI budget, and today's is used up. It resets at 00:00 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. Shown to everyone, signed in or not. This is a normal state. Proposed variants: for the monthly budget, "AI search is done for this month." / "It returns on {date}."; for maintenance or a provider outage, "AI search is temporarily unavailable." with no time promised. |
 | Operational question (briefs; an evidence search shows its results under the `operational_advice` capability note instead, §4.9) | Blue-edged box: "This tool studies past investigations." / "It can't help with a flight in progress or a maintenance decision. In flight, contact ATC. For airworthiness, use your aircraft's approved data and a certificated mechanic." / "You can still look for past cases like yours:" plus two blue suggestion chips. Static text; no AI-written advice. |
@@ -1364,6 +1522,7 @@ browser with the same stylesheet. Print uses:
 - the footer "Not an NTSB service · Source: NTSB · printed {date}", then the credit
   line "Built by Mariusz Kotas · mkotas.cz" (the website prints as text)
 - strips that never split across pages
+- the search checklist (§4.10) and the rating control (§4.11) do not print
 - the AI evidence view (§4.9) with its heading, notice, capability note, what was searched ("Your
   search") and its cards whole (long paragraphs print open); the suggestion, the hint and the controls
   do not print
@@ -1378,12 +1537,15 @@ Target **WCAG 2.2 AA**.
 - **Drawer and sheets:** `role="dialog"` with `aria-modal`. Focus moves to the
   headline, Esc closes, focus returns to the trigger, and the prev/next buttons
   have accessible names.
-- **Checklist:** stage completions are announced through `aria-live="polite"`.
+- **Checklist:** stage completions are announced through `aria-live="polite"`, the brief's and the
+  search checklist's (§4.10) alike.
   The timer is not announced.
 - **Charts and facets:** every bar is a real button with a full accessible name,
   e.g. "Landing, 7,849 investigations, 32 percent. Open these cases." Each chart
   keeps its sentence as a visible caption. The year chart and map have a
-  visually hidden table or summary.
+  visually hidden table or summary. The admin page's usage chart (§4.12) reads a
+  day at a time with the arrow keys, says it politely, and has its table a click
+  away ("Show the figures").
 - **Focus:** a visible 2px focus ring. The page is fully usable by keyboard,
   with a logical order.
 - **Reflow and targets:** the layout reflows at 320px width and at 200% text
@@ -1588,3 +1750,32 @@ counting rules.
   server has briefs off; and, from the UI review, dashed "not searched yet" draft chips, the
   suggestion's buttons held off over a pending draft, "highest-ranked first", and the strip
   placeholder and "Part of your search didn't load…" in Compare.
+- Builder calls (Task 25), for the owner's review: the search checklist's title, rows, results,
+  note and announcements, and "Searching…" on the control while it shows (§4.10); "Was this search
+  useful?", "Useful", "Not useful", "Saving…", "Thanks — noted.", "Your rating didn't save." and "This
+  search is no longer available, so it can't be rated." (§4.11); the admin page's copy and layout, its
+  plain words for the ranking and automatic-filter identifiers among them (§4.12). And the privacy
+  notice's Task 25 wording, the controller's after the security review (condition 2), pending the
+  owner's approval (§4.8): the traces sentence "Search traces (timings, counts, AI cost and errors, and
+  a search's rating if you give one) hold no search words or identities; for the 24 hours a search is
+  kept, AirCase can match it to its trace."; the deletion paragraph's "Two records stay, under a one-way
+  code: the account's AI search counts, so signing up again doesn't reset its limits, and cost and
+  search-usage records without content."; "If you rate an AI search, AirCase keeps the rating with that
+  search for its 24 hours and adds it to the search's trace; it also counts it in daily totals that
+  aren't linked to you or your search, to measure search quality."; "The site's operator can see each
+  account's name, e-mail address, sign-up and last sign-in times and AI search counts on a private
+  admin page."; the retention items "AI searches, with their ratings, and their retry records: 24
+  hours.", "Daily rating totals, not linked to you or a search: kept with no set end.", "Cost and
+  search-usage records, without content (a deleted account's too): 90 days.", "Traces, with any rating
+  on them: 30 days." and the backups item (counters, free-search, cost and search-usage records and
+  daily rating totals; "Trace backups are kept 7 days. A backup can keep data for those days after it
+  is deleted from the site."); and "Running and securing the site, and measuring search quality (…
+  traces, ratings, backups), relies on our legitimate interest…".
+- Builder calls (Task 25b), for the owner's review: the checklist's neutral results for a stage that
+  ended without its result, READ (the question) and DONE (the order), said "Question read." and
+  "Leading results in order."; stages that end between two reads announced together; and the admin
+  page's "This page didn't load." when who is signed in cannot be read (§4.10, §4.12).
+- Task 28 replaces the earlier importer notice proposals with the automatic policy in
+  §4.12 and docs/IMPORTER.md: no approvals, automatic recovery, durable delayed/fix alerts,
+  and fixed plain-language explanations. Mock states cover healthy, delayed, fix and every
+  cause; phone/night rendering and technical-detail copying are tested.

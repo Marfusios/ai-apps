@@ -1,10 +1,26 @@
-import { DEFAULT_EVIDENCE_AUTO_FILTERS, EVIDENCE_AUTO_FILTER_VERSIONS, LIVE_EVIDENCE_AUTO_FILTERS, type EvidenceAutoFilterVersion } from './evidence-auto-filters.js';
-import { DEFAULT_EVIDENCE_RANKING, EVIDENCE_RANKING_VERSIONS, LIVE_EVIDENCE_RANKINGS, type EvidenceRankingVersion } from './evidence-ranking.js';
+import {
+  DEFAULT_EVIDENCE_AUTO_FILTERS,
+  EVIDENCE_AUTO_FILTER_VERSIONS,
+  LIVE_EVIDENCE_AUTO_FILTERS,
+  type EvidenceAutoFilterVersion,
+} from './evidence-auto-filters.js';
+import {
+  DEFAULT_EVIDENCE_RANKING,
+  EVIDENCE_RANKING_VERSIONS,
+  LIVE_EVIDENCE_RANKINGS,
+  type EvidenceRankingVersion,
+} from './evidence-ranking.js';
 import { isIP } from 'node:net';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { DEFAULT_RETRIEVAL_VERSION, RETRIEVAL_VERSIONS, isExperimentalRetrieval, type RetrievalVersion } from './contracts/retrieval.js';
+import {
+  DEFAULT_RETRIEVAL_VERSION,
+  RETRIEVAL_VERSIONS,
+  isExperimentalRetrieval,
+  type RetrievalVersion,
+} from './contracts/retrieval.js';
 import { readDotenvAllowlisted } from './env-files.js';
+import { IMPORT_LOCAL_TIME, IMPORT_TIME_ZONE } from './import-schedule.js';
 
 function str(): z.ZodOptional<z.ZodString>;
 function str(def: string): z.ZodDefault<z.ZodString>;
@@ -12,7 +28,11 @@ function str(def?: string) {
   return def === undefined ? z.string().optional() : z.string().default(def);
 }
 const num = (def: number) => z.coerce.number().default(def);
-const listOf = (v: string): string[] => v.split(',').map((s) => s.trim()).filter(Boolean);
+const listOf = (v: string): string[] =>
+  v
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 /** An IPv4 or IPv6 network in CIDR notation. */
 export function isCidr(value: string): boolean {
   const m = /^([^/]+)\/(\d{1,3})$/.exec(value);
@@ -23,7 +43,10 @@ export function isCidr(value: string): boolean {
 }
 /** A host name (labels of letters, digits and hyphens) or an IPv4 address: no scheme, port or wildcard. */
 const isHostName = (v: string): boolean =>
-  v.length <= 253 && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(v);
+  v.length <= 253 &&
+  /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(
+    v,
+  );
 /** An absolute http(s) URL. */
 const isHttpUrl = (v: string): boolean => {
   try {
@@ -38,20 +61,40 @@ const int = (def: number) => z.coerce.number().int().default(def);
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_ENV: z.enum(['dev', 'live']).default('dev'),
+  APP_VERSION: z.string().max(80).optional(),
+  AVIATION_IMPORTS_ENABLED: z
+    .enum(['true', 'false', '1', '0'])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+  AIRCASE_ADMIN_EMAILS: z
+    .string()
+    .max(10000)
+    .default('')
+    .transform((v) => [...new Set(listOf(v).map((s) => s.toLowerCase()))])
+    .refine(
+      (v) => v.every((email) => z.email().safeParse(email).success),
+      'expected comma-separated email addresses',
+    ),
   APP_URL: str('http://localhost:3000').refine(isHttpUrl, 'expected an http(s) URL'),
   TRUSTED_PROXY_CIDRS: z
     .string()
     .default('')
     .refine((v) => listOf(v).every(isCidr), 'expected comma-separated CIDRs')
     .transform(listOf),
-  HOST: str('127.0.0.1').refine((v) => isIP(v) !== 0 || v === 'localhost', 'expected an IP address or localhost'),
+  HOST: str('127.0.0.1').refine(
+    (v) => isIP(v) !== 0 || v === 'localhost',
+    'expected an IP address or localhost',
+  ),
   PORT: int(3000).pipe(z.number().min(0).max(65535)),
   DATABASE_URL: str(),
   DATABASE_MIGRATOR_URL: str(),
   DATABASE_INGEST_URL: str(),
   POSTGRES_PORT: int(55432),
   ELASTICSEARCH_PORT: int(59200),
-  ELASTICSEARCH_URL: str('http://localhost:59200').refine(isHttpUrl, 'expected an http(s) URL'),
+  ELASTICSEARCH_URL: str('http://localhost:59200').refine(
+    isHttpUrl,
+    'expected an http(s) URL',
+  ),
   ELASTICSEARCH_API_KEY: str(),
   ELASTICSEARCH_READ_API_KEY: str(),
   ELASTICSEARCH_WRITE_API_KEY: str(),
@@ -68,15 +111,22 @@ const envSchema = z.object({
   OPENAI_SCOPE_MODEL: str('gpt-5.6-luna'),
   OPENAI_ANSWER_MODEL: str('gpt-5.4-mini-2026-03-17'),
   OPENAI_CHECK_MODEL: str('gpt-5.6-luna'),
-  AVIATION_EVIDENCE_AUTO_FILTERS: z.enum(EVIDENCE_AUTO_FILTER_VERSIONS).default(DEFAULT_EVIDENCE_AUTO_FILTERS),
-  AVIATION_EVIDENCE_RANKING: z.enum(EVIDENCE_RANKING_VERSIONS).default(DEFAULT_EVIDENCE_RANKING),
+  AVIATION_EVIDENCE_AUTO_FILTERS: z
+    .enum(EVIDENCE_AUTO_FILTER_VERSIONS)
+    .default(DEFAULT_EVIDENCE_AUTO_FILTERS),
+  AVIATION_EVIDENCE_RANKING: z
+    .enum(EVIDENCE_RANKING_VERSIONS)
+    .default(DEFAULT_EVIDENCE_RANKING),
   AVIATION_RETRIEVAL_VERSION: z.enum(RETRIEVAL_VERSIONS).default(DEFAULT_RETRIEVAL_VERSION),
   AVIATION_TRACING_ENABLED: z
     .enum(['true', 'false', '1', '0'])
     .default('false')
     .transform((v) => v === 'true' || v === '1'),
   /** Generated-summary writes stay disabled until their separate G6 clearance. */
-  AI_BRIEFS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  AI_BRIEFS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   /**
    * Claim-level display of AI briefs (Task 16d, server/briefs/display.ts): off until gate G6
    * clears it. Off, a brief's summary is shown only when the check confirmed every claim.
@@ -96,7 +146,10 @@ const envSchema = z.object({
   AVIATION_TRACING_HTTP_HOSTS: z
     .string()
     .default('')
-    .refine((v) => listOf(v).every(isHostName), 'expected comma-separated host names (no scheme, port or wildcard)')
+    .refine(
+      (v) => listOf(v).every(isHostName),
+      'expected comma-separated host names (no scheme, port or wildcard)',
+    )
     .transform((v) => listOf(v).map((h) => h.toLowerCase())),
   BETTER_AUTH_SECRET: str(),
   GOOGLE_CLIENT_ID: str(),
@@ -126,10 +179,17 @@ type Env = z.infer<typeof envSchema>;
 export const CONFIG_ENV_NAMES = Object.keys(envSchema.shape) as readonly string[];
 
 export interface AppConfig {
+  imports: {
+    enabled: boolean;
+    localTime: typeof IMPORT_LOCAL_TIME;
+    timeZone: typeof IMPORT_TIME_ZONE;
+  };
   nodeEnv: Env['NODE_ENV'];
   /** Deployment environment (dev or live): Compose project, database, index prefix. */
   appEnv: Env['APP_ENV'];
   appUrl: string;
+  appVersion?: string;
+  adminEmails: string[];
   /**
    * Networks whose peers are trusted proxies (the tunnel connector's edge subnet).
    * Proxy headers such as CF-Connecting-IP are honoured only from these peers; when
@@ -159,7 +219,12 @@ export interface AppConfig {
     briefsEnabled: boolean;
     evidenceRanking: EvidenceRankingVersion;
     evidenceAutoFilters: EvidenceAutoFilterVersion;
-    anthropic: { apiKey?: string; scopeModel: string; answerModel: string; checkModel: string };
+    anthropic: {
+      apiKey?: string;
+      scopeModel: string;
+      answerModel: string;
+      checkModel: string;
+    };
     openai: {
       apiKey?: string;
       embeddingModel: string;
@@ -199,7 +264,13 @@ export interface AppConfig {
   };
   turnstile: { secretKey?: string; siteKey?: string };
   /** `httpHosts`: hosts whose plain-http Langfuse address is trusted (`AVIATION_TRACING_HTTP_HOSTS`, lower case). */
-  tracing: { enabled: boolean; baseUrl?: string; publicKey?: string; secretKey?: string; httpHosts: string[] };
+  tracing: {
+    enabled: boolean;
+    baseUrl?: string;
+    publicKey?: string;
+    secretKey?: string;
+    httpHosts: string[];
+  };
   ntsbApiKey?: string;
   /** Directory for verification reports; default `data/work` in the checkout. */
   verifyDir?: string;
@@ -237,10 +308,14 @@ function configFiles(opts: LoadConfigOptions): string[] {
  * one of its files, rather than leaving them to the defaults. Reads the same sources as
  * `loadConfig`; never returns a value.
  */
-export function configuredNames(names: readonly string[], opts: LoadConfigOptions = {}): Set<string> {
+export function configuredNames(
+  names: readonly string[],
+  opts: LoadConfigOptions = {},
+): Set<string> {
   const env = opts.env ?? process.env;
   const set = new Set<string>();
-  for (const f of configFiles(opts)) for (const name of Object.keys(readDotenvAllowlisted(f, names))) set.add(name);
+  for (const f of configFiles(opts))
+    for (const name of Object.keys(readDotenvAllowlisted(f, names))) set.add(name);
   for (const name of names) if ((env[name] ?? '') !== '') set.add(name);
   return set;
 }
@@ -263,21 +338,39 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   }
   const e = parsed.data;
   if (e.AI_LLM_PROVIDER === 'fake' && e.NODE_ENV !== 'test') {
-    throw new Error("Invalid configuration: AI_LLM_PROVIDER 'fake' is allowed only when NODE_ENV=test");
+    throw new Error(
+      "Invalid configuration: AI_LLM_PROVIDER 'fake' is allowed only when NODE_ENV=test",
+    );
   }
-  if (e.APP_ENV === 'live' && !LIVE_EVIDENCE_AUTO_FILTERS.includes(e.AVIATION_EVIDENCE_AUTO_FILTERS)) {
-    throw new Error('Invalid configuration: AVIATION_EVIDENCE_AUTO_FILTERS is not cleared for live');
+  if (
+    e.APP_ENV === 'live' &&
+    !LIVE_EVIDENCE_AUTO_FILTERS.includes(e.AVIATION_EVIDENCE_AUTO_FILTERS)
+  ) {
+    throw new Error(
+      'Invalid configuration: AVIATION_EVIDENCE_AUTO_FILTERS is not cleared for live',
+    );
   }
   if (e.APP_ENV === 'live' && !LIVE_EVIDENCE_RANKINGS.includes(e.AVIATION_EVIDENCE_RANKING)) {
-    throw new Error('Invalid configuration: AVIATION_EVIDENCE_RANKING is not cleared for live');
+    throw new Error(
+      'Invalid configuration: AVIATION_EVIDENCE_RANKING is not cleared for live',
+    );
   }
   if (e.APP_ENV === 'live' && isExperimentalRetrieval(e.AVIATION_RETRIEVAL_VERSION)) {
-    throw new Error(`Invalid configuration: AVIATION_RETRIEVAL_VERSION ${e.AVIATION_RETRIEVAL_VERSION} is experimental and is never served on live`);
+    throw new Error(
+      `Invalid configuration: AVIATION_RETRIEVAL_VERSION ${e.AVIATION_RETRIEVAL_VERSION} is experimental and is never served on live`,
+    );
   }
 
   return {
+    imports: {
+      enabled: e.AVIATION_IMPORTS_ENABLED,
+      localTime: IMPORT_LOCAL_TIME,
+      timeZone: IMPORT_TIME_ZONE,
+    },
     nodeEnv: e.NODE_ENV,
     appEnv: e.APP_ENV,
+    appVersion: e.APP_VERSION,
+    adminEmails: e.AIRCASE_ADMIN_EMAILS,
     appUrl: e.APP_URL,
     trustedProxyCidrs: e.TRUSTED_PROXY_CIDRS,
     host: e.HOST,
