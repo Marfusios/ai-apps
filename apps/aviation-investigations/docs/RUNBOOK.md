@@ -799,7 +799,8 @@ by the evidence ranking object; incompatible model overrides fail its price chec
 Only the baseline retains suggestion-based highlights (executed words if absent);
 every alternative highlights executed lexical words. This policy is part of the hash.
 The conservative reservations are $0.0025 without rerank, $0.0090 for Haiku/50,
-$0.0140 for Haiku/100 and $0.1332 for Sonnet/50. Confirm budget capacity before
+$0.0140 for Haiku/100 and $0.1332 for Sonnet/50, each $0.000625 more (before the
+rounding) under the `attributed.v1` automatic-filter policy. Confirm budget capacity before
 authorizing any paid test; preflight does not generate.
 
 For a non-HTTP evaluation use `rankEvidence(config, input, providers, spendGate)`
@@ -829,86 +830,131 @@ intervals too wide), not cleared, and it only reorders the retrieved cases.
 
 ### Evidence automatic filters and v3 rollout
 
-`AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default) or
-`state-explicit.v1.3`. Both are allowed on dev and live following the state policy's
-field confirmation and review. Unknown values fail startup. The default stays
-`none`. To enable it, deploy the matching v3 client and complete these steps:
+`AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default), `attributed.v1` or, on dev only,
+`state-explicit.v1.3`. Unknown values fail startup. Live accepts `none` and `attributed.v1`;
+`state-explicit.v1.3` fails startup on live: it did not clear the 2026-10-25 security re-check
+("Find accidents involving aircraft maintained within Alaska" still got an automatic AK filter).
+The default stays `none`. Nothing is enabled on live without the Task 30 evaluation and the
+owner's decision.
 
-1. In `live.env`, set `AVIATION_EVIDENCE_AUTO_FILTERS=state-explicit.v1.3` and keep
-   `AVIATION_EVIDENCE_RANKING=er-q-v1`.
-2. Run `pnpm worker ai-preflight` with those same environment settings **before**
-   `pnpm app:up`. Require successful configuration validation and no OVER rows.
-   This catches an invalid policy before the app is recreated.
-3. Run `pnpm app:up` with those settings, then check that `/api/config` reports
-   `aiAutomaticFilters: ['state']` after its cache expires. Confirm that an applied
-   state is disclosed and can be removed without a visitor quota unit.
-4. Monitor the private `autoFilterReason` mix and the ratio of free-undo claims to
-   state-applied original searches. Removals are the live precision signal, not a
-   labelled precision estimate: a claim may also remove added keywords or precede
-   a failed search. Keep these diagnostics and question text out of logs/traces.
+**`attributed.v1`** (Task 30) applies the scope's suggested state, years and aircraft category on
+its own when the question names them explicitly and a separate check says each describes the
+accident itself. Every other suggested field stays a suggestion, and edited searches never add
+automatic filters.
 
-This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
-it does not change any evaluated ranking hash. The Docker service passes it through.
-The live ranking allowlist is `er-q-v1` and `er-q-h50-v1`.
-Each saved search records both configuration identities. No reindex is needed.
-v1.1 and v1.2 were never deployed and are no longer accepted. Replace any unreleased
-older setting with `none` or v1.3 before preflight. v1.3 is built on v1.1, adding five
-rejections for other-event wording, references before the first mention, title/text
-language, locations attributed to destinations/departures/attributes, and definite
-singular events at a state mention. It removes v1.2's overbroad `like` alternative:
-"I'd like to see accidents in Alaska" remains eligible. See DESIGN for the bounded
-rules and deliberate abstentions. Its accepted set is a strict subset of v1.1
-(and a subset of v1). The 1,040-answer offline replay gives 365 TP / 0 FP / 35 FN
-for the guard, two applications lost from v1.1. The pipeline's separate case-search
-intent requirement yields 363 TP / 0 FP / 37 FN. Neither result proves semantic
-attribution for future wording; other fields and rankings remain restricted.
-`GET /api/config` reports `aiAutomaticFilters: []` for `none` and `['state']` for
-the state policy. The field is optional for cached pre-deploy configs: missing means
-unknown, so the client uses cautious "suggests filters" wording. Client copy follows
-this field, not a fixed claim about states.
+- Deterministic candidates (`shared/automatic-candidates.ts`; `state-mention.v1`,
+  `year-mention.v1`, `category-mention.v1`): the question's own words must name exactly the
+  suggested values, once each. Years must equal the interval of exactly one supported date
+  expression, with its open or closed ends. A question with instruction or role wording,
+  quotation marks, control characters or more than 600 characters, a condition or exception (if,
+  unless, except, excluding, but not), or an alternative or comparison across fields (or, either,
+  nor, versus, compare, unlike, rather than, instead of, whereas outside one field's own value
+  list) has no candidates at all.
+- One check (`attr.a1`, `server/ai/prompts/attribution.a1.ts`) on Haiku 5.5, only when there is a
+  candidate: thinking off, effort low, no retries, a cached system prompt, at most 3,000 input and
+  500 output tokens, an 8-second bound, inside the scope phase. A candidate applies only as a
+  whole, when its check names the field's accident class and quotes a span of the question
+  holding the candidate's matched words. A failure, timeout, invalid or incomplete answer, another
+  class or a bad quote applies nothing for that field and leaves it a suggestion. The uncertain
+  allowance, a failed scope and non-search intents skip the check.
+- Money: the check's worst case is $0.000625 (3,000 input tokens all written to the cache and 500
+  output tokens at the price table's Haiku rates). A typical request is about 2,300 input and 100
+  output tokens by the offline sizing, about $0.0003 or less when the five-minute cache hits; a
+  search without a candidate makes no call. The search reservation adds the worst case before its
+  one rounding: $0.0031 with `er-q-v1` and $0.0096 with `er-q-h50-v1` (from $0.0025 and $0.0090).
+  The check settles as its own `attribution` ledger line; a call of unknown usage is charged at
+  its worst case and counts toward the daily uncertain allowance.
+- Time: the request deadline adds the check's 8 seconds once (73 seconds at most, with the
+  depth-100 reranker, under the 120-second lease).
+
+To enable it on an environment:
+
+1. Apply migration **0030_automatic_fields** with `pnpm app:migrate`. It lets the automatic keys
+   `state`, `yearFrom`, `yearTo` and `category` change a running search's filters at settlement
+   (0025 allowed `state` only); grants and the schema snapshot are unchanged. Without it every
+   search with automatic years or a category fails at settlement.
+2. Deploy the web client that shows and undoes automatic years and category.
+3. Set `AVIATION_EVIDENCE_AUTO_FILTERS=attributed.v1` and run `pnpm worker ai-preflight` with
+   those settings **before** `pnpm app:up`. It counts the check's real request: the fixed prompt
+   and schema, the largest candidate set (all 51 states, the longest year value and category
+   label) with a 600-character question, and the output at its schema bounds. Require no OVER row;
+   the 3,000-token cap was sized offline, and a request over it is refused unbilled at runtime
+   (that search applies nothing).
+4. Run `pnpm app:up`, check that `/api/config` reports `aiAutomaticFilters:
+   ['state', 'years', 'category']` after its cache expires, and that automatic filters are
+   disclosed and removable without a visitor quota unit.
+5. Monitor the private `autoFilterReason`, `autoFilterFields` and `attributionOutcome` mix, the
+   `evidence.attribution` spans and the ledger's `attribution` lines. Keep these diagnostics and
+   question text out of logs and traces.
+
+**Rollback** is a policy change on the same release: set `AVIATION_EVIDENCE_AUTO_FILTERS=none`,
+run `pnpm worker ai-preflight`, then `pnpm app:up`. New question searches apply nothing and make no
+check; saved pages keep their own automatic filters and their one free undo; no data or schema is
+rolled back. Do not roll back to an image older than this release while attributed.v1 searches
+are unexpired (24 hours): an older server or open tab reads only automatic `state` and refuses
+pages with automatic years or a category.
+
+This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing it does not change any
+ranking hash. The Docker service passes it through. The live ranking allowlist is `er-q-v1` and
+`er-q-h50-v1`. Each saved search records both configuration identities. No reindex is needed.
+Task 30 also raised the evidence scope timeout from 10 to 15 seconds (run deadline 35 seconds plus
+the reranker's bound), which changed all eleven ranking identities
+(`tests/support/evidence-ranking-hashes.json`); saved searches keep the identities they recorded.
+
+`state-explicit.v1.3` (dev only) is built on v1.1, adding five rejections for other-event wording,
+references before the first mention, title/text language, locations attributed to
+destinations/departures/attributes, and definite singular events at a state mention. It removes
+v1.2's overbroad `like` alternative: "I'd like to see accidents in Alaska" remains eligible. See
+DESIGN for the bounded rules and deliberate abstentions. Its accepted set is a strict subset of
+v1.1 (and a subset of v1). The 1,040-answer offline replay gives 365 TP / 0 FP / 35 FN for the
+guard, two applications lost from v1.1. The pipeline's separate case-search intent requirement
+yields 363 TP / 0 FP / 37 FN. Neither result proves semantic attribution for future wording. v1.1
+and v1.2 were never deployed and are no longer accepted.
+`GET /api/config` reports `aiAutomaticFilters: []` for `none`, `['state']` for v1.3 and
+`['state', 'years', 'category']` for attributed.v1. The field is optional for cached pre-deploy
+configs: missing means unknown, so the client uses cautious "suggests filters" wording. Client
+copy follows this field, not a fixed claim about states.
 A policy change changes the response ETag even on the same dataset; the existing
 public cache lifetime is five minutes.
-The automatic-policy identity includes `state-probes.v5` outputs. Current hashes:
+The automatic-policy identity includes behavioural probe outputs. Current hashes:
 
 | Policy | SHA-256 |
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
+| `attributed.v1` | `e1e9dad3d45b9abe813e66c97a3e97d2859a4e89cb63530d469080845e53551b` |
 
-The state policy hashes its fixed probes' inputs and actual guard outputs; `none`
-records no active guard. Do not relabel older cached results with these identities.
-The v1.3 policy binds `state-probes.v5` (499 probes, including all review challenges
-and witnesses for every new regex alternative). The eleven ranking identities are unchanged.
-
+The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
+probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check
+settings, caps and timeout, the prompt's system text and wire schema, and `candidate-probes.v1`:
+the candidate builder's outputs on fixed questions, the rendered check inputs and the decisions on
+fixed check answers, so a changed rule, renderer or quote validator changes it too. Do not relabel
+older cached results with these identities.
 
 Apply migration 0025 before serving v3. Its known local-test-only round-2 and round-3 versions are
 reapplied transactionally by the migrator without removing existing undo claims; other
 unknown migration drift is still refused. Its columns/grants and snapshot are unchanged.
-Deploy the matching evidence.v3 web client for keyword, automatic-state, ordering,
+Deploy the matching evidence.v3 web client for keyword, automatic-filter, ordering,
 mark-source, suggestion and undo disclosures. v2 stored pages upgrade on read;
 pre-v2 pages remain unavailable. Unexpired v2 retries of the identical compatible
 body replay the existing result (including running/failed searches), with the usual
 ownership and Turnstile checks and no new quota or provider call. Different bodies
 still conflict; v3-only `keywords` can never be discarded to match a v2 hash.
 Old tabs reject v3 page responses until reloaded; reload them after deployment.
-To roll back automatic state on live, set `AVIATION_EVIDENCE_AUTO_FILTERS=none`
-in the live settings, run `pnpm worker ai-preflight`, then run `pnpm app:up`
-with those settings. New question-search pages disclose no automatic filters;
-Explore and About switch wording through `aiAutomaticFilters: []`, subject to the
-five-minute config cache above. Saved pages retain their own facts; new edits use
-explicit filters only. Do not roll back the database
-schema or old private result data to disable this policy.
 
-Free undo is allowed once per original question, even at a visitor quota limit.
-Its attempt, concurrency, Turnstile and money checks are unchanged. The parent claim
-is taken atomically at admission and is not reset after a downstream failure; retries
-with the same key replay its result/failure once a search row exists. A pre-run abandon
+Free undo is allowed once per original question, even at a visitor quota limit: an edit that
+removes one or more whole automatic facets (the state set, both automatic year bounds, the
+category set) and/or the added terms, and changes nothing else. Removing one value of several is
+a narrower, ordinary search. Its attempt, concurrency, Turnstile and money checks are unchanged.
+The parent claim is taken atomically at admission and is not reset after a downstream failure;
+retries with the same key replay its result/failure once a search row exists. A pre-run abandon
 expires the idempotency slot without restoring the undo claim, so even a same-key retry
 is an ordinary quota-counted admission (or is refused at the quota limit).
 Confirm quota_counted=false for the free request and normal ledger settlement. No
-public request field can ask for free quota directly. Automatic state is cleared for
-live opt-in; a non-baseline ranking still requires its own evaluation and allowlist
-decision. Deploy the matching v3 web client before enabling automatic state.
+public request field can ask for free quota directly. Superseded: this section used to say that
+automatic state was cleared for live opt-in; `state-explicit.v1.3` did not clear the 2026-10-25
+security re-check and is dev-only. A non-baseline ranking still requires its own evaluation and
+allowlist decision. Deploy the matching web client before enabling automatic filters.
 
 ### Retrieval version
 
@@ -1879,7 +1925,8 @@ tag and digest together.
    `NODE_EXTRA_CA_CERTS`; Docker uses its configured trusted endpoint. Run
    `pnpm -s worker langfuse-prompts --sync` before releasing linked generation spans.
    It only calls Langfuse, never a model provider. Run it again to verify idempotence.
-   The two returned content hashes must match; a modified mirror or a version other
+   It mirrors `aircase-scope.e3`, `aircase-rerank.r1` and `aircase-attr.a1` (Task 30); each
+   prompt's content hash must be the same in both runs; a modified mirror or a version other
    than 1 is a release failure. Do not edit the mirror in the Langfuse UI; resolve drift
    against the frozen code and review any deliberate prompt version change.
 4. In the admin overview, check tracing enabled, last successful export and failed
