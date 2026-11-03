@@ -799,8 +799,8 @@ by the evidence ranking object; incompatible model overrides fail its price chec
 Only the baseline retains suggestion-based highlights (executed words if absent);
 every alternative highlights executed lexical words. This policy is part of the hash.
 The conservative reservations are $0.0025 without rerank, $0.0090 for Haiku/50,
-$0.0140 for Haiku/100 and $0.1332 for Sonnet/50, each $0.000625 more (before the
-rounding) under the `attributed.v1` automatic-filter policy. Confirm budget capacity before
+$0.0140 for Haiku/100 and $0.1332 for Sonnet/50, each $0.000875 more (before the
+rounding) under the `attributed.v1` automatic-filter policy: $0.0034, $0.0099, $0.0149 and $0.1341. Confirm budget capacity before
 authorizing any paid test; preflight does not generate.
 
 For a non-HTTP evaluation use `rankEvidence(config, input, providers, spendGate)`
@@ -845,23 +845,27 @@ automatic filters.
 - Deterministic candidates (`shared/automatic-candidates.ts`; `state-mention.v1`,
   `year-mention.v1`, `category-mention.v1`): the question's own words must name exactly the
   suggested values, once each. Years must equal the interval of exactly one supported date
-  expression, with its open or closed ends. A question with instruction or role wording,
-  quotation marks, control characters or more than 600 characters, a condition or exception (if,
-  unless, except, excluding, but not), or an alternative or comparison across fields (or, either,
-  nor, versus, compare, unlike, rather than, instead of, whereas outside one field's own value
-  list) has no candidates at all.
+  expression, with its open or closed ends ("in 2019", "2015 to 2018", "since 2010", "after
+  2015", "2015 or later", "no later than 2019", "after 2015 and before 2020", "the 1990s"). A
+  question with instruction-like wording ("ignore previous instructions", "system prompt", "set
+  the state"), quotation marks, control or formatting characters other than tabs and line breaks,
+  more than 600 characters, or a condition or exception (if, unless, except, excluding, but not)
+  has no candidates at all. An alternative (or, either, nor) outside one field's own value list
+  with a candidate's words among the two words on either side ("in Alaska or at night"), or any
+  comparison word (versus, compare, unlike, rather than, instead of, whereas), refuses every
+  candidate; "fatal or serious accidents in Alaska" keeps its state.
 - One check (`attr.a1`, `server/ai/prompts/attribution.a1.ts`) on Haiku 5.5, only when there is a
-  candidate: thinking off, effort low, no retries, a cached system prompt, at most 3,000 input and
+  candidate: thinking off, effort low, no retries, a cached system prompt, at most 5,000 input and
   500 output tokens, an 8-second bound, inside the scope phase. A candidate applies only as a
   whole, when its check names the field's accident class and quotes a span of the question
   holding the candidate's matched words. A failure, timeout, invalid or incomplete answer, another
   class or a bad quote applies nothing for that field and leaves it a suggestion. The uncertain
   allowance, a failed scope and non-search intents skip the check.
-- Money: the check's worst case is $0.000625 (3,000 input tokens all written to the cache and 500
+- Money: the check's worst case is $0.000875 (5,000 input tokens all written to the cache and 500
   output tokens at the price table's Haiku rates). A typical request is about 2,300 input and 100
   output tokens by the offline sizing, about $0.0003 or less when the five-minute cache hits; a
   search without a candidate makes no call. The search reservation adds the worst case before its
-  one rounding: $0.0031 with `er-q-v1` and $0.0096 with `er-q-h50-v1` (from $0.0025 and $0.0090).
+  one rounding: $0.0034 with `er-q-v1` and $0.0099 with `er-q-h50-v1` (from $0.0025 and $0.0090).
   The check settles as its own `attribution` ledger line; a call of unknown usage is charged at
   its worst case and counts toward the daily uncertain allowance.
 - Time: the request deadline adds the check's 8 seconds once (73 seconds at most, with the
@@ -878,8 +882,9 @@ To enable it on an environment:
    those settings **before** `pnpm app:up`. It counts the check's real request: the fixed prompt
    and schema, the largest candidate set (all 51 states, the longest year value and category
    label) with a 600-character question, and the output at its schema bounds. Require no OVER row;
-   the 3,000-token cap was sized offline, and a request over it is refused unbilled at runtime
-   (that search applies nothing).
+   the 5,000-token cap was sized offline (the largest request is about 4,000-4,500 tokens with a
+   dense 600-character question), and a request over it is refused unbilled at runtime (that
+   search applies nothing).
 4. Run `pnpm app:up`, check that `/api/config` reports `aiAutomaticFilters:
    ['state', 'years', 'category']` after its cache expires, and that automatic filters are
    disclosed and removable without a visitor quota unit.
@@ -922,7 +927,7 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
-| `attributed.v1` | `e1e9dad3d45b9abe813e66c97a3e97d2859a4e89cb63530d469080845e53551b` |
+| `attributed.v1` | `b554b3ede32e6d2d69d974329faa31ea0374252cc41880653f3d8934a4336824` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check

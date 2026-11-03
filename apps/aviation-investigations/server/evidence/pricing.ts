@@ -4,7 +4,7 @@ import { assertAutoFilterPolicy, attributionStage, autoFilterPolicy, type Attrib
 import type { AppConfig } from '../../shared/config.js';
 import { CACHED_PREFIX_MAX, embeddingWorstCaseUsd, stageWorstCaseUsd, EVIDENCE_SCOPE_CAPS, startupAiCheck, type AiStartupCheck } from '../ai/pricing.js';
 
-/** The attribution check at its caps, the whole input a cache write (as scope's prefix): $0.000625 on Haiku 5.5. */
+/** The attribution check at its caps, the whole input a cache write (as scope's prefix): $0.000875 on Haiku 5.5. */
 export const attributionWorstCaseUsd = (a: AttributionStageConfig): number => stageWorstCaseUsd(a.model, a.caps, CACHED_PREFIX_MAX);
 
 export function evidenceReservation(scope: string, embed: string, config: EvidenceRankingConfig = evidenceRankingConfig(),
