@@ -23,13 +23,14 @@ export type Sample = 1 | 2 | 3;
 /**
  * The filters "Apply these filters" sends after a search, or null when the page shows no such
  * button: the suggestion the page keeps (`remainingSuggestion`), added to the search's own filters
- * (none here), validated as the edit request is.
+ * (`applied`: none for Task 29's searches, the automatic filters for Task 30's), validated as the
+ * edit request is.
  */
 export function applyFiltersRequest(lexicalSource: LexicalSource, addedTerms: string | null,
-  suggestion: EvidenceScopeSuggestion | null): BriefFilters | null {
+  suggestion: EvidenceScopeSuggestion | null, applied: BriefFilters = {}): BriefFilters | null {
   const visible = remainingSuggestion(questionQuery(lexicalSource, addedTerms), suggestion);
   if (!visible || !hasFilters(visible.filters)) return null;
-  return BriefFiltersSchema.parse(withSuggestedFilters({}, visible.filters));
+  return BriefFiltersSchema.parse(withSuggestedFilters(applied, visible.filters));
 }
 
 /** Worst-case microdollars of each stage, as `rankEvidence` reserves them. */
@@ -74,12 +75,12 @@ export function filterMatch(applied: BriefFilters | null, key: BriefFilters): Fi
   return Object.keys(a).length === Object.keys(k).length ? 'exact' : 'includes';
 }
 
-export interface RowRanking { row: Row; questionId: string; sample: number; ranking: readonly string[] }
+export interface RowRanking<R extends string = Row> { row: R; questionId: string; sample: number; ranking: readonly string[] }
 export interface QuestionScore { id: string; group: string; class: 'narrow' | 'broad'; samples: number;
   narrowR20: number; narrowR10: number; broadP10: number; broadNdcg10: number }
 
 /** Task 24's coded metrics: a question's value is the mean over its samples; a row's, the mean over its stratum. */
-export function rowScores(questions: readonly RankingQuestion[], rankings: readonly RowRanking[], row: Row) {
+export function rowScores<R extends string = Row>(questions: readonly RankingQuestion[], rankings: readonly RowRanking<R>[], row: R) {
   const per: QuestionScore[] = questions.map(q => {
     const found = rankings.filter(r => r.row === row && r.questionId === q.id);
     if (!found.length || new Set(found.map(r => r.sample)).size !== found.length) throw new Error(`Missing or repeated ${row} sample for ${q.id}`);

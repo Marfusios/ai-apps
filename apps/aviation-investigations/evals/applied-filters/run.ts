@@ -47,30 +47,31 @@ export const SETS = [
   { name: 'trackc-dev', samples: [1, 2, 3] as readonly Sample[], count: 21 },
   { name: 'confirmation', samples: [1] as readonly Sample[], count: 48 },
 ] as const;
-type SetName = typeof SETS[number]['name'];
+export type SetName = typeof SETS[number]['name'];
 interface LabelChange { id: string; class: string; frozen: number; now: number; added: number; removed: number }
-interface QuestionSet { name: SetName; samples: readonly Sample[]; questions: RankingQuestion[]; keyFilters: Record<string, BriefFilters>;
+export interface QuestionSet { name: SetName; samples: readonly Sample[]; questions: RankingQuestion[]; keyFilters: Record<string, BriefFilters>;
   changes: LabelChange[]; sourceFileSha256: string; goldSha256: string; crossGroupShares: number }
 
 interface Started { event: 'started'; key: string; set: SetName; row: Row; questionId: string; sample: number; at: string }
 interface Recorded { event: 'result'; key: string; set: SetName; row: Row; questionId: string; sample: number; observation: SearchObservation }
 
-export function readJournal(path: string): Map<string, Recorded> {
+/** Every attempt's durable result by key; refuses an attempt without one, or a repeated one (Task 30 reuses it with its own records). */
+export function readJournal<R extends { event: 'result'; key: string } = Recorded>(path: string): Map<string, R> {
   if (!existsSync(path)) return new Map();
-  const rows = readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Started | Recorded);
-  const started = rows.filter((r): r is Started => r.event === 'started'), results = rows.filter((r): r is Recorded => r.event === 'result');
+  const rows = readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as { event: 'started'; key: string } | R);
+  const started = rows.filter(r => r.event === 'started'), results = rows.filter((r): r is R => r.event === 'result');
   if (new Set(started.map(r => r.key)).size !== started.length || new Set(results.map(r => r.key)).size !== results.length
     || started.length !== results.length || started.some(s => !results.some(r => r.key === s.key))) {
     throw new EvaluationError('An attempt has no durable result or is repeated; reconcile without repeating providers');
   }
   return new Map(results.map(r => [r.key, r]));
 }
-function freezeFile(path: string, value: unknown) {
+export function freezeFile(path: string, value: unknown) {
   if (existsSync(path)) {
     if (stable(JSON.parse(readFileSync(path, 'utf8'))) !== stable(value)) throw new EvaluationError('Evaluation resume identity changed');
   } else writeFileSync(path, stable(value) + '\n', { flag: 'wx', mode: 0o600 });
 }
-function codeIdentity() {
+export function codeIdentity() {
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim();
   if (dirty) throw new EvaluationError('Commit the reviewed evaluator before preparation or paid calls');
@@ -338,7 +339,7 @@ function reportSet(directory: string, manifestSha256: string, identity: { source
     button: s.button, answerKeyMatch: s.answerKeyMatch, determinism: s.determinism, labels: s.labels }));
 }
 /** The port checks this too; checking before the journal line keeps a refused attempt from ending the label. */
-async function assertTarget(db: Db, pinned: PinnedDataset) {
+export async function assertTarget(db: Db, pinned: PinnedDataset) {
   const active = await getActiveManifest(db);
   if (!active || active.generationId !== pinned.manifest.generationId || active.casesIndex !== pinned.manifest.casesIndex
     || active.passagesIndex !== pinned.manifest.passagesIndex) throw new EvaluationError('Active target changed before dispatch');
