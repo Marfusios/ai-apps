@@ -33,7 +33,7 @@ import { ARM_IDS, type Arm, type ArmIdentity, type RankingQuestion, type SearchO
 import type { ABDataset } from '../search-quality/types.js';
 import { CappedAllocation, taskTotals, type TaskSpec } from '../langfuse/money.js';
 import { opaqueId, sha256, stable } from '../langfuse/data.js';
-import { ROWS, applyFiltersRequest, compareNarrowR20, crossGroupShares, fallbackRates, filterMatch, isInfrastructure,
+import { ROWS, applyFiltersRequest, compareNarrowR20, crossGroupShares, fallbackRates, filterMatch, nextStreak,
   questionWorstCaseMicros, rowScores, stageMicros, type Row, type RowRanking, type Sample } from './plan.js';
 
 export const TASK29: TaskSpec = { allocation: 'eval-task29', lockKey: 732900029, capMicros: 800_000, label: 'Task 29',
@@ -145,7 +145,8 @@ export function summarizeSet(set: QuestionSet, journal: Map<string, Recorded>) {
   const recorded = [...journal.values()].filter(r => r.set === set.name);
   const of = (row: Row, q: RankingQuestion, sample: number) => recorded.find(r => r.row === row && r.questionId === q.id && r.sample === sample)?.observation;
   const rankings: RowRanking[] = [];
-  let fusedMismatches = 0, editFusedMismatches = 0, offered = 0, clickedQh50 = 0, clickedEdit = 0;
+  let fusedMismatches = 0, editFusedMismatches = 0, offered = 0;
+  const clicked = new Map<string, { qh50: number[]; edit: number[] }>();
   const matches: { kind: string; match: string }[] = [];
   for (const q of set.questions) {
     const q0 = of('Q0', q, 1);
@@ -163,7 +164,10 @@ export function summarizeSet(set: QuestionSet, journal: Map<string, Recorded>) {
         }
         offered += 1;
         const m = (o: SearchObservation) => codedMetrics(o.ranking, q.relevant).narrowR20;
-        if (q.class === 'narrow') { clickedQh50 += m(live); clickedEdit += m(edit); }
+        if (q.class === 'narrow') {
+          const c = clicked.get(q.id) ?? { qh50: [], edit: [] };
+          c.qh50.push(m(live)); c.edit.push(m(edit)); clicked.set(q.id, c);
+        }
         if (plain.ranking.join('\n') !== edit.fused.join('\n')) editFusedMismatches += 1;
       }
       if (q0.ranking.join('\n') !== live.fused.join('\n')) fusedMismatches += 1;
@@ -177,10 +181,13 @@ export function summarizeSet(set: QuestionSet, journal: Map<string, Recorded>) {
   const scores = Object.fromEntries(ROWS.map(row => [row, rowScores(set.questions, rankings, row)])) as Record<Row, ReturnType<typeof rowScores>>;
   const by = (row: Row) => recorded.filter(r => r.row === row).map(r => r.observation);
   const rates = Object.fromEntries(ROWS.map(row => [row, fallbackRates(by(row))]));
-  const publishable = Object.values(rates).every(r => r.scopeRate <= 0.05 + 1e-9 && r.rerankRate <= 0.05 + 1e-9);
+  // The bootstrap resamples connected groups as independent: a case shared across groups would make its intervals optimistic.
+  const publishable = set.crossGroupShares === 0 && Object.values(rates).every(r => r.scopeRate <= 0.05 + 1e-9 && r.rerankRate <= 0.05 + 1e-9);
   const tally = (xs: string[]) => Object.fromEntries([...new Set(xs)].sort().map(k => [k, xs.filter(x => x === k).length]));
   const narrowSamples = matches.filter(m => m.kind === 'narrow').length;
   const clickedNarrow = matches.filter(m => m.kind === 'narrow' && m.match !== 'none').length;
+  const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const perClicked = [...clicked.values()].map(c => ({ qh50: avg(c.qh50), edit: avg(c.edit) }));
   return {
     set: set.name, questions: set.questions.length, narrow: set.questions.filter(q => q.class === 'narrow').length,
     groups: new Set(set.questions.map(q => q.group)).size, narrowGroups: new Set(set.questions.filter(q => q.class === 'narrow').map(q => q.group)).size,
@@ -192,7 +199,8 @@ export function summarizeSet(set: QuestionSet, journal: Map<string, Recorded>) {
     narrowR20Differences: { 'QH50 - Q0': compareNarrowR20(scores.Q0, scores.QH50), 'QH50+F - QH50': compareNarrowR20(scores.QH50, scores['QH50+F']),
       'QH50+F - Q0': compareNarrowR20(scores.Q0, scores['QH50+F']), 'QH50+F - Q0+F': compareNarrowR20(scores['Q0+F'], scores['QH50+F']) },
     button: { samples: matches.length, offered, narrowSamples, narrowOffered: clickedNarrow,
-      clickedNarrowR20: clickedNarrow ? { QH50: clickedQh50 / clickedNarrow, 'QH50+F': clickedEdit / clickedNarrow } : null },
+      // Narrow questions with at least one button: per-question means over their clicked samples, then the mean over those questions.
+      clickedNarrowR20: perClicked.length ? { questions: perClicked.length, QH50: avg(perClicked.map(c => c.qh50)), 'QH50+F': avg(perClicked.map(c => c.edit)) } : null },
     answerKeyMatch: { narrow: tally(matches.filter(m => m.kind === 'narrow').map(m => m.match)), broad: tally(matches.filter(m => m.kind === 'broad').map(m => m.match)) },
     determinism: { q0VsQh50Fused: fusedMismatches, q0fVsQh50fFused: editFusedMismatches },
     labels: { changed: set.changes.filter(c => c.added || c.removed), crossGroupShares: set.crossGroupShares },
@@ -204,7 +212,7 @@ export async function main() {
   const { values } = parseArgs({ options: { mode: { type: 'string', default: 'preflight' }, 'env-files': { type: 'string', default: '.env.local' },
     'keys-file': { type: 'string' }, 'out-dir': { type: 'string', default: 'data/work/task29' }, 'run-label': { type: 'string' },
     'confirm-cost': { type: 'boolean', default: false } } });
-  if (!['preflight', 'run'].includes(values.mode!) || !/^[a-zA-Z0-9-]{1,40}$/.test(values['run-label'] ?? '')) throw new EvaluationError('Invalid mode or run label (--run-label required)');
+  if (!['preflight', 'run', 'summarize'].includes(values.mode!) || !/^[a-zA-Z0-9-]{1,40}$/.test(values['run-label'] ?? '')) throw new EvaluationError('Invalid mode or run label (--run-label required)');
   if (values.mode === 'run' && !values['confirm-cost']) throw new EvaluationError('Paid run requires --confirm-cost');
   const label = values['run-label']!, directory = resolve(values['out-dir']!);
   const codeCommit = codeIdentity();
@@ -233,6 +241,17 @@ export async function main() {
         crossGroupShares: s.crossGroupShares, worstCaseMicros: worstCase(s) })),
       note: 'worst cases are gated one question at a time against the cap; expected charge is about 6,000 microdollars per sample',
       capMicros: TASK29.capMicros, manifestSha256IfStartedNow: hash }));
+    if (values.mode === 'summarize') {
+      // Free: the frozen run's identity, then whatever each set's journal completed. Nothing is reserved or dispatched.
+      const frozen = join(directory, 'manifest.json');
+      if (!existsSync(frozen) || stable(JSON.parse(readFileSync(frozen, 'utf8'))) !== stable(manifest)) throw new EvaluationError('No frozen run with this identity to summarize');
+      const journal = readJournal(join(directory, 'results.jsonl'));
+      for (const set of target.sets) {
+        try { reportSet(directory, hash, target.identity, summarizeSet(set, journal)); }
+        catch (e) { if (!(e instanceof EvaluationError && /^Incomplete schedule/.test(e.message))) throw e; console.log(JSON.stringify({ event: 'incomplete', set: set.name })); }
+      }
+      return;
+    }
     allocation = await CappedAllocation.open(settings, directory, TASK29);
     if (values.mode === 'preflight') {
       await allocation.assertBlock(questionWorstCaseMicros(stages, 3));
@@ -260,7 +279,7 @@ export async function main() {
       }
       // A failed search is never scored or repeated under this label, including on resume.
       if (observation.failure || observation.safetyFaults.length) throw new EvaluationError(`Search failed (${observation.failure ?? observation.safetyFaults.join(',')}); stop and inspect the journal`);
-      streak = isInfrastructure(observation) ? streak + 1 : 0;
+      streak = nextStreak(streak, configArm, observation);
       if (streak >= 3) throw new EvaluationError('Three consecutive provider infrastructure outcomes; stopped, incomplete, no retries');
       return observation;
     };
@@ -276,38 +295,47 @@ export async function main() {
       }
       return n;
     };
-    for (const set of target.sets) for (const q of set.questions) {
-      const needed = remainingMicros(set, q);
-      if (needed) await allocation.assertBlock(needed);
-      const q0 = await search(set.name, 'Q0', 'Q0', q, 1, { filters: {}, skipScope: true });
-      for (const sample of set.samples) {
-        const live = await search(set.name, 'QH50', 'QH50', q, sample, { filters: {} });
-        const filters = buttonFilters(live);
-        if (!filters) continue;
-        await search(set.name, 'QH50+F', 'QH50', q, sample, editRequest(filters, live));
-        await search(set.name, 'Q0+F', 'Q0', q, sample, editRequest(filters, q0));
+    const summaries: ReturnType<typeof summarizeSet>[] = [];
+    for (const set of target.sets) {
+      for (const q of set.questions) {
+        const needed = remainingMicros(set, q);
+        if (needed) await allocation.assertBlock(needed);
+        const q0 = await search(set.name, 'Q0', 'Q0', q, 1, { filters: {}, skipScope: true });
+        for (const sample of set.samples) {
+          const live = await search(set.name, 'QH50', 'QH50', q, sample, { filters: {} });
+          const filters = buttonFilters(live);
+          if (!filters) continue;
+          await search(set.name, 'QH50+F', 'QH50', q, sample, editRequest(filters, live));
+          await search(set.name, 'Q0+F', 'Q0', q, sample, editRequest(filters, q0));
+        }
       }
+      // Each set is summarized as soon as it completes, so a stop in a later set keeps this one's result.
+      summaries.push(summarizeSet(set, journal));
+      reportSet(directory, hash, target.identity, summaries.at(-1)!);
     }
     const closing = allocation; allocation = undefined;
     const ledger = await closing.close();
-    const summaries = target.sets.map(s => summarizeSet(s, journal));
     writeFileSync(join(directory, 'summary.json'), JSON.stringify({ manifestSha256: hash, generation: target.identity.source.generationId,
       revision: target.identity.dataset.revision, ledger, summaries }, null, 2) + '\n', { mode: 0o600 });
-    const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
-    for (const s of summaries) {
-      console.log(`${s.set}: ${s.questions} questions (${s.narrow} narrow in ${s.narrowGroups} groups), ${s.samples} sample(s), publishable ${s.publishable}`);
-      for (const row of ROWS) {
-        const r = s.rows[row]!, f = s.fallbacks[row]!;
-        console.log(`  ${row.padEnd(7)} narrow R@20 ${pct(r.narrowR20).padStart(6)}  R@10 ${pct(r.narrowR10).padStart(6)}  broad P@10 ${pct(r.broadP10).padStart(6)}  nDCG@10 ${pct(r.broadNdcg10).padStart(6)}  searches ${String(r.searches).padStart(3)}  $${r.usd.toFixed(4)}  scope fail ${f.scopeFailures}/${f.scopeAttempts}  rerank fallback ${f.rerankFallbacks}/${f.rerankAttempts}`);
-      }
-      console.log(JSON.stringify({ set: s.set, differences: Object.fromEntries(Object.entries(s.narrowR20Differences).map(([k, v]) => [k, { delta: v.delta, ci95: v.ci95 }])),
-        button: s.button, answerKeyMatch: s.answerKeyMatch, determinism: s.determinism, labels: s.labels }));
-    }
     console.log(JSON.stringify({ event: 'complete', ledger }));
   } finally {
     try { if (allocation) await allocation.close(); }
     finally { await es.close(); await closeDb(db); }
   }
+}
+/** Writes `summary-<set>.json` and prints the set's table, fallbacks and checks. */
+function reportSet(directory: string, manifestSha256: string, identity: { source: { generationId: number }; dataset: { revision: string } },
+  s: ReturnType<typeof summarizeSet>) {
+  writeFileSync(join(directory, `summary-${s.set}.json`), JSON.stringify({ manifestSha256, generation: identity.source.generationId,
+    revision: identity.dataset.revision, summary: s }, null, 2) + '\n', { mode: 0o600 });
+  const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+  console.log(`${s.set}: ${s.questions} questions (${s.narrow} narrow in ${s.narrowGroups} groups), ${s.samples} sample(s), publishable ${s.publishable}`);
+  for (const row of ROWS) {
+    const r = s.rows[row]!, f = s.fallbacks[row]!;
+    console.log(`  ${row.padEnd(7)} narrow R@20 ${pct(r.narrowR20).padStart(6)}  R@10 ${pct(r.narrowR10).padStart(6)}  broad P@10 ${pct(r.broadP10).padStart(6)}  nDCG@10 ${pct(r.broadNdcg10).padStart(6)}  searches ${String(r.searches).padStart(3)}  $${r.usd.toFixed(4)}  scope fail ${f.scopeFailures}/${f.scopeAttempts}  rerank fallback ${f.rerankFallbacks}/${f.rerankAttempts}`);
+  }
+  console.log(JSON.stringify({ set: s.set, differences: Object.fromEntries(Object.entries(s.narrowR20Differences).map(([k, v]) => [k, { delta: v.delta, ci95: v.ci95 }])),
+    button: s.button, answerKeyMatch: s.answerKeyMatch, determinism: s.determinism, labels: s.labels }));
 }
 /** The port checks this too; checking before the journal line keeps a refused attempt from ending the label. */
 async function assertTarget(db: Db, pinned: PinnedDataset) {

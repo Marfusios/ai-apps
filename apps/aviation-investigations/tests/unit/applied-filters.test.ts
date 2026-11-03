@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyFiltersRequest, compareNarrowR20, crossGroupShares, fallbackRates, filterMatch, isInfrastructure, questionWorstCaseMicros, rowScores, stageMicros, type RowRanking } from '../../evals/applied-filters/plan.js';
+import { applyFiltersRequest, compareNarrowR20, crossGroupShares, fallbackRates, filterMatch, isInfrastructure, nextStreak, questionWorstCaseMicros, rowScores, stageMicros, type RowRanking } from '../../evals/applied-filters/plan.js';
 import { readJournal, TASK29 } from '../../evals/applied-filters/run.js';
 import { checkTaskCap } from '../../evals/langfuse/money.js';
 import { filterIdentity } from '../../evals/search-quality/ab-production.js';
@@ -114,5 +114,18 @@ describe('Task 29 fallbacks and groups', () => {
     const q = (id: string, group: string, relevant: string[]) => ({ id, question: id, group, class: 'narrow' as const, area: 'personnel', relevant });
     expect(crossGroupShares([q('a', 'g1', ['X']), q('b', 'g1', ['X']), q('c', 'g2', ['Y'])])).toBe(0);
     expect(crossGroupShares([q('a', 'g1', ['X']), q('c', 'g2', ['X', 'Y'])])).toBe(1);
+  });
+});
+
+describe('Task 29 provider stop', () => {
+  it('counts only searches that call the AI, so Elasticsearch-only searches neither count nor reset', () => {
+    const timeout = { scopeOutcome: 'timeout', rerankOutcome: 'applied' }, fine = { scopeOutcome: 'used', rerankOutcome: 'applied' };
+    const es = { scopeOutcome: 'skipped', rerankOutcome: 'disabled' };
+    // The confirmation schedule: Q0, QH50, QH50+F, Q0+F per question; a scope incident must still reach three.
+    let streak = 0;
+    for (const [arm, o] of [['Q0', es], ['QH50', timeout], ['Q0', es], ['QH50', timeout], ['Q0', es], ['QH50', timeout]] as const) streak = nextStreak(streak, arm, o);
+    expect(streak).toBe(3);
+    expect(nextStreak(2, 'QH50', fine)).toBe(0);
+    expect(nextStreak(2, 'Q0', es)).toBe(2);
   });
 });

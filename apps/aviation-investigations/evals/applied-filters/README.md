@@ -51,8 +51,9 @@ between rows: quote `ci95` with the number of questions and groups, not `lower95
 one-sided bound). These are coded-reference figures: they describe, they do not certify.
 
 Task 24's provider rules apply: three consecutive infrastructure outcomes (timeouts,
-overload, rate limits, provider errors) stop the run, and a set whose scope failure or
-rerank fallback rate exceeds 5% in any row is marked `publishable: false`. The summary
+overload, rate limits, provider errors) among the searches that call the AI stop the run,
+and a set whose scope failure or rerank fallback rate exceeds 5% in any row, or whose
+connected groups now share a case, is marked `publishable: false`. The summary
 also reports the button rate, recall over clicked samples only, the answer-key match,
 whether `Q0` equals each `QH50` search before ordering (and `Q0+F` each `QH50+F`), the
 label changes and connected questions that now share a case.
@@ -80,6 +81,8 @@ allowance, and the production gate checks every stage. Searches run one at a tim
 
 The ignored output directory (`data/work/task29` by default) holds the manifest, the
 journal (`results.jsonl`, every attempt written before dispatch), model outputs, stage
-charges, the allocation journal and `summary.json`. A rerun with the same label resumes;
+charges, the allocation journal, `summary-<set>.json` (written as each set completes) and
+`summary.json`. `--mode summarize` (free) checks the frozen run's identity and summarizes
+the sets its journal completed, without reserving or dispatching anything. A rerun with the same label resumes;
 an attempt without a durable result, or a failed search, stops the run for
 reconciliation and is never repeated under that label.

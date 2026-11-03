@@ -48,9 +48,15 @@ export const questionWorstCaseMicros = (s: StageMicros, samples: number): number
 /** Task 24's infrastructure outcomes: three in a row stop a run. */
 export const INFRASTRUCTURE = new Set(['count_failed', 'rate_limited', 'overloaded', 'timeout', 'provider_error', 'unbilled_provider_error']);
 export const isInfrastructure = (o: Pick<SearchObservation, 'scopeOutcome' | 'rerankOutcome'>) => INFRASTRUCTURE.has(o.scopeOutcome) || INFRASTRUCTURE.has(o.rerankOutcome);
-/** Task 24's fallback rates: failed scope among scope attempts, unapplied reranks among rerank attempts. */
+/**
+ * The run's consecutive infrastructure count. Only searches that call the AI (the QH50 configuration:
+ * a scope or a rerank) count or reset it; Elasticsearch-only searches leave it as it is.
+ */
+export const nextStreak = (streak: number, configArm: 'Q0' | 'QH50', o: Pick<SearchObservation, 'scopeOutcome' | 'rerankOutcome'>): number =>
+  configArm !== 'QH50' ? streak : isInfrastructure(o) ? streak + 1 : 0;
+/** Task 24's fallback rates: failed scope among scope attempts (any outcome but `skipped`), unapplied reranks among rerank attempts. */
 export function fallbackRates(rows: readonly SearchObservation[]) {
-  const scope = rows.filter(r => r.timing.scope.attempted), rerank = rows.filter(r => r.timing.rerank.attempted);
+  const scope = rows.filter(r => r.scopeOutcome !== 'skipped'), rerank = rows.filter(r => r.timing.rerank.attempted);
   const failedScope = scope.filter(r => !['used', 'non_search', 'skipped'].includes(r.scopeOutcome)).length;
   const fallbacks = rerank.filter(r => r.rerankOutcome !== 'applied').length;
   return { scopeAttempts: scope.length, scopeFailures: failedScope, scopeRate: scope.length ? failedScope / scope.length : 0,
