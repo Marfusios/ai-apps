@@ -7,7 +7,8 @@
  */
 import { RerankInputSchema, RerankOutputSchema, RERANK_SYSTEM, RERANK_VERSION, renderRerankUser } from './prompts/rerank.r1.js';
 import { assertEvidenceRanking, type EvidenceRankingConfig } from '../evidence/ranking-config.js';
-import { EVIDENCE_SCOPE_CAPS } from './pricing.js';
+import { ATTRIBUTION_CAPS, EVIDENCE_SCOPE_CAPS } from './pricing.js';
+import { AttributionInputSchema, AttributionWireOutputSchema, ATTRIBUTION_SYSTEM, ATTRIBUTION_VERSION, renderAttributionUser } from './prompts/attribution.a1.js';
 import { EvidenceScopeInputSchema, EvidenceScopeWireOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from './prompts/scope.e1.js';
 import Anthropic, {
   APIConnectionError,
@@ -29,6 +30,7 @@ import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/c
 import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v8.js';
 import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v2.js';
 import {
+  ATTRIBUTION_MODEL,
   CheckInputSchema,
   CheckOutputSchema,
   ComposeInputSchema,
@@ -40,6 +42,7 @@ import {
   StageError,
   type LlmProvider,
   type LlmStage,
+  type ProviderStage,
   type StageCtx,
   type StageErrorInfo,
   type StageInputs,
@@ -135,7 +138,7 @@ export interface AnthropicProviderConfig {
 
 interface StageSpec<I, O> {
   caps?: { readonly input: number; readonly output: number };
-  stage: LlmStage | 'rerank';
+  stage: ProviderStage;
   model?: string;
   promptVersion: string;
   system: string;
@@ -323,9 +326,11 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
 
   function stage<I, O>(spec: StageSpec<I, O>) {
     const format = outputFormat(spec.output);
-    const model = spec.stage === 'rerank' ? spec.model! : cfg.models[STAGE_ROLE[spec.stage]];
-    const thinking = thinkingParam(model, spec.stage === 'rerank' ? 'off' : cfg.thinking?.[spec.stage] ?? STAGE_THINKING[spec.stage]);
-    const effort = spec.stage === 'rerank' ? 'low' : cfg.effort?.[spec.stage] ?? STAGE_EFFORT[spec.stage];
+    // The evidence rerank and attribution check fix their model, thinking off and effort low.
+    const fixed = (s: ProviderStage): s is 'rerank' | 'attribution' => s === 'rerank' || s === 'attribution';
+    const model = fixed(spec.stage) ? spec.model! : cfg.models[STAGE_ROLE[spec.stage]];
+    const thinking = thinkingParam(model, fixed(spec.stage) ? 'off' : cfg.thinking?.[spec.stage] ?? STAGE_THINKING[spec.stage]);
+    const effort = fixed(spec.stage) ? 'low' : cfg.effort?.[spec.stage] ?? STAGE_EFFORT[spec.stage];
     const meta: Meta = { stage: spec.stage, provider: 'anthropic', model, promptVersion: spec.promptVersion };
     const fail = (category: StageError['category'], billing: StageErrorInfo['billing'], extra?: Partial<Meta>) =>
       new StageError(category, { ...meta, ...extra, billing });
@@ -423,6 +428,11 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
     stage: 'scope', promptVersion: EVIDENCE_SCOPE_VERSION, system: EVIDENCE_SCOPE_SYSTEM,
     input: EvidenceScopeInputSchema, output: EvidenceScopeWireOutputSchema, render: renderEvidenceScopeUser,
   });
+  const evidenceAttribution = stage({
+    caps: ATTRIBUTION_CAPS, stage: 'attribution', model: ATTRIBUTION_MODEL,
+    promptVersion: ATTRIBUTION_VERSION, system: ATTRIBUTION_SYSTEM,
+    input: AttributionInputSchema, output: AttributionWireOutputSchema, render: renderAttributionUser,
+  });
   const scope = stage({
     stage: 'scope',
     promptVersion: SCOPE_PROMPT_VERSION,
@@ -466,6 +476,11 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
       return { ...result, output: result.output.result };
     },
     countEvidenceScopeTokens: evidenceScope.countInputTokens,
+    evidenceAttribution: async (input, ctx) => {
+      const result = await evidenceAttribution.run(input, ctx);
+      return { ...result, output: result.output.result };
+    },
+    countEvidenceAttributionTokens: evidenceAttribution.countInputTokens,
     scope: scope.run,
     compose: compose.run,
     check: check.run,
