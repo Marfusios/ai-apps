@@ -53,10 +53,10 @@ describe('the attributed.v1 policy', () => {
     expect(Object.isFrozen(attributed)).toBe(true); expect(Object.isFrozen(attributed.attribution.caps)).toBe(true);
     expect(attributed).toMatchObject({ version: 'attributed.v1', fields: ['state', 'years', 'category'],
       rules: { state: 'state-mention.v1', years: 'year-mention.v1', category: 'category-mention.v1' },
-      attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a1' }, caps: { input: 3000, output: 500 },
+      attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a1' }, caps: { input: 5000, output: 500 },
         timeoutMs: 8000, settings: { thinking: 'off', effort: 'low', retries: 0, cache: 'system-5m' } },
       behaviour: { version: 'candidate-probes.v1' }, appliesTo: 'question-case-search' });
-    expect(autoFilterIdentity(attributed).sha256).toBe('6aeda56d9c63e98620cfd744d34be6f58257d6d219952a2130686dc5c7a43f8d');
+    expect(autoFilterIdentity(attributed).sha256).toBe('b554b3ede32e6d2d69d974329faa31ea0374252cc41880653f3d8934a4336824');
     expect(autoFilterIdentity(autoFilterPolicy('none')).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
     expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.3')).sha256).toBe('8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de');
   });
@@ -219,14 +219,14 @@ describe('money', () => {
     const none = evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', c);
     const with_ = evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', c, attributed);
     expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', c, autoFilterPolicy('state-explicit.v1.3'))).toEqual(none);
-    expect(with_.worstCaseUsd - none.worstCaseUsd).toBeCloseTo(0.000625, 12);
+    expect(with_.worstCaseUsd - none.worstCaseUsd).toBeCloseTo(0.000875, 12);
     expect(with_.reservationUsd).toBe(Math.ceil(with_.worstCaseUsd * 1e4) / 1e4);
   });
-  it('is $0.000625: 3,000 input tokens all written to the cache, 500 output tokens', () => {
-    expect(WORST).toBeCloseTo((3000 * 0.1 + 500 * 0.5 + 3000 * (0.125 - 0.1)) / 1e6, 12);
+  it('is $0.000875: 5,000 input tokens all written to the cache, 500 output tokens', () => {
+    expect(WORST).toBeCloseTo((5000 * 0.1 + 500 * 0.5 + 5000 * (0.125 - 0.1)) / 1e6, 12);
     expect(attributionWorstCaseUsd(attributed.attribution)).toBe(WORST);
-    expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig('er-q-v1'), attributed).reservationUsd).toBe(0.0031);
-    expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig('er-q-h50-v1'), attributed).reservationUsd).toBe(0.0096);
+    expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig('er-q-v1'), attributed).reservationUsd).toBe(0.0034);
+    expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig('er-q-h50-v1'), attributed).reservationUsd).toBe(0.0099);
   });
   it('the admitted HTTP gate holds every stage within the attributed reservation, and refuses the check without it', async () => {
     const c = evidenceRankingConfig('er-q-h50-v1'), r = c.rerank!;
@@ -244,7 +244,7 @@ describe('money', () => {
   });
   it('the startup check prices the configured policy, and an uncertain check counts toward the daily allowance', () => {
     const cfg = loadConfig({ env: { NODE_ENV: 'test', AI_LLM_PROVIDER: 'fake', AVIATION_EVIDENCE_AUTO_FILTERS: 'attributed.v1' }, files: [] });
-    expect(evidenceStartupCheck(cfg).reservationUsd).toBe(0.0031);
+    expect(evidenceStartupCheck(cfg).reservationUsd).toBe(0.0034);
     expect(UNCERTAIN_CALL_STAGES).toContain('attribution');
   });
 });
@@ -278,11 +278,11 @@ describe('the real adapter on an offline transport', () => {
   it('refuses contexts above its caps, an over-cap count and an invalid envelope, without unbilled generation', async () => {
     const { p, parse } = provider(null);
     const ctx = evidenceAttributionCtx(new AbortController().signal, 8000);
-    await expect(p.evidenceAttribution!(input, { ...ctx, maxInputTokens: 3001 })).rejects.toMatchObject({ category: 'invalid_input', billing: { kind: 'none' } });
+    await expect(p.evidenceAttribution!(input, { ...ctx, maxInputTokens: 5001 })).rejects.toMatchObject({ category: 'invalid_input', billing: { kind: 'none' } });
     expect(isValidStageCtx('attribution', { ...ctx, maxOutputTokens: 501 })).toBe(false);
     expect(parse).not.toHaveBeenCalled();
     await expect(p.evidenceAttribution!(input, ctx)).rejects.toMatchObject({ category: 'invalid_output', stage: 'attribution', billing: { kind: 'usage' } });
-    const over = provider(undefined, 3001);
+    const over = provider(undefined, 5001);
     await expect(over.p.evidenceAttribution!(input, ctx)).rejects.toMatchObject({ category: 'cap_exceeded', billing: { kind: 'none' } });
     expect(over.parse).not.toHaveBeenCalled();
   });
@@ -295,13 +295,13 @@ describe('preflight and prompt mirror', () => {
     expect(a.worst.map(w => w.input.question.length)).toEqual([600, 600]);
     expect(a.worst[0]!.input.candidates.map(c => c.values.length)).toEqual([51, 1, 1]);
     expect(a.worst[0]!.input.candidates.slice(1).map(c => c.values)).toEqual([['1999 or earlier'], ['powered parachute']]);
-    const provider = createFakeProvider({ attributionCounts: input => input.candidates[0]!.values.length > 1 ? 3001 : 2000 });
+    const provider = createFakeProvider({ attributionCounts: input => input.candidates[0]!.values.length > 1 ? 5001 : 2000 });
     const reservationUsd = evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig(), attributed).reservationUsd;
     const rows = (await runAiPreflight(provider, async (_m, text) => Math.ceil(text.length / 4), models,
       { embeddingModel: 'text-embedding-3-small', reservationUsd, autoFilters: attributed })).filter(r => r.stage === 'attribution');
     expect(rows.map(r => [r.request, r.limit, r.ok])).toEqual([
-      ['attr.a1: fixed prompt + schema', 3000, true], ['attr.a1: cached prefix', CACHED_PREFIX_MAX, true],
-      ['attr.a1: most candidates, 600-character Latin question', 3000, false], ['attr.a1: most candidates, 600-character dense question', 3000, false],
+      ['attr.a1: fixed prompt + schema', 5000, true], ['attr.a1: cached prefix', CACHED_PREFIX_MAX, true],
+      ['attr.a1: most candidates, 600-character Latin question', 5000, false], ['attr.a1: most candidates, 600-character dense question', 5000, false],
       ['attr.a1: output at its schema bounds', 500, true]]);
     expect(rows.every(r => r.model === 'claude-haiku-5-5')).toBe(true);
     expect(provider.calls).toHaveLength(0);
