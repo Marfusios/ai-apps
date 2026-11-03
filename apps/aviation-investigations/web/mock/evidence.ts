@@ -9,23 +9,30 @@
  *   (`AVIATION_EVIDENCE_RANKING`) and one automatic-filter policy (`AVIATION_EVIDENCE_AUTO_FILTERS`),
  *   the server's defaults (`er-q-v1`, `none`) unless `MockEvidenceOptions.config` names others
  *   (live runs the Haiku rerank of the top 50 with no automatic filter, `MOCK_EVIDENCE_RELEASE`;
- *   the reviewed state policy, off on live, is `MOCK_EVIDENCE_STATE_POLICY`). The
- *   configuration decides what keyword search reads (the question, the suggested terms, or both:
- *   `query.keywords`), whether AI puts the leading results in order (`order`), whose words are
- *   marked (`marks`), and whether a state the question names is applied (`automaticFilters`).
+ *   the reviewed state policy, off on live, is `MOCK_EVIDENCE_STATE_POLICY`; the attributed
+ *   policy of Task 30, live's ranking with a state, years and an aircraft category applied, is
+ *   `MOCK_EVIDENCE_FIELDS_POLICY`). The configuration decides what keyword search reads (the
+ *   question, the suggested terms, or both: `query.keywords`), whether AI puts the leading results
+ *   in order (`order`), whose words are marked (`marks`), and which filters the question names are
+ *   applied (`automaticFilters`).
  * - **Retrieval**: a question search ranks every default-cohort fixture case that passes its
- *   filters (none, or the state applied automatically) by how often the words keyword search read
- *   occur (probable cause counted three times), then newest first. An edited search applies
- *   exactly the filters sent (the mock search engine's own filter rules) and ranks by the user's
- *   words when it has them, by the question's own words when it restores them (`keywords:
- *   'question'`), else by the earlier search's words. With a reranking configuration the leading
- *   50 or 100 cases are put in order by a fixed stand-in for the AI's grades (the searched words
- *   each case's probable cause holds), edits included. Paging is free and reads the pinned list.
+ *   filters (none, or those applied automatically) by how often the words keyword search read
+ *   occur (probable cause counted three times), then newest first. Filters follow the mock search
+ *   engine's own rules, Explore's (an aircraft filter such as the category is met when one
+ *   aircraft of an event meets it), not the server's evidence search, where every aircraft of the
+ *   event must (DESIGN "Evidence-view MVP"). An edited search applies exactly the filters sent
+ *   and ranks by the user's words when it has them, by the question's own words when it restores
+ *   them (`keywords: 'question'`), else by the earlier search's words. With a reranking
+ *   configuration the leading 50 or 100 cases are put in order by a fixed stand-in for the AI's
+ *   grades (the searched words each case's probable cause holds), edits included. Paging is free
+ *   and reads the pinned list.
  * - **The suggestion** (a stand-in for the scope stage): a few fixed rules turn words into
  *   Explore filters ("helicopter", "on approach", "IMC", "fatal", "at night", "agricultural", a
- *   US state, "since 2015") and the rest into search words. Only the guarded state may be applied
- *   (the server's own guard, shared/state-eligibility.ts); terms keyword search read and an
- *   applied state are not suggested again, and a suggestion with nothing left is null. With the
+ *   US state, "since 2015") and the rest into search words. The state policy may apply only the
+ *   guarded state (the server's own guard, shared/state-eligibility.ts); the attributed policy
+ *   applies the suggested state, years and aircraft category (standing in for the server's
+ *   candidate rules and AI check, which the mock does not run). Terms keyword search read and
+ *   applied filters are not suggested again, and a suggestion with nothing left is null. With the
  *   baseline ranking the excerpts mark the suggested terms when there are any, else the words
  *   searched. The server, not the scope stage, reads an explicit counting request (the dashboard
  *   hint) or comparison request with case numbers (the compare hint) from the question; both still
@@ -33,9 +40,10 @@
  *   operational advice, gets its results with one of the contract's fixed capability notes
  *   (`EVIDENCE_NOTE_TEXT`) and no suggestion.
  * - **The one free undo**, by the server's rule (server/evidence/undo.ts): an edit of an original
- *   question search the visitor owns, sending no words, that only removes what AirCase added (the
- *   whole automatic state, the added terms, or both) is made without using one of the visitor's
- *   searches (`freeUndo`), once per search; every other edit uses one (`quotaExempt` on the reply).
+ *   question search the visitor owns, sending no words, that only removes what AirCase added (one
+ *   or more whole automatic filters, the added terms, or both) is made without using one of the
+ *   visitor's searches (`freeUndo`), once per search; every other edit uses one (`quotaExempt` on
+ *   the reply).
  *   Every page read says whether it is still there, as the server computes it from its claim
  *   (`undo`: `available`, `used` once claimed, `none` for an edit or a search with nothing added).
  * - **Projection**: the probable-cause statements in section order; up to three whole
@@ -84,6 +92,7 @@ import {
 import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters } from '../../shared/contracts/briefs.js';
 import type { CaseDetail, Section } from '../../shared/contracts/cases.js';
 import type { ErrorResponse } from '../../shared/contracts/common.js';
+import type { ConfigResponse } from '../../shared/contracts/config.js';
 import { FACET_VALUES, SECTION_LABEL, defaultSearchRequest, type CaseRow, type SearchRequest } from '../../shared/contracts/search.js';
 import { DEFAULT_EVIDENCE_AUTO_FILTERS, EVIDENCE_AUTO_FILTER_VERSIONS, type EvidenceAutoFilterVersion } from '../../shared/evidence-auto-filters.js';
 import { DEFAULT_EVIDENCE_RANKING, EVIDENCE_RANKING_VERSIONS, type EvidenceRankingVersion } from '../../shared/evidence-ranking.js';
@@ -141,6 +150,12 @@ export const MOCK_EVIDENCE_QUESTIONS = {
   stateMarked: 'Carb icing on approach in Missouri',
   /** Two states the question names together: applied as one filter, either state. */
   twoStates: 'Engine power loss in California or Nevada',
+  /**
+   * A state, years and an aircraft type the question names, a suggested phase and terms: with the
+   * attributed policy (`attributed.v1`), Texas, the years from 2008 and helicopters are applied
+   * (two cases) and the phase and the terms stay suggestions; the state policy applies Texas alone.
+   */
+  fields: 'Helicopter power loss on approach in Texas since 2008',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -150,7 +165,10 @@ export const MOCK_EVIDENCE_QUESTIONS = {
 export interface MockEvidenceConfig {
   /** What keyword search reads, and whether AI puts the leading results in order. */
   ranking: EvidenceRankingVersion;
-  /** Whether a state the question names is applied (`state-explicit.v1.3`) or only suggested (`none`). */
+  /**
+   * Whether a state the question names is applied (`state-explicit.v1.3`), a state, years and an
+   * aircraft category (`attributed.v1`), or each only suggested (`none`).
+   */
   autoFilters: EvidenceAutoFilterVersion;
 }
 
@@ -167,6 +185,21 @@ export const MOCK_EVIDENCE_RELEASE: MockEvidenceConfig = { ranking: 'er-q-h50-v1
  * marked, and a state the question names applied by the guarded policy.
  */
 export const MOCK_EVIDENCE_STATE_POLICY: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: 'state-explicit.v1.3' };
+/**
+ * The attributed policy (Task 30), not on live: live's ranking (the question alone, the leading
+ * results put in order by the Haiku rerank, the reader's words marked) with the state, years and
+ * aircraft category the question names applied on their own, and the rest suggested.
+ */
+export const MOCK_EVIDENCE_FIELDS_POLICY: MockEvidenceConfig = { ranking: 'er-q-h50-v1', autoFilters: 'attributed.v1' };
+
+/** A field an automatic-filter policy may apply. */
+type AutomaticField = NonNullable<ConfigResponse['aiAutomaticFilters']>[number];
+
+/** The fields an automatic-filter policy may apply (`/api/config` `aiAutomaticFilters`, as the server reports them). */
+export function automaticFieldsOf(autoFilters: EvidenceAutoFilterVersion): AutomaticField[] {
+  if (autoFilters === 'attributed.v1') return ['state', 'years', 'category'];
+  return autoFilters === 'state-explicit.v1.3' ? ['state'] : [];
+}
 
 /**
  * Session storage (dev mock mode and end-to-end tests): the configuration the mock API stands in
@@ -583,6 +616,51 @@ function sameFilters(a: BriefFilters, b: BriefFilters): boolean {
   return canonical(a) === canonical(b);
 }
 
+/**
+ * What the attributed policy (`attributed.v1`) applies of a suggestion: its state, years and
+ * aircraft category, as automatic filters, the rest left suggested; null when it suggests none of
+ * them. The server applies only those its candidate rules and AI check pass; the mock's stand-in
+ * for the scope stage suggests only what its question names.
+ */
+function attributedOf(filters: BriefFilters): { automatic: EvidenceAutomaticFilters; rest: BriefFilters } | null {
+  const { state, yearFrom, yearTo, category, ...rest } = filters;
+  const automatic: EvidenceAutomaticFilters = {
+    ...(state?.length ? { state: [...state] as EvidenceAutomaticFilters['state'] } : {}),
+    ...(yearFrom !== undefined ? { yearFrom } : {}),
+    ...(yearTo !== undefined ? { yearTo } : {}),
+    ...(category?.length ? { category: [...category] } : {}),
+  };
+  return Object.keys(automatic).length > 0 ? { automatic, rest } : null;
+}
+
+/** A question search's applied filters: what its policy applied on its own (the question request carries none). */
+function appliedOf(automatic: EvidenceAutomaticFilters | null): BriefFilters {
+  if (!automatic) return {};
+  const { state, yearFrom, yearTo, category } = automatic;
+  return {
+    ...(category ? { category: [...category] } : {}),
+    ...(state ? { state: [...state] } : {}),
+    ...(yearFrom !== undefined ? { yearFrom } : {}),
+    ...(yearTo !== undefined ? { yearTo } : {}),
+  };
+}
+
+/** The keys of the applied filters each automatic filter is: the state set, the years (both bounds, one filter), the aircraft category set. */
+const AUTOMATIC_KEYS = { state: ['state'], years: ['yearFrom', 'yearTo'], category: ['category'] } as const satisfies Record<string, readonly (keyof BriefFilters)[]>;
+
+/**
+ * The automatic filters an undo may remove whole: those the applied filters still hold as the
+ * policy applied them (the applied value is the automatic one), in a fixed order.
+ */
+function removableAutomatic(applied: BriefFilters, automatic: EvidenceAutomaticFilters | null): (keyof typeof AUTOMATIC_KEYS)[] {
+  if (!automatic) return [];
+  const out: (keyof typeof AUTOMATIC_KEYS)[] = [];
+  if (automatic.state?.length && sameFilters({ state: automatic.state }, { state: applied.state ?? [] })) out.push('state');
+  if ((automatic.yearFrom !== undefined || automatic.yearTo !== undefined) && applied.yearFrom === automatic.yearFrom && applied.yearTo === automatic.yearTo) out.push('years');
+  if (automatic.category?.length && sameFilters({ category: automatic.category }, { category: applied.category ?? [] })) out.push('category');
+  return out;
+}
+
 /** What is left of a suggestion once keyword search read its terms: nothing left is no suggestion (server/evidence/disclosure.ts). */
 function remainingSuggestion(keywords: Keywords, suggestion: ScopeSuggestion | null): Suggestion | null {
   if (!suggestion) return null;
@@ -742,12 +820,12 @@ export class MockEvidence {
 
   /**
    * The search's undo hint at this read (server/evidence/store.ts `pageOf`): an original question
-   * search with an automatic state or added terms has its one free undo until it is claimed; an
+   * search with an automatic filter or added terms has its one free undo until it is claimed; an
    * edit, or a search with nothing added, has none.
    */
   private undoHint(search: MockSearch): EvidencePage['undo'] {
     if (search.edited || search.query.source !== 'question') return 'none';
-    if (!search.automaticFilters?.state.length && search.query.keywords.kind === 'question') return 'none';
+    if (!search.automaticFilters && search.query.keywords.kind === 'question') return 'none';
     return search.undoClaimed ? 'used' : 'available';
   }
 
@@ -826,23 +904,25 @@ export class MockEvidence {
 
   /**
    * The one free undo (server/evidence/undo.ts `canUndo`): `parent` is an original question
-   * search whose undo is not used yet; the edit sends no words, and it removes the parent's whole
-   * automatic state, its added terms (`keywords: 'question'`), or both, and changes nothing else.
-   * Removing one state of several narrows the search, so it is an ordinary edit.
+   * search whose undo is not used yet; the edit sends no words, and it removes one or more of the
+   * parent's whole automatic filters (the state set, both year bounds, the aircraft category set,
+   * each still as applied), its added terms (`keywords: 'question'`), or both, and changes nothing
+   * else. Removing one state or category of several narrows the search, so it is an ordinary edit.
    */
   private undoable(parent: MockSearch, edit: EditRequest): boolean {
     if (parent.edited || parent.undoClaimed || edit.terms !== undefined || parent.query.source !== 'question') return false;
     const removedTerms = edit.keywords === 'question' && parent.query.keywords.kind !== 'question';
     if (edit.keywords !== undefined && !removedTerms) return false;
-    let removedState = false;
-    if (!sameFilters(edit.filters, parent.appliedFilters)) {
-      const automatic = parent.automaticFilters;
-      if (!automatic?.state.length || !sameFilters({ state: automatic.state }, { state: parent.appliedFilters.state ?? [] })) return false;
-      const { state: _state, ...rest } = parent.appliedFilters;
-      if (!sameFilters(edit.filters, rest)) return false;
-      removedState = true;
+    if (sameFilters(edit.filters, parent.appliedFilters)) return removedTerms;
+    const removable = removableAutomatic(parent.appliedFilters, parent.automaticFilters);
+    for (let removed = 1; removed < 1 << removable.length; removed++) {
+      const rest: Record<string, unknown> = { ...parent.appliedFilters };
+      removable.forEach((f, i) => {
+        if (removed & (1 << i)) for (const key of AUTOMATIC_KEYS[f]) delete rest[key];
+      });
+      if (sameFilters(edit.filters, rest as BriefFilters)) return true;
     }
-    return removedState || removedTerms;
+    return false;
   }
 
   /**
@@ -924,7 +1004,8 @@ export class MockEvidence {
     const mode = lexicalText(this.config.ranking);
     const keywords: Keywords = scope && mode !== 'question' ? { kind: mode, terms: scope.terms } : { kind: 'question' };
     const lexical = keywords.kind === 'terms' ? keywords.terms : keywords.kind === 'question+terms' ? `${words} ${keywords.terms}` : words;
-    // A state the question names, applied only by the guarded policy and the server's own guard.
+    // A state the question names, applied only by the guarded policy and the server's own guard;
+    // or, by the attributed policy, the suggested state, years and aircraft category.
     let suggested = scope;
     let automaticFilters: EvidenceAutomaticFilters | null = null;
     if (scope && this.config.autoFilters === 'state-explicit.v1.3' && (scope.filters.state ?? []).length > 0) {
@@ -935,6 +1016,11 @@ export class MockEvidence {
         suggested = { ...scope, filters: rest };
       }
     }
+    const attributed = scope && this.config.autoFilters === 'attributed.v1' ? attributedOf(scope.filters) : null;
+    if (scope && attributed) {
+      automaticFilters = attributed.automatic;
+      suggested = { ...scope, filters: attributed.rest };
+    }
     const suggestion = remainingSuggestion(keywords, suggested);
     // The baseline marks the suggested terms while it suggests some; every other configuration marks the words searched.
     const marks: EvidencePage['marks'] = this.config.ranking === DEFAULT_EVIDENCE_RANKING && suggestion?.terms ? 'suggested_terms' : 'search_words';
@@ -942,7 +1028,7 @@ export class MockEvidence {
       {
         question: body.question,
         query: { source: 'question', keywords },
-        appliedFilters: automaticFilters ? { state: [...automaticFilters.state] } : {},
+        appliedFilters: appliedOf(automaticFilters),
         automaticFilters,
         suggestion,
         hint,

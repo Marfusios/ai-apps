@@ -17,7 +17,8 @@
  * let through when the visitor's own searches are used up (a trial's, or an account's day or
  * month), as a replay is; every other pause still refuses it. `/api/config` offers Cloudflare's
  * documented test site key, the AI limits (`MOCK_AI_LIMITS`) and the fields the evidence policy
- * applies on its own (`aiAutomaticFilters`: `['state']` when the mock applies states, else none).
+ * applies on its own (`aiAutomaticFilters`: `['state']` when the mock applies states alone,
+ * `['state', 'years', 'category']` with the attributed policy, else none).
  *
  * Task 25: an evidence search's stages are timed like live's (web/mock/evidence-progress.ts, scaled
  * by `evidenceTiming`, or this tab's session storage `MOCK_EVIDENCE_TIMING_KEY`), its POST answered
@@ -52,7 +53,7 @@ import { AI_STATUS_SAMPLES, MOCK_AI_LIMITS } from '../../mock/ai-status';
 import { MockBriefs, type MockReader, type MockReply } from '../../mock/briefs';
 import { mockAdminOverview } from '../../mock/admin';
 import { parseMockImportState, type MockImportState } from '../../mock/imports';
-import { MOCK_EVIDENCE_CONFIG_KEY, MockEvidence, parseMockEvidenceConfig, type MockEvidenceConfig, type MockEvidenceReply } from '../../mock/evidence';
+import { MOCK_EVIDENCE_CONFIG_KEY, MockEvidence, automaticFieldsOf, parseMockEvidenceConfig, type MockEvidenceConfig, type MockEvidenceReply } from '../../mock/evidence';
 import { MockEvidenceProgress } from '../../mock/evidence-progress';
 import { searchCorpus, type MockCorpus } from '../../mock/engine';
 
@@ -93,8 +94,8 @@ export interface HandlerOptions {
   evidence?: MockEvidenceConfig;
   /**
    * What `/api/config` reports as `aiAutomaticFilters` (default: as the evidence policy says,
-   * `['state']` with `state-explicit.v1.3`, else none); `null` leaves the field out, as a server
-   * that does not report it.
+   * `['state']` with `state-explicit.v1.3`, `['state', 'years', 'category']` with `attributed.v1`,
+   * else none); `null` leaves the field out, as a server that does not report it.
    */
   aiAutomaticFilters?: ConfigResponse['aiAutomaticFilters'] | null;
   /**
@@ -241,7 +242,7 @@ export function createHandlers({
   deletionNeedsReauth = deletionReauthFlag(),
   accountCheck = false,
   evidence: evidenceConfig = evidenceConfigFlag(),
-  aiAutomaticFilters = evidenceConfig.autoFilters === 'state-explicit.v1.3' ? ['state'] : [],
+  aiAutomaticFilters = automaticFieldsOf(evidenceConfig.autoFilters),
   evidenceTiming = 0,
   admin = adminFlag(),
   imports = importsFlag(),

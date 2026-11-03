@@ -1,11 +1,13 @@
 /**
  * The evidence view's `evidence.v3` disclosures over the mock API (web/mock/evidence.ts) in the
  * configurations the evaluation may pick and the one live runs (`MOCK_EVIDENCE_RELEASE`; UI_DESIGN
- * §4.9): a state AirCase applied because the question names it, terms it added to keyword search,
- * AI's order of the leading results and whose words are marked, each said as such on every surface;
- * the suggestion keeping only what was not used; and "Search again · free", the one free undo of
- * what AirCase added, when the page says it is there (`undo: 'available'`) and the draft qualifies
- * by the server's rule (positive cases and each condition that makes an edit use one), at zero
+ * §4.9): a state AirCase applied because the question names it (and, with the attributed policy of
+ * Task 30, `MOCK_EVIDENCE_FIELDS_POLICY`, years and an aircraft category too, with the note that AI
+ * applied them), terms it added to keyword search, AI's order of the leading results and whose words
+ * are marked, each said as such on every surface; the suggestion keeping only what was not used; and
+ * "Search again · free", the one free undo of what AirCase added, when the page says it is there
+ * (`undo: 'available'`) and the draft qualifies by the server's rule (positive cases and each
+ * condition that makes an edit use one; the rule's whole table is in free-undo-rule.test.ts), at zero
  * searches left, read again right before it is sent and after it fails (never shown free while the
  * hint is in doubt), with the server's `freeUndo` as the last word. The baseline configuration's
  * states are in evidence.test.tsx.
@@ -17,7 +19,7 @@ import type { AiStatusResponse } from '../../shared/contracts/ai';
 import type { BriefFilters } from '../../shared/contracts/briefs';
 import { CreateEvidenceResponseSchema, EVIDENCE_BOUNDARY, EVIDENCE_HEADING, EVIDENCE_NOTICE, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
-import { MOCK_EVIDENCE_QUESTIONS, MOCK_EVIDENCE_RELEASE, MOCK_EVIDENCE_STATE_POLICY, type MockEvidenceConfig } from '../../web/mock/evidence';
+import { MOCK_EVIDENCE_FIELDS_POLICY, MOCK_EVIDENCE_QUESTIONS, MOCK_EVIDENCE_RELEASE, MOCK_EVIDENCE_STATE_POLICY, type MockEvidenceConfig } from '../../web/mock/evidence';
 import { UNDO_USED_NOTICE } from '../../web/src/features/evidence/undo';
 import { COPY } from '../../web/src/features/ai/AiNoticeBox';
 import { ClientConfigSchema } from '../../web/src/api';
@@ -28,6 +30,8 @@ import {
   ALSO_SEARCHED_LABEL,
   APPLY_BOTH,
   APPLY_FILTERS,
+  AUTOMATIC_NOTE,
+  AUTOMATIC_NOTE_FREE,
   EDITED_LABEL,
   EMPTY_TITLE,
   FROM_QUESTION,
@@ -43,6 +47,7 @@ import {
   UNDO_CHARGED,
   YOUR_SEARCH_LABEL,
   allShownLine,
+  automaticYears,
   countLine,
   excerptLabel,
   fullSectionLabel,
@@ -60,7 +65,8 @@ import {
 import { foldProbableCauses } from '../../web/src/features/evidence/fold';
 import { LONG_TEXT_CHARS } from '../../web/src/features/evidence/Excerpt';
 import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
-import { AI_NUDGE, AI_NUDGE_FILTERS, AI_NUDGE_STATE, aiNudge } from '../../web/src/pages/Explore';
+import { AI_NUDGE, AI_NUDGE_FIELDS, AI_NUDGE_FILTERS, AI_NUDGE_STATE, aiNudge } from '../../web/src/pages/Explore';
+import { AI_ON_LINE, AI_ON_LINE_FIELDS, AI_ON_LINE_STATE, aiOnLine } from '../../web/src/pages/About';
 import { aircraftName, aircraftSummary, letterOf, phaseEventShort, placeShort, rowMonoParts } from '../../web/src/features/case/display';
 import { formatDate } from '../../web/src/lib/format';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
@@ -783,6 +789,234 @@ describe('Search again is free only for the one undo of what AirCase added (serv
   });
 });
 
+/** A chip of a filter AirCase applied on its own, by its label ("Years: from 2008"). */
+const automaticChip = (label: string, panel = yours()): HTMLElement =>
+  within(panel).getByRole('button', { name: new RegExp(`^${label}\\s*, added automatically from your question, remove$`) });
+
+/** The note under the filters AirCase applied on its own, on screen (null when there is none). */
+const automaticNote = (panel = yours()): HTMLElement | null => panel.querySelector<HTMLElement>('[data-automatic-note]');
+
+describe('the attributed policy (`MOCK_EVIDENCE_FIELDS_POLICY`, Task 30): a state, years and an aircraft category the question names, applied on their own, each tagged and free to remove', { timeout: 30_000 }, () => {
+  it('each is a blue chip “from your question”, with the note that AI applied them; the suggestion keeps only the rest; a tiny result sums them up tagged', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_FIELDS_POLICY });
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.fields);
+    expect([search.automaticFilters, search.appliedFilters, search.undo]).toEqual([{ state: ['TX'], yearFrom: 2008, category: ['HELI'] }, { category: ['HELI'], state: ['TX'], yearFrom: 2008 }, 'available']);
+    const panel = yours();
+    expect(panel.textContent).toContain(QUESTION_AS_ASKED);
+    // Each a normal applied chip (blue, solid, removable) with its tag, said for screen readers; the facets in the contract's order, years last.
+    expect([...panel.querySelectorAll('[data-automatic]')].map(visibleText)).toEqual([`Aircraft: Helicopter${FROM_QUESTION}`, `Location: Texas${FROM_QUESTION}`, `Years: from 2008${FROM_QUESTION}`]);
+    for (const label of ['Aircraft: Helicopter', 'Location: Texas', 'Years: from 2008']) {
+      const chip = automaticChip(label);
+      expect([chip.className.includes('border-blue'), chip.className.includes('border-dashed'), chip.getAttribute('data-automatic')]).toEqual([true, false, 'true']);
+      const tag = chip.querySelector('[data-automatic-tag]') as HTMLElement;
+      expect([tag.textContent, tag.getAttribute('aria-hidden')]).toEqual([FROM_QUESTION, 'true']);
+    }
+    // The note under them: fixed words, with the free undo while the page says it is there; paper keeps its first sentence.
+    const note = automaticNote() as HTMLElement;
+    expect(note.textContent).toBe(AUTOMATIC_NOTE_FREE);
+    expect(AUTOMATIC_NOTE_FREE).toBe('AI applied the filters marked “from your question”. Remove any that are wrong; searching again without them is free once.');
+    expect(hidden(note)).toBe(true);
+    const paper = panel.querySelector('[data-automatic-note-print]') as HTMLElement;
+    expect([paper.textContent, paper.getAttribute('data-print')]).toEqual([AUTOMATIC_NOTE, 'only']);
+    expect(AUTOMATIC_NOTE).toBe('AI applied the filters marked “from your question”.');
+    // Under the filters, in their row.
+    expect(note.closest('dd')).toBe(within(panel).getByRole('list', { name: 'Filters' }).closest('dd'));
+    // Keyword search read the question alone: nothing else was added.
+    expect(panel.querySelector('[data-added-terms], [data-keywords-note]')).toBeNull();
+    // The suggestion: only what was not applied (the phase and the terms), with its note for a search AirCase added to.
+    expect(search.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'power loss' });
+    const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });
+    expect(suggestion.querySelector('[data-suggestion-note]')?.textContent).toBe(SUGGESTION_NOTE_AUTOMATIC);
+    expect(within(suggestion).getByRole('list', { name: 'Suggested filters' }).textContent).toBe('Phase: Approach');
+    expect(suggestion.textContent).toContain('“power loss”');
+    expect(suggestion.textContent).not.toMatch(/Texas|Helicopter|2008/);
+    expect(document.querySelector('[data-suggestion-print]')?.textContent).toBe('Suggested filters and terms — not applied: Phase: Approach · “power loss”');
+    // Two cases: a tiny result, which sums the filters up with each automatic one tagged.
+    const box = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-few-results-search]');
+      if (!found) throw new Error('not yet');
+      return found;
+    }, SLOW);
+    expect(box.textContent).toBe(`Filters: Aircraft: Helicopter (${FROM_QUESTION}) · Location: Texas (${FROM_QUESTION}) · Years: from 2008 (${FROM_QUESTION}) · ${QUESTION_AS_ASKED}`);
+    // Each card says the filters it met, and the leading results are in AI order.
+    const lines = [...document.querySelectorAll('[data-relevance]')].map((r) => visibleText(r));
+    expect(lines).toHaveLength(2);
+    expect(lines.every((l) => l.startsWith('Aircraft: Helicopter · Location: Texas · Years: from 2008 · '))).toBe(true);
+    expect(document.querySelector('[data-count-line]')?.textContent).toBe(countLine(search.total, 'ai_relevance'));
+  });
+
+  it.each([
+    ['the years', 'Years: from 2008', { category: ['HELI'], state: ['TX'] }],
+    ['the aircraft category', 'Aircraft: Helicopter', { state: ['TX'], yearFrom: 2008 }],
+    ['the state', 'Location: Texas', { category: ['HELI'], yearFrom: 2008 }],
+  ] as const)('removing %s alone is the one free undo: an edit with the other filters and no words, which used none of the visitor’s searches', async (_name, label, sent) => {
+    freshApi({ evidence: MOCK_EVIDENCE_FIELDS_POLICY });
+    installTurnstile();
+    const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.fields);
+    await waitFor(() => expect(banner()).toContain('AI searches left: 9 of 10'), SLOW);
+    const posts = recordPosts('/api/evidence');
+    fireEvent.click(automaticChip(label));
+    expect(document.activeElement?.textContent).toBe('+ Filter');
+    fireEvent.click(searchAgain('free'));
+    await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
+    expect(posts).toEqual([{ kind: 'edited', from: search.id, filters: sent, idempotencyKey: expect.any(String), turnstileToken: TOKEN }]);
+    // The undo's search is an edit: the filters left are the reader's own now, untagged, with no note.
+    const edited = await screen.findByRole('region', { name: EDITED_LABEL }, SLOW);
+    expect(edited.querySelector('[data-automatic], [data-automatic-tag], [data-automatic-note]')).toBeNull();
+    expect(within(edited).queryAllByRole('button', { name: /, remove$/ })).toHaveLength(2);
+    await waitFor(() => expect(live()).toMatch(/^\d+ investigations? retrieved\.$/), SLOW);
+    expect(document.querySelector('[data-undo-charged]')).toBeNull();
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(banner()).toContain('AI searches left: 9 of 10');
+    // Back on the first search: its undo is used, so removing another uses one, and the note no longer promises it.
+    await act(() => router.navigate(`/ai/${search.id}`));
+    await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
+    await waitFor(() => expect(automaticNote()?.textContent).toBe(AUTOMATIC_NOTE), SLOW);
+    expect(hidden(automaticNote())).toBe(false);
+    expect(yours().querySelector('[data-automatic-note-print]')).toBeNull();
+    fireEvent.click(automaticChip('Location: Texas'));
+    expect(searchAgain('uses 1')).toBeTruthy();
+  });
+
+  it('any of them or all, with nothing else changed, is free; beside a filter of the reader’s own it uses one; the reader’s own chips are never tagged', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_FIELDS_POLICY });
+    await openSearch(MOCK_EVIDENCE_QUESTIONS.fields);
+    const panel = yours();
+    expect(within(panel).queryByRole('button', { name: /^Search again/ })).toBeNull();
+    fireEvent.click(automaticChip('Years: from 2008'));
+    expect(searchAgain('free')).toBeTruthy();
+    fireEvent.click(automaticChip('Aircraft: Helicopter'));
+    expect(searchAgain('free')).toBeTruthy();
+    fireEvent.click(automaticChip('Location: Texas'));
+    expect(searchAgain('free')).toBeTruthy();
+    // Undo changes brings all three back, tagged.
+    fireEvent.click(within(panel).getByRole('button', { name: 'Undo changes' }));
+    expect(panel.querySelectorAll('[data-automatic]')).toHaveLength(3);
+    // A filter of the reader's own, not searched yet: dashed, never tagged; with it, removing an automatic one uses one.
+    fireEvent.click(within(panel).getByRole('button', { name: '+ Filter' }));
+    fireEvent.click(within(within(panel).getByRole('group', { name: 'Add a filter' })).getByRole('button', { name: 'Add' }));
+    const own = within(panel).getByRole('button', { name: /^Phase: .+\s*, not searched yet, remove$/ });
+    expect([own.getAttribute('data-automatic'), own.querySelector('[data-automatic-tag]')]).toEqual([null, null]);
+    expect(searchAgain('uses 1')).toBeTruthy();
+    fireEvent.click(automaticChip('Years: from 2008'));
+    expect(searchAgain('uses 1')).toBeTruthy();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Undo changes' }));
+    // Years of the reader's own over the automatic ones: no longer what AirCase applied, so untagged, and the edit uses one.
+    fireEvent.click(within(panel).getByRole('button', { name: '+ Filter' }));
+    const editor = within(panel).getByRole('group', { name: 'Add a filter' });
+    fireEvent.change(within(editor).getByLabelText('Filter'), { target: { value: 'years' } });
+    fireEvent.change(within(editor).getByLabelText('To'), { target: { value: '2020' } });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Add' }));
+    const years = within(panel).getByRole('button', { name: /^Years: 2008–2020\s*, not searched yet, remove$/ });
+    expect(years.getAttribute('data-automatic')).toBeNull();
+    expect(panel.querySelectorAll('[data-automatic]')).toHaveLength(2);
+    expect(searchAgain('uses 1')).toBeTruthy();
+  });
+
+  it('applied by the reader, the same filters are the reader’s own: Apply makes an edit with no tag and no note', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_FIELDS_POLICY });
+    installTurnstile();
+    const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.fields);
+    const posts = recordPosts('/api/evidence');
+    fireEvent.click(within(screen.getByRole('region', { name: SUGGESTION_LABEL })).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) }));
+    await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
+    // What AirCase applied stays applied, with the suggested phase.
+    expect(posts[0]).toMatchObject({ kind: 'edited', from: search.id, filters: { phase: ['approach'], category: ['HELI'], state: ['TX'], yearFrom: 2008 } });
+    const edited = await screen.findByRole('region', { name: EDITED_LABEL }, SLOW);
+    for (const label of ['Phase: Approach', 'Aircraft: Helicopter', 'Location: Texas', 'Years: from 2008']) {
+      expect(within(edited).getByRole('button', { name: new RegExp(`^${label}\\s*, remove$`) }).getAttribute('data-automatic')).toBeNull();
+    }
+    expect(edited.querySelector('[data-automatic-tag], [data-automatic-note]')).toBeNull();
+  });
+
+  it('the note promises the free undo only while the page says it is there and that is not in doubt', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_FIELDS_POLICY });
+    installTurnstile();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.fields);
+    expect(automaticNote()?.textContent).toBe(AUTOMATIC_NOTE_FREE);
+    // A failure before admission (nothing was taken); the read after it is held for a moment.
+    server.use(http.post('*/api/evidence', () => HttpResponse.json({ error: 'unavailable', message: 'The service is temporarily unavailable. Try again shortly.' }, { status: 503 }), { once: true }));
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let pageReads = 0;
+    server.use(
+      http.get(`*/api/evidence/${search.id}`, async () => {
+        pageReads += 1;
+        if (pageReads === 2) await held;
+        return undefined;
+      }),
+    );
+    fireEvent.click(automaticChip('Years: from 2008'));
+    fireEvent.click(searchAgain('free'));
+    await screen.findByText("AirCase couldn't finish this AI search.", {}, SLOW);
+    // While it is read again: the buttons say "uses 1", and so does the note.
+    expect(searchAgain('uses 1')).toBeTruthy();
+    expect(automaticNote()?.textContent).toBe(AUTOMATIC_NOTE);
+    release();
+    // Read again: still there, so free again.
+    expect(await screen.findByRole('button', { name: /^Try again\s*·\s*free$/ }, SLOW)).toBeTruthy();
+    expect(automaticNote()?.textContent).toBe(AUTOMATIC_NOTE_FREE);
+  });
+
+  it('the note shows only with filters AirCase applied: the state policy’s state too, never added terms alone or nothing added', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_STATE_POLICY });
+    await openSearch(MOCK_EVIDENCE_QUESTIONS.stateMarked);
+    expect(automaticNote()?.textContent).toBe(AUTOMATIC_NOTE_FREE);
+    cleanup();
+    // Terms added to keyword search, no filter: the undo is there, but no filter is marked.
+    freshApi({ evidence: TERMS_ONLY });
+    const terms = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    expect([terms.search.automaticFilters, terms.search.undo]).toEqual([null, 'available']);
+    expect(automaticNote()).toBeNull();
+    expect(yours().querySelector('[data-automatic-note-print]')).toBeNull();
+    cleanup();
+    // What live runs: nothing applied on its own.
+    freshApi({ evidence: MOCK_EVIDENCE_RELEASE });
+    await openSearch(MOCK_EVIDENCE_QUESTIONS.fields);
+    expect(automaticNote()).toBeNull();
+    expect(yours().querySelector('[data-automatic]')).toBeNull();
+  });
+
+  it('in words: every filter AirCase applied is tagged, a state or category whose values all are automatic and years equal to the automatic ones; the reader’s own never', () => {
+    const automatic: EvidencePage['automaticFilters'] = { state: ['TX'], yearFrom: 2008, category: ['HELI'] };
+    expect(filtersInWords({ category: ['HELI'], state: ['TX'], yearFrom: 2008 }, automatic)).toEqual([
+      'Aircraft: Helicopter (from your question)',
+      'Location: Texas (from your question)',
+      'Years: from 2008 (from your question)',
+    ]);
+    const auto: EvidencePage['automaticFilters'] = { state: ['TX'], yearFrom: 2008, yearTo: 2012, category: ['HELI'] };
+    // A value of the reader's own beside the automatic ones, years moved, a facet AirCase never applies: untagged.
+    expect(filtersInWords({ category: ['AIR', 'HELI'], state: ['TX'], phase: ['approach'], yearFrom: 2008 }, auto)).toEqual([
+      'Phase: Approach',
+      'Aircraft: Airplane or Helicopter',
+      'Location: Texas (from your question)',
+      'Years: from 2008',
+    ]);
+    expect(filtersInWords({ yearFrom: 2008, yearTo: 2012 }, auto)).toEqual(['Years: 2008–2012 (from your question)']);
+    // Nothing automatic, or no automatic years: nothing tagged.
+    expect(filtersInWords({ category: ['HELI'], state: ['TX'], yearFrom: 2008 })).toEqual(['Aircraft: Helicopter', 'Location: Texas', 'Years: from 2008']);
+    expect(filtersInWords({ category: ['HELI'], yearFrom: 2008 }, { state: ['TX'] })).toEqual(['Aircraft: Helicopter', 'Years: from 2008']);
+    expect(filtersInWords({ state: ['AK'], phase: ['approach'] }, { state: ['AK'] })).toEqual(['Phase: Approach', 'Location: Alaska (from your question)']);
+    expect([automaticYears({ yearFrom: 2008 }, { yearFrom: 2008 }), automaticYears({ yearFrom: 2008 }, { state: ['TX'] }), automaticYears({}, { state: ['TX'] }), automaticYears({ yearFrom: 2008 }, null)]).toEqual([true, false, false, false]);
+    expect([automaticYears({ yearFrom: 2008, yearTo: 2012 }, { yearFrom: 2008 }), automaticYears({ yearTo: 2012 }, { yearFrom: 2008, yearTo: 2012 })]).toEqual([false, false]);
+  });
+
+  it('an original search with automatic years or a category is the question’s own search; an edit with the same filters is an edited one', () => {
+    const query = { source: 'question', keywords: { kind: 'question' } } as const;
+    const automatic = { yearFrom: 2008, category: ['HELI'] };
+    expect(isEditedSearch({ query, appliedFilters: { category: ['HELI'], yearFrom: 2008 }, automaticFilters: automatic, freeUndo: false, undo: 'available' })).toBe(false);
+    expect(isEditedSearch({ query, appliedFilters: { category: ['HELI'], yearFrom: 2008 }, automaticFilters: automatic, freeUndo: false, undo: 'used' })).toBe(false);
+    // A page with no undo (a legacy one) reads the same way while its filters are exactly the automatic ones.
+    expect(isEditedSearch({ query, appliedFilters: { yearFrom: 2008, category: ['HELI'] }, automaticFilters: automatic, freeUndo: false, undo: 'none' })).toBe(false);
+    expect(isEditedSearch({ query, appliedFilters: { yearFrom: 2008, category: ['HELI'], phase: ['approach'] }, automaticFilters: automatic, freeUndo: false, undo: 'none' })).toBe(true);
+    expect(isEditedSearch({ query, appliedFilters: { category: ['HELI'], yearFrom: 2008 }, automaticFilters: null, freeUndo: false, undo: 'none' })).toBe(true);
+    expect(isEditedSearch({ query, appliedFilters: { category: ['HELI'] }, automaticFilters: null, freeUndo: true, undo: 'none' })).toBe(true);
+    // A state-only page, as before.
+    expect(isEditedSearch({ query, appliedFilters: { state: ['TX'] }, automaticFilters: { state: ['TX'] }, freeUndo: false, undo: 'none' })).toBe(false);
+    expect(isEditedSearch({ query, appliedFilters: {}, automaticFilters: null, freeUndo: false, undo: 'none' })).toBe(false);
+  });
+});
+
 describe('a v3 result surface still shows NTSB text, coded data, fixed copy and the words searched only (gate G6)', { timeout: 20_000 }, () => {
   function texts(root: Element): string[] {
     const out: string[] = [];
@@ -857,5 +1091,31 @@ describe('the AI nudge on Explore follows the server’s automatic-filter policy
     await nudgeWith(AI_NUDGE);
     expect(document.body.textContent).not.toContain(AI_NUDGE_STATE);
     expect([aiNudge(undefined), aiNudge([]), aiNudge(['state'])]).toEqual([AI_NUDGE, AI_NUDGE, AI_NUDGE_STATE]);
+  });
+
+  it('a state, years and an aircraft type applied (Task 30): the nudge says so, and that they can be removed; the rest stays a suggestion', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_FIELDS_POLICY });
+    const nudge = await nudgeWith(AI_NUDGE_FIELDS);
+    expect(nudge.textContent).toContain(`${AI_NUDGE_FIELDS} ${AI_NUDGE_FILTERS}`);
+    expect(AI_NUDGE_FIELDS).toBe(
+      'Ask in plain English: AirCase searches with your question. A US state, years or aircraft type your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.',
+    );
+    expect(document.body.textContent).not.toContain(AI_NUDGE_STATE);
+    expect(document.body.textContent).not.toContain(AI_NUDGE);
+  });
+
+  it('each sentence for the fields the policy may apply, on Explore and on About: years or a category name all three; the state alone its own; nothing or unknown the cautious one', () => {
+    for (const [fields, nudge, line] of [
+      [undefined, AI_NUDGE, AI_ON_LINE],
+      [[], AI_NUDGE, AI_ON_LINE],
+      [['state'], AI_NUDGE_STATE, AI_ON_LINE_STATE],
+      [['state', 'years', 'category'], AI_NUDGE_FIELDS, AI_ON_LINE_FIELDS],
+      [['years'], AI_NUDGE_FIELDS, AI_ON_LINE_FIELDS],
+      [['category'], AI_NUDGE_FIELDS, AI_ON_LINE_FIELDS],
+      [['state', 'years'], AI_NUDGE_FIELDS, AI_ON_LINE_FIELDS],
+    ] as const) {
+      const automatic = fields === undefined ? undefined : [...fields];
+      expect([aiNudge(automatic), aiOnLine(automatic)], JSON.stringify(fields)).toEqual([nudge, line]);
+    }
   });
 });

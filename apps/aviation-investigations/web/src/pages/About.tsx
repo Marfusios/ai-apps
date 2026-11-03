@@ -15,15 +15,21 @@ export const AI_OFF_LINE = 'AI features are not available yet.';
  * does, in plain words. What the AI does with filters follows the server's evidence policy
  * (`/api/config` `aiAutomaticFilters`): it only suggests them (`AI_ON_LINE`, also when the field
  * is missing), or (Task 24) a US state the question names explicitly can be applied (the guard may
- * abstain), which can be removed, and the rest is suggested (`AI_ON_LINE_STATE`).
+ * abstain), which can be removed, and the rest is suggested (`AI_ON_LINE_STATE`), or (Task 30, when
+ * the policy applies years or an aircraft category too) a US state, years or aircraft type the
+ * question sets for the accidents can be applied (an AI check may abstain), which can be removed,
+ * and the rest is suggested (`AI_ON_LINE_FIELDS`).
  */
 export const AI_ON_LINE =
   'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words, and AI suggests filters you can choose to apply.';
 export const AI_ON_LINE_STATE =
   'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state your question names explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.';
+export const AI_ON_LINE_FIELDS =
+  'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state, years or aircraft type your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.';
 
 /** The About page's AI line for the fields the evidence policy applies on its own (unknown: the cautious one). */
 export function aiOnLine(automatic: ClientConfig['aiAutomaticFilters']): string {
+  if (automatic?.includes('years') || automatic?.includes('category')) return AI_ON_LINE_FIELDS;
   return automatic?.includes('state') ? AI_ON_LINE_STATE : AI_ON_LINE;
 }
 

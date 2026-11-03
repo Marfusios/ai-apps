@@ -12,7 +12,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AdminOverviewSchema, type AdminOverview } from '../../shared/contracts/admin';
 import { mockAdminOverview } from '../../web/mock/admin';
-import { MOCK_EVIDENCE_RELEASE } from '../../web/mock/evidence';
+import { MOCK_EVIDENCE_FIELDS_POLICY, MOCK_EVIDENCE_RELEASE } from '../../web/mock/evidence';
 import {
   automaticFiltersInWords,
   durationInWords,
@@ -261,6 +261,15 @@ describe('the admin page', { timeout: 20_000 }, () => {
     expect(fact('Next check')).toContain(`${formatDateTime(overview.system.imports.schedule?.nextCheckAt as string, viewerTimeZone())} (${viewerTimeZone()})`);
   });
 
+  it('system, with the mock standing in for the attributed policy (Task 30): its automatic filters in plain words, with the identifier', async () => {
+    signedIn({ evidence: MOCK_EVIDENCE_FIELDS_POLICY });
+    await openAdmin();
+    const system = region(ADMIN_COPY.system);
+    const fact = (label: string): string => system.querySelector(`[data-fact="${label}"] dd`)?.textContent ?? '';
+    expect(fact('Ranking')).toBe('The question as asked; AI reranks the top 50er-q-h50-v1');
+    expect(fact('Automatic filters')).toBe('A US state, years or aircraft type the question sets for the accidents, after an AI checkattributed.v1');
+  });
+
   it('shapes the mock never makes: a capped list, no accounts, no dataset, an unknown ranking, an import set up, tracing off', async () => {
     signedIn();
     serve((o) => ({
@@ -397,5 +406,11 @@ describe('how the admin page says its figures', () => {
     expect(automaticFiltersInWords('none')).toBe('None: every filter AI suggests stays a suggestion');
     expect(automaticFiltersInWords('state-explicit.v1.3')).toBe('A US state the question names explicitly');
     expect(automaticFiltersInWords('cities')).toBeNull();
+  });
+
+  it('the attributed policy (Task 30) by its exact name; another version of it as its identifier alone', () => {
+    expect(automaticFiltersInWords('attributed.v1')).toBe('A US state, years or aircraft type the question sets for the accidents, after an AI check');
+    expect(automaticFiltersInWords('attributed.v2')).toBeNull();
+    expect(automaticFiltersInWords('attributed')).toBeNull();
   });
 });

@@ -4,9 +4,10 @@
  * is model text: labels are fixed, values come from the contract's NTSB and coded fields, and
  * the question and typed words are the reader's own. The scope stage's suggestion is shown only
  * under its own label, never applied unless the reader chooses it; what AirCase applied on its
- * own (a state the question names, the AI's terms in keyword search, AI order) is said as such
- * and can be undone (contract `evidence.v3`). The AI's terms are the only model text shown, always
- * quoted and labelled. Copy marked Builder awaits the owner's review.
+ * own (a state, years or an aircraft category the question names, the AI's terms in keyword
+ * search, AI order) is said as such and can be undone (contract `evidence.v3`). The AI's terms are
+ * the only model text shown, always quoted and labelled. Copy marked Builder awaits the owner's
+ * review.
  */
 import { aircraftLetter, aircraftName } from '../../../../shared/case-view';
 import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters } from '../../../../shared/contracts/briefs';
@@ -79,7 +80,15 @@ export const ADDED_BY_AI = 'added by AI';
 /** The tag of a filter applied automatically because the question names it, and what a screen reader hears. */
 export const FROM_QUESTION = 'from your question';
 export const FROM_QUESTION_SPOKEN = 'added automatically from your question';
-/** The suggestion's note when AirCase applied something on its own (a state, or terms). */
+/**
+ * Task 30 (the design review: the tag alone can read as plain extraction, though an AI check
+ * applied the filter): fixed words under the filters of a search with filters AirCase applied on
+ * its own, never model text. While the page says its one free undo is there…
+ */
+export const AUTOMATIC_NOTE_FREE = `AI applied the filters marked “${FROM_QUESTION}”. Remove any that are wrong; searching again without them is free once.`;
+/** …and otherwise (the undo used, or in doubt), and on paper. */
+export const AUTOMATIC_NOTE = `AI applied the filters marked “${FROM_QUESTION}”.`;
+/** The suggestion's note when AirCase applied something on its own (a state, years, an aircraft category, or terms). */
 export const SUGGESTION_NOTE_AUTOMATIC = 'AI suggested these as well. AirCase applies none of them unless you choose them.';
 /** "Search again · free": an undo of what AirCase added, which uses none of the visitor's searches. */
 export const FREE_COUNTER = 'free';
@@ -217,18 +226,33 @@ export function facetInWords(filters: BriefFilters, facet: BriefFilterFacet): st
   return `${FACET_TITLE[facet]}: ${values.map((v) => facetValueLabel(facet, v)).join(' or ')}`;
 }
 
+/** The values of `facet` AirCase applied on its own (`automatic`, the page's `automaticFilters`): a state or aircraft category set, else none. */
+function automaticValues(facet: BriefFilterFacet, automatic: EvidencePage['automaticFilters']): readonly string[] {
+  if (automatic === null) return [];
+  return (facet === 'state' ? automatic.state : facet === 'category' ? automatic.category : undefined) ?? [];
+}
+
+/** True when the years of `filters` are the ones AirCase applied on its own (both bounds as applied). */
+export function automaticYears(filters: Pick<BriefFilters, 'yearFrom' | 'yearTo'>, automatic: EvidencePage['automaticFilters']): boolean {
+  if (automatic === null || (automatic.yearFrom === undefined && automatic.yearTo === undefined)) return false;
+  return filters.yearFrom === automatic.yearFrom && filters.yearTo === automatic.yearTo;
+}
+
 /**
  * Every applied filter in words, years last. With `automatic` (the page's `automaticFilters`),
- * a facet AirCase applied on its own is tagged: "Location: Texas (from your question)".
+ * a filter AirCase applied on its own is tagged: a state or aircraft category whose values all
+ * are automatic ones, the years when they are the automatic years. "Location: Texas (from your
+ * question)", "Years: from 2008 (from your question)".
  */
 export function filtersInWords(filters: BriefFilters, automatic: EvidencePage['automaticFilters'] = null): string[] {
+  const tag = (words: string, tagged: boolean): string => (tagged ? `${words} (${FROM_QUESTION})` : words);
   const words = appliedFacets(filters).map((f) => {
     const values = (filters as Partial<Record<BriefFilterFacet, string[]>>)[f] ?? [];
-    const tagged = f === 'state' && automatic !== null && values.every((v) => (automatic.state as readonly string[]).includes(v));
-    return tagged ? `${facetInWords(filters, f)} (${FROM_QUESTION})` : facetInWords(filters, f);
+    const own = automaticValues(f, automatic);
+    return tag(facetInWords(filters, f), own.length > 0 && values.every((v) => own.includes(v)));
   });
   const years = yearsInWords(filters);
-  return years ? [...words, years] : words;
+  return years ? [...words, tag(years, automaticYears(filters, automatic))] : words;
 }
 
 /**
@@ -245,8 +269,9 @@ export function searchedInWords(search: Pick<EvidencePage, 'question' | 'query'>
 
 /**
  * Whether the page shows an edited search ("Your edited search"): the reader's own words, an
- * undo, filters the question did not apply on its own, or added terms on a search without an undo
- * (an original question search with something added has one, available or used: `undo` is not
+ * undo, filters other than exactly those the question applied on its own (`automaticFilters`: a
+ * state, years, an aircraft category, or none), or added terms on a search without an undo (an
+ * original question search with something added has one, available or used: `undo` is not
  * `none`). An edit that kept the question alone and has no filter left reads as the question's own
  * search, as the page cannot tell them apart.
  */

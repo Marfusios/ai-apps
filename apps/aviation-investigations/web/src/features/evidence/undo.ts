@@ -1,17 +1,19 @@
 /**
  * The one free undo of an AI evidence search (contract `evidence.v3`; the server's rule is
  * server/evidence/undo.ts `canUndo`, DESIGN "Evidence.v3"). What AirCase added to a question
- * search on its own (a state the question names, applied as a filter, and the AI's terms in
- * keyword search) can be taken out again without using one of the visitor's searches, once per
- * search. The page says whether that undo is still there (`undo: 'available'`, read from the
- * server's one-use claim at every page read; `used` once claimed; `none` for an edit or a search
- * with nothing added). A draft qualifies when it sends no words of its own and removes the whole
- * automatic state, the added terms, or both, and changes nothing else; removing one state of
- * several narrows the search, so that is an ordinary edit. The server decides at admission, and the
- * created page's `freeUndo` says what it decided: the hint is a snapshot, which another tab can
- * overtake. So the hint is read again right before a request is sent as free, and after a free
- * attempt that failed: the server keeps the claim once admission took it, even when the search then
- * fails (DESIGN "Evidence.v3").
+ * search on its own (a state, years or an aircraft category the question names, each applied as a
+ * filter, and the AI's terms in keyword search) can be taken out again without using one of the
+ * visitor's searches, once per search. The page says whether that undo is still there (`undo:
+ * 'available'`, read from the server's one-use claim at every page read; `used` once claimed;
+ * `none` for an edit or a search with nothing added). A draft qualifies when it sends no words of
+ * its own and removes one or more whole automatic filters (the whole automatic state, both
+ * automatic year bounds as one, the whole automatic aircraft category), the added terms, or both,
+ * and changes nothing else; a filter counts as automatic only while the search's applied value is
+ * the automatic one. Removing one state or category of several narrows the search, so that is an
+ * ordinary edit. The server decides at admission, and the created page's `freeUndo` says what it
+ * decided: the hint is a snapshot, which another tab can overtake. So the hint is read again right
+ * before a request is sent as free, and after a free attempt that failed: the server keeps the
+ * claim once admission took it, even when the search then fails (DESIGN "Evidence.v3").
  *
  * This tab remembers only the searches that used one of the visitor's searches though "free" was
  * shown (memory only, forgotten with the visitor, web/src/features/auth/visitor.ts), so that their
@@ -52,6 +54,29 @@ export interface UndoEdit {
 /** What the rule reads of the page being edited. */
 export type UndoParent = Pick<EvidencePage, 'undo' | 'query' | 'appliedFilters' | 'automaticFilters'>;
 
+/** What AirCase can apply on its own, each removed whole by an undo: the state set, the years (both bounds, one filter), the aircraft category set. */
+type AutomaticFacet = 'state' | 'years' | 'category';
+
+/** The keys of the applied filters each automatic filter is. */
+const FACET_KEYS: Readonly<Record<AutomaticFacet, readonly (keyof BriefFilters)[]>> = { state: ['state'], years: ['yearFrom', 'yearTo'], category: ['category'] };
+
+/** The automatic filters the applied filters still hold as AirCase applied them (the applied value is the automatic one), in a fixed order. */
+function automaticFacets(applied: BriefFilters, automatic: UndoParent['automaticFilters']): AutomaticFacet[] {
+  if (!automatic) return [];
+  const out: AutomaticFacet[] = [];
+  if (automatic.state?.length && sameFilters({ state: automatic.state }, { state: applied.state ?? [] })) out.push('state');
+  if ((automatic.yearFrom !== undefined || automatic.yearTo !== undefined) && applied.yearFrom === automatic.yearFrom && applied.yearTo === automatic.yearTo) out.push('years');
+  if (automatic.category?.length && sameFilters({ category: automatic.category }, { category: applied.category ?? [] })) out.push('category');
+  return out;
+}
+
+/** `filters` without the given automatic filters. */
+function without(filters: BriefFilters, facets: readonly AutomaticFacet[]): BriefFilters {
+  const out: Record<string, unknown> = { ...filters };
+  for (const facet of facets) for (const key of FACET_KEYS[facet]) delete out[key];
+  return out as BriefFilters;
+}
+
 /**
  * The server's rule, as the page states it: true when `edit` of `parent` would be its one free
  * undo. The page's `undo` says the search is an original question search with something added and
@@ -63,17 +88,15 @@ export function freeUndoRule(parent: UndoParent, edit: UndoEdit): boolean {
   if (edit.terms !== undefined) return false;
   const removedTerms = edit.keywords === 'question' && addedTerms(parent.query) !== null;
   if (edit.keywords !== undefined && !removedTerms) return false;
-  let removedState = false;
-  if (!sameFilters(edit.filters, parent.appliedFilters)) {
-    // Only the whole automatic state may go: one state of several left is a narrower search.
-    const automatic = parent.automaticFilters;
-    if (!automatic || automatic.state.length === 0 || !sameFilters({ state: automatic.state }, { state: parent.appliedFilters.state ?? [] })) return false;
-    const { state: _state, ...rest } = parent.appliedFilters;
-    if (!sameFilters(edit.filters, rest)) return false;
-    removedState = true;
+  // The same filters: the added terms must be what goes, as an edit that changes nothing is no undo.
+  if (sameFilters(edit.filters, parent.appliedFilters)) return removedTerms;
+  // Else exactly the applied filters without one or more whole automatic filters: one state or
+  // category of several left narrows the search, and the years go only as both bounds.
+  const facets = automaticFacets(parent.appliedFilters, parent.automaticFilters);
+  for (let removed = 1; removed < 1 << facets.length; removed++) {
+    if (sameFilters(edit.filters, without(parent.appliedFilters, facets.filter((_facet, i) => removed & (1 << i))))) return true;
   }
-  // At least one addition removed: an edit that changes nothing is no undo.
-  return removedState || removedTerms;
+  return false;
 }
 
 /**
