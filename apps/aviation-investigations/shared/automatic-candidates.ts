@@ -150,12 +150,20 @@ export const RELATIONSHIP_PATTERNS: readonly RegExp[] = Object.freeze([
   /\bwake\b/iu, /\bdownwash\b/iu, /\brescu(?:e|es|ed|ing|er|ers)\b/iu,
   /\b(?:two|three|four|both|multiple|several|second|another|other)\s+(?:[\p{L}-]+\s+)?(?:aircraft|planes?|jets?|airplanes?|aeroplanes?|helicopters?|choppers?|gliders?|sailplanes?|balloons?|blimps?|airships?|gyroplanes?|gyrocopters?|autogyros?|tiltrotors?|ultralights?|trikes?)\b/iu,
   /\bbetween\s+(?:a|an|the|two)\b/iu,
+  // Another aircraft or traffic near the accident aircraft ("with an aircraft nearby").
+  /\baircraft\s+nearby\b/iu, /\bnearby\s+(?:aircraft|traffic)\b/iu, /\ban\s+aircraft\s+(?:nearby|close\s+by|in\s+the\s+vicinity)\b/iu,
+  /\b(?:other|conflicting)\s+traffic\b/iu, /\bsecond\s+aircraft\b/iu, /\bthe\s+other\s+aircraft\b/iu,
+  /\ba\s+second\s+(?:airplane|helicopter|aircraft)\b/iu,
 ]);
-/** A category word directly followed by one of these names a person, a business or a part, not the accident aircraft. */
+/**
+ * A category word directly followed by one of these names a person, a business, a part, a kit, a
+ * simulator or a model ("airplane parts", "helicopter rotor", "glider kit"), not the accident aircraft.
+ */
 export const CATEGORY_ATTRIBUTE_NOUNS = Object.freeze(['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students',
   'rating', 'ratings', 'rated', 'license', 'licence', 'licensed', 'certificate', 'dealership', 'dealer', 'dealers', 'operator',
   'operators', 'company', 'companies', 'manufacturer', 'festival', 'crew', 'tires', 'tyres', 'instruction', 'training', 'school',
-  'club'] as const);
+  'club', 'part', 'parts', 'engine', 'engines', 'propeller', 'propellers', 'rotor', 'rotors', 'wing', 'wings', 'kit', 'kits',
+  'simulator', 'simulators', 'model', 'models'] as const);
 /** Experience in a category ("hours in helicopters", "transitioned from gliders") within the three words before it. */
 export const CATEGORY_EXPERIENCE_WORDS = Object.freeze(['hours', 'time', 'experience', 'rated', 'rating', 'trained', 'training',
   'instruction', 'transitioned', 'transferred'] as const);

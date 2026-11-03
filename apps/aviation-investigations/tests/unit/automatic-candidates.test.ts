@@ -303,9 +303,21 @@ describe('category-mention.v1', () => {
     ['helicopter accidents with a student pilot', ['HELI'], 'candidate'],
     ['accidents involving helicopter pilots in helicopter accidents', ['HELI'], 'attribute_word'],
     ['helicopter, not chopper accidents', ['HELI'], 'negated'],
+    // Parts, kits, simulators and models (the development C2 run).
+    ['airplane parts accidents', ['AIR'], 'attribute_word'],
+    ['accidents caused by a helicopter rotor', ['HELI'], 'attribute_word'],
+    ['accidents involving a glider kit', ['GLI'], 'attribute_word'],
+    // Another aircraft or traffic nearby.
+    ['Retrieve airplane accident records involving fuel planning with an aircraft nearby.', ['AIR'], 'relationship'],
+    ['airplane accidents involving fuel planning', ['AIR'], 'candidate'],
   ] as const)('%s with %j → %s', (question, category, expected) => {
     expect(reason(question, { category: [...category] }, 'category')).toBe(expected);
   });
+  it.each(['aircraft nearby', 'nearby aircraft', 'an aircraft nearby', 'an aircraft close by', 'an aircraft in the vicinity', 'other traffic',
+    'nearby traffic', 'conflicting traffic', 'a second aircraft', 'the other aircraft', 'a second airplane', 'a second helicopter'])(
+    'another aircraft or traffic (%s) makes the category a relationship', phrase => {
+      expect(reason(`Find airplane accidents involving fuel planning with ${phrase}.`, { category: ['AIR'] }, 'category')).toBe('relationship');
+    });
   it.each(CATEGORY_ATTRIBUTE_NOUNS)('a category word directly before "%s" is not the accident aircraft', noun => {
     expect(reason(`Find accidents involving helicopter ${noun}.`, { category: ['HELI'] }, 'category')).toBe('attribute_word');
     expect(reason(`Find accidents involving helicopter-${noun}.`, { category: ['HELI'] }, 'category')).toBe('attribute_word');

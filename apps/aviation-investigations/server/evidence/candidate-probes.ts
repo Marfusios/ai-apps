@@ -252,7 +252,15 @@ const probes: Probe[] = [
   // Category attributes: every noun, experience word, preposition and comparison on its own, and the window.
   ...['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students', 'rating', 'ratings', 'rated', 'license', 'licence', 'licensed',
     'certificate', 'dealership', 'dealer', 'dealers', 'operator', 'operators', 'company', 'companies', 'manufacturer', 'festival', 'crew',
-    'tires', 'tyres', 'instruction', 'training', 'school', 'club'].map(n => [`Find accidents involving helicopter ${n}.`, { category: ['HELI'] }] satisfies Probe),
+    'tires', 'tyres', 'instruction', 'training', 'school', 'club', 'part', 'parts', 'engine', 'engines', 'propeller', 'propellers', 'rotor',
+    'rotors', 'wing', 'wings', 'kit', 'kits', 'simulator', 'simulators', 'model', 'models']
+    .map(n => [`Find accidents involving helicopter ${n}.`, { category: ['HELI'] }] satisfies Probe),
+  // Another aircraft or traffic nearby (the development C2 run): every phrase on its own.
+  ['Retrieve airplane accident records involving fuel planning with an aircraft nearby.', { category: ['AIR'] }],
+  ['Find airplane accidents involving fuel planning.', { category: ['AIR'] }],
+  ...['aircraft nearby', 'nearby aircraft', 'an aircraft close by', 'an aircraft in the vicinity', 'other traffic', 'nearby traffic',
+    'conflicting traffic', 'a second aircraft', 'the other aircraft', 'a second airplane', 'a second helicopter']
+    .map(p => [`Find airplane accidents involving fuel planning with ${p}.`, { category: ['AIR'] }] satisfies Probe),
   ['Find helicopter-rated pilot accidents.', { category: ['HELI'] }],
   ...['hours', 'time', 'experience', 'rated', 'rating', 'trained', 'training', 'instruction', 'transitioned', 'transferred']
     .map(w => [`Find accidents of pilots with ${w} in gliders.`, { category: ['GLI'] }] satisfies Probe),
