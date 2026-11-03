@@ -1,5 +1,5 @@
 /** Task 30's evaluation harness, offline: probe schema, scoring, exact bounds, the decision rule, sizing and request shapes. */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,11 +12,25 @@ import {
 } from '../../evals/auto-filters/plan.js';
 import { wilson } from '../../evals/search-quality/field-score.js';
 import { validateEvidenceScope } from '../../server/ai/prompts/scope.e1.js';
-import { autoFilterPolicy } from '../../server/evidence/auto-filters.js';
+import { autoFilterIdentity, autoFilterPolicy } from '../../server/evidence/auto-filters.js';
 import { evidenceRankingConfig } from '../../server/evidence/ranking-config.js';
+import { stageWorstCaseUsd } from '../../server/ai/pricing.js';
 import type { SearchObservation } from '../../evals/search-quality/ab-types.js';
 import type { C2Dataset } from '../../evals/search-quality/part5/field-score.js';
 import replay from '../fixtures/state-field-replay.json' with { type: 'json' };
+import { createFakeProvider } from '../../server/ai/fake.js';
+import { loadConfig } from '../../shared/config.js';
+import { createMemorySpendGate } from '../../worker/index/spend-gate.js';
+import { evidenceCases } from '../../web/mock/evidence.js';
+import { productionPort } from '../../evals/search-quality/ab-production.js';
+import { attributionPort } from '../../evals/auto-filters/port.js';
+import { currentIdentities } from '../../evals/auto-filters/run.js';
+import { attemptKey } from '../../evals/auto-filters/inputs.js';
+import type { AttributionPart, Row30, ScriptedScope } from '../../evals/auto-filters/plan.js';
+import type { CappedAllocation } from '../../evals/langfuse/money.js';
+import type { Db } from '../../server/db/client.js';
+import type { Client } from '@elastic/elasticsearch';
+import type { PinnedDataset } from '../../server/dataset.js';
 
 const probe = (over: Partial<Probe> = {}): Probe => ({ id: 'wa-state-001', question: 'Find accidents in Ohio.', forced: { state: ['OH'] }, gold: { state: ['OH'] },
   field: 'state', kind: 'positive', pattern: 'plain-location', source: 'writer-a', ...over });
@@ -157,7 +171,7 @@ describe('Task 30 question-level trap and precision measures', () => {
   });
   it('breaks results down by tag and finds unsafe review-24 applications', () => {
     const g = groupSummary(rows, 'pattern');
-    expect(g.maintenance!.fields.state).toMatchObject({ traps: 2, trapFailures: 1, applications: 1, wrong: 1 });
+    expect(g.maintenance!.fields.state).toMatchObject({ tp: 0, fp: 1, fn: 0, traps: 2, trapFailures: 1, applications: 1, wrong: 1 });
     expect(g.plain!.fields.state).toMatchObject({ positives: 2, positiveSamples: 6, found: 2 });
     expect(review24Unsafe(rows, 'state')).toEqual({ samples: 1, items: ['t2'] });
     expect(review24Unsafe(rows.filter(r => r.itemId !== 't2'), 'state')).toEqual({ samples: 0, items: [] });
@@ -255,9 +269,10 @@ describe('Task 30 retrieval requests', () => {
 });
 
 describe('Task 30 sizing', () => {
-  const s = stageMicros30(evidenceRankingConfig('er-q-v1'), evidenceRankingConfig('er-q-h50-v1'), { model: 'claude-haiku-5-5', caps: { input: 3000, output: 500 } });
+  const s = stageMicros30(evidenceRankingConfig('er-q-v1'), evidenceRankingConfig('er-q-h50-v1'), stageWorstCaseUsd('claude-haiku-5-5', { input: 3000, output: 500 }));
   it('sizes the attribution check at its caps with the whole input cache-written ($0.000625)', () => {
     expect(s.attribution).toBe(625);
+    expect(() => stageMicros30(evidenceRankingConfig('er-q-v1'), evidenceRankingConfig('er-q-h50-v1'), 0)).toThrow();
     expect(attributionSampleMicros(s)).toBe(s.scope + 625 + s.embed);
     expect(chargeableSampleMicros(s, true)).toBe(625);
     expect(chargeableSampleMicros(s, false)).toBe(s.scope + 625);
@@ -345,5 +360,230 @@ describe('Task 30 frozen inputs and items', () => {
     const keys = new Set([attemptKey('l', 'dev-forced', 'i', 1), attemptKey('l', 'dev-e2e', 'i', 1), attemptKey('l', 'dev-forced', 'i', 2),
       attemptKey('m', 'dev-forced', 'i', 1), attemptKey('l', 'retrieval', 'i', 1, 'QH50', 'trackc-dev'), attemptKey('l', 'retrieval', 'i', 1, 'QH50+A', 'trackc-dev')]);
     expect(keys.size).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Through the production entry point (`rankEvidence` and the evaluation gate) with offline fakes.
+
+const mocks = vi.hoisted(() => ({ provider: undefined as any, search: vi.fn(), active: vi.fn() }));
+vi.mock('../../server/ai/anthropic.js', async original => ({ ...await original<typeof import('../../server/ai/anthropic.js')>(), createAnthropicProvider: () => mocks.provider }));
+vi.mock('../../server/ai/embeddings.js', async original => ({ ...await original<typeof import('../../server/ai/embeddings.js')>(),
+  createOpenAIQueryEmbedder: () => ({ model: 'text-embedding-3-small', dims: 1536, usdPerMillionTokens: .02, embed: vi.fn(), embedWithSignal: vi.fn() }) }));
+vi.mock('../../server/db/generations.js', async original => ({ ...await original<typeof import('../../server/db/generations.js')>(), getActiveManifest: mocks.active }));
+vi.mock('../../server/evidence/retrieve.js', async original => ({ ...await original<typeof import('../../server/evidence/retrieve.js')>(),
+  createEvidenceRetriever: () => ({ available: async () => true, search: mocks.search }) }));
+
+const settings = { env: {}, config: loadConfig({ files: [], env: { APP_ENV: 'dev', ANTHROPIC_API_KEY: 'synthetic', OPENAI_API_KEY: 'synthetic' } }) };
+const attributed = () => autoFilterPolicy('attributed.v1');
+let portDir: string;
+beforeEach(() => { portDir = mkdtempSync(join(tmpdir(), 'task30-port-')); });
+afterEach(() => rmSync(portDir, { recursive: true, force: true }));
+function gateSetup(limit = 10) {
+  const memory = createMemorySpendGate(limit), gate = vi.fn(() => memory);
+  return { memory, gate, allocation: { gate } as unknown as CappedAllocation };
+}
+const charged = (memory: ReturnType<typeof createMemorySpendGate>, stage: string) => memory.records.filter(r => r.purpose.endsWith(`:${stage}`)).map(r => r.chargedUsd);
+
+describe('Task 30 attribution parts through the production entry point', () => {
+  const item = (question: string, scripted: ScriptedScope | null) => ({ id: 'p1', question, scripted });
+  const attempt = { key: 'synthetic-attempt', part: 'dev-forced' as const, itemId: 'p1', sample: 1 };
+  it('settles the scripted scope at $0 through the gate and applies a state the check attributes to the accident', async () => {
+    mocks.provider = createFakeProvider();
+    const h = gateSetup(), port = attributionPort(settings, h.allocation, 'selection', 'a'.repeat(64), portDir, attributed());
+    const o = await port.run(attempt, item('Find accidents in Alaska involving engine power loss.', { kind: 'search', filters: { state: ['AK'] } }));
+    expect(o.failure).toBeNull(); expect(o.safetyFaults).toEqual([]);
+    expect(o).toMatchObject({ scope: 'scripted', intent: 'case_search', emitted: { state: ['AK'] }, scopeOutcome: 'used', automaticFilters: { state: ['AK'] },
+      autoFilterFields: { state: 'applied' }, attributionOutcome: 'applied', attributionCalled: true, appliedFilters: { state: ['AK'] } });
+    expect(mocks.provider.calls.map((c: { stage: string }) => c.stage)).toEqual(['attribution']);
+    expect(h.gate.mock.calls.map(c => (c as unknown[])[4])).toEqual(['scope', 'attribution', 'embed']);
+    expect(charged(h.memory, 'scope')).toEqual([0]); expect(charged(h.memory, 'embed')).toEqual([0]);
+    expect(charged(h.memory, 'attribution')[0]).toBeGreaterThan(0);
+    expect(h.memory.records.every(r => r.status === 'settled')).toBe(true);
+    expect(o.actualUsd).toBeCloseTo(charged(h.memory, 'attribution')[0]!, 9);
+    expect(o.candidates).toEqual([{ id: 'state', values: ['Alaska (AK)'] }]);
+  });
+  it('leaves a trap unapplied when the check attributes it elsewhere', async () => {
+    mocks.provider = createFakeProvider({ evidenceAttribution: input => ({ output: { checks: input.candidates.map(c => ({ id: c.id, about: 'aircraft_history' as const, quote: 'Alaska' })) } }) });
+    const h = gateSetup(), port = attributionPort(settings, h.allocation, 'selection', 'a'.repeat(64), portDir, attributed());
+    const o = await port.run(attempt, item('Find accidents involving aircraft maintained in Alaska.', { kind: 'search', filters: { state: ['AK'] } }));
+    expect(o).toMatchObject({ failure: null, automaticFilters: null, autoFilterFields: { state: 'attribution:aircraft_history' }, attributionOutcome: 'applied', appliedFilters: {} });
+  });
+  it('makes no check call for a field the candidate rules stop', async () => {
+    mocks.provider = createFakeProvider();
+    const h = gateSetup(), port = attributionPort(settings, h.allocation, 'selection', 'a'.repeat(64), portDir, attributed());
+    const o = await port.run(attempt, item('Find accidents that did not happen in Alaska.', { kind: 'search', filters: { state: ['AK'] } }));
+    expect(o.failure).toBeNull();
+    expect(o.autoFilterFields.state).toMatch(/^not_candidate:/);
+    expect(o).toMatchObject({ attributionCalled: false, attributionOutcome: 'not_run', automaticFilters: null, actualUsd: 0 });
+    expect(h.gate.mock.calls.map(c => (c as unknown[])[4])).toEqual(['scope', 'embed']);
+    expect(mocks.provider.calls).toHaveLength(0);
+  });
+  it('replays a recorded scope failure as an unbilled fallback', async () => {
+    mocks.provider = createFakeProvider();
+    const h = gateSetup(), port = attributionPort(settings, h.allocation, 'selection', 'a'.repeat(64), portDir, attributed());
+    const o = await port.run({ ...attempt, part: 'state-replay' }, item('Find accidents in Alaska.', { kind: 'failure' }));
+    expect(o).toMatchObject({ failure: null, safetyFaults: [], intent: null, scopeOutcome: 'unbilled_provider_error', autoFilterReason: 'scope_unavailable',
+      autoFilterFields: {}, attributionCalled: false, automaticFilters: null, actualUsd: 0 });
+  });
+  it('charges the real scope in an end-to-end part', async () => {
+    mocks.provider = createFakeProvider({ evidenceScope: { output: { intent: 'case_search', filters: { state: ['AK'], yearFrom: 2019, yearTo: 2019 }, terms: 'engine power loss' } } });
+    const h = gateSetup(), port = attributionPort(settings, h.allocation, 'selection', 'a'.repeat(64), portDir, attributed());
+    const o = await port.run({ ...attempt, part: 'dev-e2e' }, item('Find engine power loss accidents in Alaska in 2019.', null));
+    expect(o.failure).toBeNull(); expect(o.safetyFaults).toEqual([]);
+    expect(o).toMatchObject({ scope: 'real', automaticFilters: { state: ['AK'], yearFrom: 2019, yearTo: 2019 }, autoFilterFields: { state: 'applied', years: 'applied' } });
+    expect(mocks.provider.calls.map((c: { stage: string }) => c.stage)).toEqual(['scope', 'attribution']);
+    expect(charged(h.memory, 'scope')[0]).toBeGreaterThan(0);
+    expect(o.actualUsd).toBeLessThanOrEqual(o.boundUsd);
+  });
+  it('dispatches nothing when the gate refuses', async () => {
+    mocks.provider = createFakeProvider();
+    const h = gateSetup(0), port = attributionPort(settings, h.allocation, 'selection', 'a'.repeat(64), portDir, attributed());
+    const o = await port.run(attempt, item('Find accidents in Alaska.', { kind: 'search', filters: { state: ['AK'] } }));
+    expect(o.failure).toBe('spend'); expect(mocks.provider.calls).toHaveLength(0);
+  });
+});
+
+describe('Task 30 retrieval rows through the production entry point', () => {
+  const dataset = { manifest: { generationId: 1, casesIndex: 'synthetic-cases', passagesIndex: 'synthetic-passages' } } as PinnedDataset;
+  const question = { id: 'synthetic-question', question: 'Find engine power loss accidents in Alaska during landing.', relevant: ['SYNTHETIC1'], group: 'one', class: 'narrow' as const, area: 'aircraft_systems' };
+  beforeEach(() => {
+    mocks.active.mockReset().mockResolvedValue(dataset.manifest);
+    mocks.provider = createFakeProvider({ evidenceScope: { output: { intent: 'case_search', filters: { state: ['AK'], phase: ['landing'] }, terms: 'engine power loss' } },
+      rerank: input => ({ output: { grades: input.cases.map((c, i) => ({ id: c.id, grade: i % 4 })) } }) });
+    mocks.search.mockReset().mockImplementation(async (_dataset, _plan, _signal, report) => {
+      report({ model: 'text-embedding-3-small', dims: 1536, inputTemplate: 'query-v1', billing: 'reported', tokens: 10, usd: .0000002 });
+      const base = evidenceCases({}, 'engine')[0]!;
+      const cases = Array.from({ length: 3 }, (_, i) => ({ ...structuredClone(base), rank: i + 1, case: { ...base.case, ntsbNo: `SYNTHETIC${i}` } }));
+      return { cases, ranking: cases.map(c => ({ ntsbNo: c.case.ntsbNo, seeds: [], channels: ['keyword'] })) };
+    });
+  });
+  it('QH50+A applies the policy\'s filters at retrieval; its edit adds the remaining suggestion as "Apply these filters" does', async () => {
+    const h = gateSetup(), policy = attributed();
+    const port = productionPort(settings, {} as Db, {} as Client, dataset, h.allocation as never, 'selection', 'a'.repeat(64), portDir, currentIdentities() as never);
+    const live = await port.run({ key: 'q:QH50:1', questionId: question.id, arm: 'QH50', sample: 1 }, question, liveRequest());
+    expect(live).toMatchObject({ failure: null, safetyFaults: [], automaticFilters: null, autoFilterPolicy: { version: 'none' }, attributionCalled: false });
+    expect(mocks.search.mock.calls[0]![1].filters).toEqual({});
+    const auto = await port.run({ key: 'q:QH50A:1', questionId: question.id, arm: 'QH50', sample: 1 }, question, attributedRequest(policy));
+    expect(auto).toMatchObject({ failure: null, safetyFaults: [], automaticFilters: { state: ['AK'] }, autoFilterFields: { state: 'applied' },
+      attributionCalled: true, autoFilterPolicy: autoFilterIdentity(policy), suggestion: { filters: { phase: ['landing'] } } });
+    expect(mocks.search.mock.calls[1]![1].filters).toEqual({ state: ['AK'] });
+    expect(auto.reservationUsd).toBeGreaterThan(live.reservationUsd);
+    const filters = buttonFilters(auto)!;
+    expect(filters).toEqual({ state: ['AK'], phase: ['landing'] });
+    const before = mocks.provider.calls.length;
+    const edit = await port.run({ key: 'q:QH50AF:1', questionId: question.id, arm: 'QH50', sample: 1 }, question, editRequest(filters, auto, policy));
+    expect(edit).toMatchObject({ failure: null, safetyFaults: [], edited: true, automaticFilters: null, scopeOutcome: 'skipped', appliedFilters: filters, attributionCalled: false });
+    expect(mocks.provider.calls.slice(before).map((c: { stage: string }) => c.stage)).toEqual(['rerank']);
+    expect(mocks.search.mock.calls[2]![1]).toEqual({ text: auto.executed!.vector, keywordText: auto.executed!.lexical, filters });
+  });
+});
+
+describe('Task 30 part summaries from journals', () => {
+  const policy = () => autoFilterPolicy('attributed.v1');
+  const observation = (itemId: string, sample: number, automatic: AutoFilters | null, fields: Record<string, string>, part: AttributionPart = 'dev-forced') => ({
+    key: attemptKey('l', part, itemId, sample), part, itemId, sample, scope: 'scripted', configuration: { version: 'er-q-v1', sha256: 'x' }, policy: autoFilterIdentity(policy()),
+    intent: 'case_search', emitted: { state: ['OH'] }, scopeOutcome: 'used', automaticFilters: automatic, autoFilterFields: fields,
+    autoFilterReason: automatic ? 'applied' : 'not_applied', attributionOutcome: 'applied', attributionCalled: true, candidates: null, appliedFilters: automatic ?? {},
+    usage: [{ stage: 'attribution', provider: 'anthropic', model: 'claude-haiku-5-5', usd: 0.0002 }], actualUsd: 0.0002, boundUsd: 0.001, reservationIds: [],
+    timing: { scope: { attempted: true, ms: 0 }, attribution: { attempted: true, ms: 1 }, retrieve: { attempted: true, ms: 0 } }, totalMs: 1, failure: null, safetyFaults: [] });
+  it('scores a development part, including the review-24 veto input, and refuses an incomplete one', async () => {
+    const { summarizeAttributionPart } = await import('../../evals/auto-filters/run.js');
+    const { probeItems } = await import('../../evals/auto-filters/inputs.js');
+    const loaded = { family: 'dev' as const, path: 'x', sha256: 'y', file: validateProbes(file([probe(),
+      probe({ id: 'r24-1', question: 'Find accidents involving aircraft maintained in Ohio.', gold: {}, kind: 'trap', source: 'review-24', pattern: 'maintenance' })]), 'dev') };
+    const data = { path: 'x', sha256: 'y', items: probeItems(loaded, true), probes: loaded };
+    const journal = new Map<string, any>();
+    for (const s of [1, 2, 3]) {
+      for (const o of [observation('wa-state-001', s, { state: ['OH'] }, { state: 'applied', years: 'not_candidate:empty', category: 'not_candidate:empty' }),
+        observation('r24-1', s, s === 2 ? { state: ['OH'] } : null, { state: s === 2 ? 'applied' : 'attribution:aircraft_history' })]) {
+        journal.set(o.key, { event: 'result', key: o.key, part: 'dev-forced', itemId: o.itemId, sample: s, observation: o });
+      }
+    }
+    const summary = summarizeAttributionPart('dev-forced', data, journal, 'l', policy());
+    expect(summary.fields.state!.traps!.policy).toMatchObject({ items: 1, failures: 1, failedItems: ['r24-1'] });
+    expect(summary.fields.state!.questionPrecision).toMatchObject({ applications: 2, wrong: 1 });
+    expect(summary.review24!.state).toEqual({ samples: 1, items: ['r24-1'] });
+    expect(summary.usd.attribution).toBeCloseTo(0.0012, 9);
+    expect(summary.wholeObject.questions).toEqual({ exact: 1, unsafe: 1 });
+    journal.delete(attemptKey('l', 'dev-forced', 'r24-1', 3));
+    expect(() => summarizeAttributionPart('dev-forced', data, journal, 'l', policy())).toThrow(/Incomplete schedule/);
+  });
+});
+
+describe('Task 30 retrieval summary from a journal', () => {
+  it('scores the five rows, checks every edit against its button and reports what QH50+A applied', async () => {
+    const { summarizeRetrievalSet } = await import('../../evals/auto-filters/run.js');
+    const policy = autoFilterPolicy('attributed.v1'), none = autoFilterIdentity(autoFilterPolicy('none')), identity = autoFilterIdentity(policy);
+    const broad = Array.from({ length: 25 }, (_, i) => `X${i}`);
+    const set = { name: 'confirmation', samples: [1], keyFilters: { n1: { state: ['AK'] }, b1: {} }, changes: [], sourceFileSha256: 's', goldSha256: 'g', crossGroupShares: 0,
+      questions: [{ id: 'n1', question: 'q', group: 'g1', class: 'narrow', area: 'a', relevant: ['A', 'B'] }, { id: 'b1', question: 'q', group: 'g2', class: 'broad', area: 'a', relevant: broad }] } as never;
+    const obs = (over: Partial<SearchObservation>): SearchObservation => ({ key: 'k', questionId: 'n1', arm: 'QH50', sample: 1, configuration: { version: 'er-q-h50-v1', sha256: 'x' },
+      ranking: [], fused: [], scopeOutcome: 'used', lexicalSource: 'question', rerankOutcome: 'applied', executed: { lexical: 'q', vector: 'q' }, usage: [], actualUsd: 0.003,
+      reservationUsd: 0.01, reservationIds: [], timing: { scope: { attempted: true, ms: 1 }, embed: { attempted: true, ms: 1 }, retrieve: { attempted: true, ms: 1 }, rerank: { attempted: true, ms: 1 } },
+      totalMs: 1, embeddingCacheHit: false, failure: null, safetyFaults: [], appliedFilters: {}, suggestion: null, addedTerms: null, edited: false,
+      autoFilterPolicy: none, automaticFilters: null, autoFilterFields: {}, attributionOutcome: 'not_run', attributionCalled: false, ...over });
+    const noRerank = { scope: { attempted: false, ms: 0 }, embed: { attempted: true, ms: 1 }, retrieve: { attempted: true, ms: 1 }, rerank: { attempted: false, ms: 0 } };
+    const journal = new Map<string, any>();
+    const put = (row: Row30, q: string, o: SearchObservation) => { const key = attemptKey('l', 'retrieval', q, 1, row, 'confirmation'); journal.set(key, { event: 'result', key, part: 'retrieval', set: 'confirmation', row, itemId: q, sample: 1, observation: o }); };
+    put('Q0', 'n1', obs({ configuration: { version: 'er-q-v1', sha256: 'y' }, ranking: ['Z', 'A'], scopeOutcome: 'skipped', rerankOutcome: 'disabled', timing: noRerank }));
+    put('QH50', 'n1', obs({ ranking: ['A', 'Z'], fused: ['Z', 'A'], suggestion: { filters: { state: ['AK'] }, terms: 'icing' } }));
+    put('QH50+F', 'n1', obs({ ranking: ['A', 'B'], edited: true, scopeOutcome: 'skipped', appliedFilters: { state: ['AK'] } }));
+    put('QH50+A', 'n1', obs({ ranking: ['B', 'A'], fused: ['A', 'B'], appliedFilters: { state: ['AK'] }, automaticFilters: { state: ['AK'] }, suggestion: { filters: {}, terms: 'icing' },
+      autoFilterPolicy: identity, autoFilterFields: { state: 'applied' }, attributionOutcome: 'applied', attributionCalled: true }));
+    put('Q0', 'b1', obs({ configuration: { version: 'er-q-v1', sha256: 'y' }, ranking: ['X0'], scopeOutcome: 'skipped', rerankOutcome: 'disabled', timing: noRerank }));
+    put('QH50', 'b1', obs({ questionId: 'b1', ranking: ['X0'], fused: ['X0'] }));
+    put('QH50+A', 'b1', obs({ questionId: 'b1', ranking: ['X0'], fused: ['X0'], autoFilterPolicy: identity, autoFilterFields: { state: 'not_candidate:empty' }, attributionOutcome: 'not_run' }));
+    const s = summarizeRetrievalSet(set, journal, 'l', policy);
+    expect(s.rows['QH50+A']!.narrowR20).toBe(1); expect(s.rows.QH50!.narrowR20).toBe(0.5); expect(s.rows['QH50+F']!.narrowR20).toBe(1);
+    expect(s.rows['QH50+A+F']!.narrowR20).toBe(1);
+    expect(s.narrowR20Differences['QH50+A - QH50']).toMatchObject({ delta: 0.5, questions: 1 });
+    expect(s.automatic.appliedByField).toEqual({ state: 1, years: 0, category: 0 });
+    expect(s.automatic.answerKeyMatch.narrow).toEqual({ exact: 1 });
+    expect(s.buttons).toEqual({ QH50: 1, 'QH50+A': 0, samples: 2 });
+    expect(s.perQuestionLosses).toEqual([]);
+    expect(s.determinism).toEqual({ q0VsQh50Fused: 0, q0VsQh50aFusedWithoutAutomatic: 0 });
+    expect(s.publishable).toBe(true);
+    // An edit without its button, or with other filters, is refused.
+    put('QH50+A+F', 'n1', obs({ edited: true, appliedFilters: { state: ['AK'] } }));
+    expect(() => summarizeRetrievalSet(set, journal, 'l', policy)).toThrow(/Edit does not match its button/);
+    journal.delete(attemptKey('l', 'retrieval', 'n1', 1, 'QH50+A+F', 'confirmation'));
+    put('QH50+F', 'n1', obs({ ranking: ['A', 'B'], edited: true, scopeOutcome: 'skipped', appliedFilters: { state: ['HI'] } }));
+    expect(() => summarizeRetrievalSet(set, journal, 'l', policy)).toThrow(/Edit ran other filters/);
+  });
+});
+
+describe('Task 30 preflight', () => {
+  it('sizes a scripted part from its candidates, a real-scope part from its attempts, and refuses an unfrozen probe file', async () => {
+    const { preflightPart, stages, resolvePolicy } = await import('../../evals/auto-filters/run.js');
+    const policy = resolvePolicy('attributed.v1'), s = stages(policy);
+    expect(s.attribution).toBe(625);
+    const dir = mkdtempSync(join(tmpdir(), 'task30-preflight-'));
+    try {
+      const replayPart = preflightPart('state-replay', dir, policy, s, undefined, true) as any;
+      expect(replayPart).toMatchObject({ ready: true, items: 1040, samples: 1, attempts: 1040, candidates: { scriptedSearches: 918 } });
+      expect(replayPart.candidates.withCandidate).toBeGreaterThan(300);
+      expect(replayPart.candidates.withCandidate).toBeLessThan(918);
+      expect(replayPart.chargeableWorstMicros).toBe(replayPart.candidates.withCandidate * 625);
+      expect(replayPart.worstCaseMicros).toBe(1040 * (s.scope + s.attribution + s.embed));
+      const c2 = preflightPart('c2', dir, policy, s, undefined, true) as any;
+      expect(c2).toMatchObject({ items: 1600, attempts: 1600, chargeableWorstMicros: 1600 * (s.scope + s.attribution) });
+      expect(c2.candidates).toBeUndefined();
+      expect(() => preflightPart('dev-forced', dir, policy, s, undefined, true)).toThrow(/not frozen yet/);
+      expect(() => preflightPart('retrieval', dir, policy, s, undefined, true)).toThrow(/development target/);
+      expect(() => resolvePolicy('state-explicit.v1.3')).toThrow(/no attribution check/);
+      expect(() => resolvePolicy('attributed.v9')).toThrow(/Unregistered/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('freezes the confirmation probes at their first preflight; a run only checks the freeze', async () => {
+    const { freezeConfirm } = await import('../../evals/auto-filters/run.js');
+    const dir = mkdtempSync(join(tmpdir(), 'task30-freeze-'));
+    try {
+      const probes = { family: 'confirm' as const, path: 'x', sha256: 'a'.repeat(64), file: validateProbes(file([probe({ source: 'c1' })]), 'confirm') };
+      expect(() => freezeConfirm(dir, probes, false)).toThrow(/Run the preflight first/);
+      expect(freezeConfirm(dir, probes, true)).toMatchObject({ sha256: 'a'.repeat(64), probes: 1 });
+      expect(freezeConfirm(dir, probes, false).sha256).toBe('a'.repeat(64));
+      expect(() => freezeConfirm(dir, { ...probes, sha256: 'b'.repeat(64) }, true)).toThrow(/changed after their first preflight/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

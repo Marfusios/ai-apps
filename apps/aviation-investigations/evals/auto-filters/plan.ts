@@ -5,7 +5,6 @@
  */
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import type { EvidenceScopeOutput } from '../../server/ai/prompts/scope.e1.js';
-import { stageWorstCaseUsd } from '../../server/ai/pricing.js';
 import type { EvidenceAutoFilterPolicy } from '../../server/evidence/auto-filters.js';
 import type { EvidenceRankingConfig } from '../../server/evidence/ranking-config.js';
 import type { LexicalSource } from '../../server/evidence/pipeline.js';
@@ -45,11 +44,11 @@ export const isPart = (v: unknown): v is PartName => typeof v === 'string' && (P
 // ---------------------------------------------------------------------------
 // Money: worst cases as `rankEvidence` reserves them, and estimates of what is charged.
 
-/** Worst-case microdollars of each stage. The attribution figure uses the default cached prefix, an upper bound for its caps. */
+/** Worst-case microdollars of each stage, as `rankEvidence` reserves them (the check's figure is the pipeline's own `attributionWorstCaseUsd`). */
 export interface StageMicros30 { scope: number; attribution: number; embed: number; rerank: number }
-export function stageMicros30(q0: EvidenceRankingConfig, qh50: EvidenceRankingConfig,
-  attribution: { readonly model: string; readonly caps: { readonly input: number; readonly output: number } }): StageMicros30 {
-  return { ...stageMicros(q0, qh50), attribution: Math.ceil(stageWorstCaseUsd(attribution.model, attribution.caps) * 1e6) };
+export function stageMicros30(q0: EvidenceRankingConfig, qh50: EvidenceRankingConfig, attributionWorstUsd: number): StageMicros30 {
+  if (!(attributionWorstUsd > 0)) throw new Error('The policy has no attribution check to size');
+  return { ...stageMicros(q0, qh50), attribution: Math.ceil(attributionWorstUsd * 1e6 - 1e-6) };
 }
 /** Reservations of one attribution-part sample: the (scripted or real) scope, the check, and the embedding the pipeline reserves before the offline retriever. */
 export const attributionSampleMicros = (s: StageMicros30): number => s.scope + s.attribution + s.embed;
@@ -68,7 +67,7 @@ export const EXPECTED_MICROS = Object.freeze({ scope: 300, attribution: 300, rer
 export function expectedSampleMicros(scripted: boolean): number { return (scripted ? 0 : EXPECTED_MICROS.scope) + EXPECTED_MICROS.attribution; }
 export function expectedRetrievalQuestionMicros(samples: number): number {
   const e = EXPECTED_MICROS;
-  return e.embed + samples * ((e.scope + e.embed + e.rerank) * 1 + (e.embed + e.rerank) + (e.scope + e.attribution + e.embed + e.rerank) + (e.embed + e.rerank));
+  return e.embed + samples * ((e.scope + e.embed + e.rerank) + (e.embed + e.rerank) + (e.scope + e.attribution + e.embed + e.rerank) + (e.embed + e.rerank));
 }
 
 // ---------------------------------------------------------------------------
@@ -365,15 +364,19 @@ export function fieldSummary(samples: readonly ScoredSample[], field: AutoField,
 }
 export type FieldSummary = ReturnType<typeof fieldSummary>;
 
-/** Question-level counts per value of a tag (pattern, source, kind, field): traps and their failures, applications and wrong ones, positives found. */
+/**
+ * Counts per value of a tag (pattern, source, kind, field, stratum): sample-level TP/FP/FN, and at question
+ * level traps and their failures, applications and wrong ones, positives found (the last need `forced`).
+ */
 export function groupSummary(samples: readonly ScoredSample[], tag: string) {
   const values = [...new Set(samples.map(s => s.tags[tag] ?? '(none)'))].sort();
   return Object.fromEntries(values.map(v => {
     const rows = samples.filter(s => (s.tags[tag] ?? '(none)') === v);
     return [v, { items: new Set(rows.map(r => r.itemId)).size, samples: rows.length,
       fields: Object.fromEntries(AUTO_FIELDS.map(f => {
-        const t = trapFailures(rows, f), p = questionPrecision(rows, f), r = positiveRecall(rows, f);
-        return [f, { traps: t.items, trapFailures: t.failures, applications: p.applications, wrong: p.wrong, positives: r.items, positiveSamples: r.samples, found: r.found }];
+        const c = confusion(rows, f), t = trapFailures(rows, f), p = questionPrecision(rows, f), r = positiveRecall(rows, f);
+        return [f, { tp: c.tp, fp: c.fp, fn: c.fn, traps: t.items, trapFailures: t.failures, applications: p.applications, wrong: p.wrong,
+          positives: r.items, positiveSamples: r.samples, found: r.found }];
       })) }];
   }));
 }
