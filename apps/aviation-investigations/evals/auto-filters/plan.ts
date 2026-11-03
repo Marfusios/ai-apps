@@ -58,8 +58,8 @@ export const laneName = (s: Shard): string => `${s.i}of${s.k}`;
 /** One shard's items: those whose index in the part's seeded order is i - 1 modulo k. */
 export const shardItems = <T>(order: readonly T[], s: Shard): T[] => order.filter((_, index) => index % s.k === s.i - 1);
 /** Fixed per-part budgets in microdollars, $8.00 in all; a lane's cap is its part's budget divided by its k. */
-export const PART_BUDGET_MICROS: Readonly<Record<PartName, number>> = Object.freeze({ 'dev-forced': 800_000, 'dev-e2e': 1_500_000,
-  'state-replay': 400_000, c2: 1_200_000, 'confirm-forced': 1_300_000, 'confirm-e2e': 1_500_000, retrieval: 1_300_000 });
+export const PART_BUDGET_MICROS: Readonly<Record<PartName, number>> = Object.freeze({ 'dev-forced': 800_000, 'dev-e2e': 1_400_000,
+  'state-replay': 400_000, c2: 1_200_000, 'confirm-forced': 1_300_000, 'confirm-e2e': 1_500_000, retrieval: 1_400_000 });
 /** Every lane's ledger prefix starts with `eval-task30-`; the evaluation allowance a lane opens with covers the whole family. */
 export const TASK30_FAMILY = Object.freeze({ prefix: 'eval-task30-', capMicros: 8_000_000 });
 export const laneCapMicros = (part: PartName, k: number): number => Math.floor(PART_BUDGET_MICROS[part] / k);

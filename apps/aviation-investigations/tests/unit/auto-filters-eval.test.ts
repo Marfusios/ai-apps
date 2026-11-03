@@ -635,6 +635,8 @@ describe('Task 30 parallel lanes', () => {
     for (const bad of ['0/2', '3/2', '1/10', '1-2', '', 'a/b', '2/02']) expect(() => parseShard(bad)).toThrow(/--shard/);
   });
   it('caps lanes from a fixed per-part budget table that sums to $8.00', () => {
+    expect(PART_BUDGET_MICROS).toEqual({ 'dev-forced': 800_000, 'dev-e2e': 1_400_000, 'state-replay': 400_000, c2: 1_200_000,
+      'confirm-forced': 1_300_000, 'confirm-e2e': 1_500_000, retrieval: 1_400_000 });
     const total = Object.values(PART_BUDGET_MICROS).reduce((a, b) => a + b, 0);
     expect(total).toBeLessThanOrEqual(8_000_000);
     expect(total).toBe(TASK30_FAMILY.capMicros);
@@ -645,6 +647,8 @@ describe('Task 30 parallel lanes', () => {
       for (const part of PARTS) expect(k * laneCapMicros(part, k)).toBeLessThanOrEqual(PART_BUDGET_MICROS[part]);
     }
     expect(laneSpec('confirm-forced', { i: 2, k: 4 })).toMatchObject({ allocation: 'eval-task30-confirm-forced-2of4', capMicros: 325_000, family: TASK30_FAMILY });
+    expect(laneSpec('retrieval', { i: 1, k: 1 }).capMicros).toBe(1_400_000);
+    expect(laneSpec('dev-e2e', { i: 3, k: 3 }).capMicros).toBe(466_666);
   });
   it('gives every lane its own lock key, ledger prefix and application name', () => {
     const lanes = PARTS.flatMap(part => (part === 'retrieval' ? [{ i: 1, k: 1 }] : Array.from({ length: MAX_SHARDS }, (_, j) => ({ i: j + 1, k: MAX_SHARDS })))
@@ -662,7 +666,7 @@ describe('Task 30 parallel lanes', () => {
   it('opens each lane with the whole family\'s remaining liability as its evaluation allowance', () => {
     const totals = (charged: number, open = 0) => ({ chargedMicros: charged, ledgerMicros: charged, openMicros: open, open: open ? 1 : 0, reservations: 1 });
     const lane = laneSpec('dev-e2e', { i: 1, k: 3 });
-    // Lane cap $0.50, family $8.00 with $2.00 spent: the lane may run while the family has room; its own cap is checked per block.
+    // Lane cap $1.40 / 3, family $8.00 with $2.00 spent: the lane may run while the family has room; its own cap is checked per block.
     expect(categoryAllowanceMicros(10_000_000, lane, totals(100_000), totals(2_000_000))).toBe(10_000_000 + 6_000_000);
     expect(categoryAllowanceMicros(10_000_000, lane, totals(0), totals(7_900_000, 100_000))).toBe(10_000_000);
     // Without a family (Tasks 25 and 29) nothing changes: this month's spend plus the task's own remaining cap, at most $50.

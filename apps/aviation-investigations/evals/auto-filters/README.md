@@ -81,12 +81,12 @@ allocation, advisory lock, cap and journal, and makes one reservation at a time 
 | Part | Budget | Lock keys (`733000100 + 10 x index + i`) |
 | --- | --- | --- |
 | `dev-forced` | $0.80 | 733000101-109 |
-| `dev-e2e` | $1.50 | 733000111-119 |
+| `dev-e2e` | $1.40 | 733000111-119 |
 | `state-replay` | $0.40 | 733000121-129 |
 | `c2` | $1.20 | 733000131-139 |
 | `confirm-forced` | $1.30 | 733000141-149 |
 | `confirm-e2e` | $1.50 | 733000151-159 |
-| `retrieval` | $1.30 | 733000161 (one lane only) |
+| `retrieval` | $1.40 | 733000161 (one lane only) |
 
 The budgets sum to the **$8.00** hard cap. A lane's ledger prefix is `eval-task30-<part>-<i>of<k>`
 and its cap the part's budget divided by `k`, rounded down. A lane opens with an evaluation
