@@ -104,3 +104,35 @@ it('the delay since is the first unresolved failure date, not the newest run', a
       await Promise.all([closeDb(db), closeDb(app)]);
     }
   }));
+
+it('a restore alert uses the hold time and no unrelated incident details', async () =>
+  withScratchEnvironment(localAdminUrl(), 'importholdstatus', async (urls) => {
+    const db = createDb(urls.ingest),
+      app = createDb(urls.app),
+      owner = createDb(urls.migrator);
+    try {
+      await withImportSession(db, async (s) => {
+        const id = await beginRun(db, s, 'automatic');
+        await updateRun(db, s, id, {
+          step: 'check',
+          result: 'failed',
+          reason: 'storage',
+        });
+        await fenced(db, s, (tx) =>
+          tx.execute(sql`insert into import_issues(key,run_id,code,image,reason,step,origin,fixed,failure_day)
+          values(${id.replaceAll('-', '').repeat(2)},${id}::uuid,${'a'.repeat(40)},${'sha256:' + 'b'.repeat(64)},'storage','check','host',true,'2026-11-01')`),
+        );
+      });
+      await owner.execute(
+        sql`update paid_operations_hold set held_at='2026-11-01T03:00:00Z'::timestamptz where id=1`,
+      );
+      expect((await readImportStatus(app, schedule)).alert).toMatchObject({
+        cause: 'restore_hold',
+        since: '2026-11-01T03:00:00.000Z',
+        details: null,
+        origin: 'host',
+      });
+    } finally {
+      await Promise.all([closeDb(db), closeDb(app), closeDb(owner)]);
+    }
+  }));

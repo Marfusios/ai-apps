@@ -115,12 +115,18 @@ export function importOutcome(run: AdminImportRun): string {
     return `Imported ${run.source ? `the ${day} file` : 'a new file'}${changes}`;
   }
   if (run.suppressed || run.result === 'waiting')
-    return `No new file. ${run.source ? `The ${day} file` : 'The waiting file'} waits for a fix.`;
+    return run.source
+      ? `No new file. The ${day} file waits for a fix.`
+      : 'Checked. Imports are on hold until a fix.';
   if (run.result === 'unchanged')
     return run.workKind === 'recertification'
       ? 'The data on the site passed the release checks.'
       : 'No new file.';
   if (run.result === 'running') return 'Import in progress.';
+  if (run.workKind === 'recertification')
+    return run.result === 'skipped_dev_failed'
+      ? 'Held back by the test copy of the site: The data on the site failed the release checks.'
+      : 'Failed: The data on the site failed the release checks.';
   if (run.result === 'skipped_dev_failed')
     return `Held back by the test copy of the site: ${reasonWords(run.reason)}`;
   if (run.result === 'rolled_back') return 'The site went back to the previous data.';
@@ -189,21 +195,34 @@ export function alertSentences(
       lines.push(
         `No import check has run since ${formatDateTime(a.since, zone)} (${zone}).`,
       );
+    if (a.holds.length && !a.holds.includes('restore_hold'))
+      lines.push('The schedule or server needs a fix.');
   } else {
     if (a.postSuccess) lines.push('The import finished. A later task needs attention.');
     if (a.origin === 'dev' && environment === 'live') {
-      const fileFailed = a.nextAction !== 'daily' && a.details?.source && !a.postSuccess;
+      const fileFailed =
+        !a.servingChecks &&
+        a.nextAction !== 'daily' &&
+        a.details?.source &&
+        !a.postSuccess;
       lines.push(
-        fileFailed
-          ? 'The new file failed in the test copy of the site (dev). Live was not touched.'
-          : 'The test copy of the site (dev) has not finished its checks. Live was not touched.',
+        a.servingChecks
+          ? 'The release checks failed in the test copy of the site (dev). Live was not touched.'
+          : fileFailed
+            ? 'The new file failed in the test copy of the site (dev). Live was not touched.'
+            : 'The test copy of the site (dev) has not finished its checks. Live was not touched.',
       );
     }
-    if (!a.postSuccess && a.details?.source)
+    if (!a.postSuccess && !a.servingChecks && a.details?.source)
       lines.push(
         `The NTSB file of ${sourceDay(a.details.source.advertisedAtLocal)} is waiting.`,
       );
-    if (a.cause !== 'manual_rollback') lines.push(reasonWords(a.cause));
+    if (a.cause !== 'manual_rollback')
+      lines.push(
+        a.servingChecks
+          ? 'The data on the site failed the release checks.'
+          : reasonWords(a.cause),
+      );
     if (a.failedDays >= IMPORT_LIMITS.delayedDays) {
       if (a.postSuccess)
         lines.push(`A later task failed on ${a.failedDays} different days.`);
@@ -267,6 +286,10 @@ export function alertSentences(
     );
   else if (a.cause === 'source_retired')
     lines.push('A new NTSB source needs a code change.');
+  else if (a.cause === 'source_listing_changed')
+    lines.push(
+      'This needs a code change. The system still checks every day, and this alert goes away after the first good import.',
+    );
   else if (a.siteState === 'restore_unverified')
     lines.push('The system repeats the site check every day.');
   else if (

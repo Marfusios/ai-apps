@@ -159,7 +159,7 @@ describe('automatic import alerts and facts', { timeout: 20000 }, () => {
     serve('dev_failed', (o) => ({ ...o, system: { ...o.system, appEnv: 'live' } }));
     await open();
     expect(document.querySelector('[data-import-alert]')?.textContent).toContain(
-      'Live was not touched',
+      'The new file failed in the test copy of the site (dev). Live was not touched.',
     );
   });
   it('keeps a post-success import done and shows the incident separately', async () => {
@@ -303,6 +303,7 @@ describe('the exact operator copy and recovery facts', () => {
     expect(within(block).getAllByText(UNKNOWN_IMPORT_STATUS)).toHaveLength(5);
     expect(alertDetails(o.system.imports, 'UTC')).toBe('status_unavailable');
     expect(block.textContent).not.toMatch(/No runs|No check|Not recorded/);
+    expect(fact(block, 'Last good check')).toBe(UNKNOWN_IMPORT_STATUS);
   });
   it('manual rollback names the restored data and passed site checks', async () => {
     const o = serve('manual_rollback');
@@ -376,6 +377,8 @@ describe('round 2 status rendering', () => {
     expect(block.textContent?.split(UNKNOWN_IMPORT_STATUS)).toHaveLength(6);
     expect(document.querySelector('[data-import-alert]')).toBeNull();
     expect(block.textContent).not.toMatch(/No runs|No check|Not recorded/);
+    expect(fact(block, 'Last check')).toBe(UNKNOWN_IMPORT_STATUS);
+    expect(block.querySelector('[data-fact="Last good check"]')).toBeNull();
   });
   it.each(['delayed', 'legacy', 'dev_failed', 'fix'] as const)(
     '%s colors only failed or cancelled rows',

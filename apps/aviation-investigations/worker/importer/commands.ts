@@ -120,24 +120,24 @@ export async function operatorWithResources(
           /* unreadable is not proof */
         }
       }
-      const reason = committed ? 'site_check' : 'rollback_failed';
+      const reason = committed ? 'manual_rollback' : 'rollback_failed';
       const siteState = committed ? 'restore_unverified' : 'uncertain';
       await fenced(db, s, async (tx) => {
         if (!committed)
           await tx.execute(
-            sql`select import_switch_hold(${s.fence}::uuid,${JSON.stringify({ code: config.code, image: config[environment]!.image, reason: 'rollback_failed', artifactId: a.id })}::jsonb)`,
+            sql`select import_switch_hold(${s.fence}::uuid,${JSON.stringify({ code: config.code, image: config[environment]!.image, reason: 'rollback_failed', artifactId: a.id, runId: id })}::jsonb)`,
           );
         await tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,reason,step,origin,fixed,site_state,failure_day,suppresses_file)
         values(${suppressionKey(environment, archive, null, config.code, config[environment]!.image)},${id}::uuid,${a.id}::uuid,${config.code},${config[environment]!.image},${archive},${reason},'canary',${environment},true,${siteState},${localClock(new Date(), config.schedule.timeZone).day},true)
         on conflict(key) do update set site_state=excluded.site_state,resolved_at=null,last_at=clock_timestamp()`);
       });
       await updateRun(db, s, id, {
-        step: 'canary',
-        result: 'failed',
+        step: committed ? 'complete' : 'canary',
+        result: committed ? 'rolled_back' : 'failed',
         reason,
         artifactId: a.id,
       });
-      throw new ImportFailure(reason);
+      throw new ImportFailure(committed ? 'site_check' : 'rollback_failed');
     }
   });
 }

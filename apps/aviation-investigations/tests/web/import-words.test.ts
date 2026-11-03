@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   IMPORT_LIMITS,
+  importOutcome,
+  waitingWords,
   alertSentences,
   reasonWords,
   chipLine,
@@ -88,6 +90,10 @@ it('unknown start dates say so; overdue retains a switch hold without duplicatin
   const lines = alertSentences(stale, 'dev', 'UTC');
   expect(lines[0]).toMatch(/^No import check has run since/);
   expect(lines).toContain(reasonWords('rollback_failed'));
+  expect(lines.indexOf('The schedule or server needs a fix.')).toBeLessThan(
+    lines.indexOf(reasonWords('rollback_failed')),
+  );
+  expect(lines).toContain('The schedule or server needs a fix.');
   expect(lines.filter((s) => s.includes('site may show mixed data'))).toHaveLength(1);
   expect(alertDetails(stale, 'UTC')).toContain('rollback_failed');
 });
@@ -142,4 +148,80 @@ it('a nonsuppressing recertification warning keeps its daily next step despite u
       'UTC',
     ),
   ).toContain('Fix the server. The system tries again every day.');
+});
+
+it('source listing changes and retirement retain their distinct code-change instructions', () => {
+  const now = new Date('2026-11-03T12:00:00Z');
+  const retired = mockImports('source_retired', now).imports;
+  expect(retired.alert!.nextAction).toBe('release');
+  expect(chipLine(retired, 'UTC')).toBe('Since 1 Nov 2026.');
+  expect(alertSentences(retired, 'dev', 'UTC')).toContain(
+    'A new NTSB source needs a code change.',
+  );
+  const changed = alertSentences(
+    mockImports('source_listing_changed', now).imports,
+    'dev',
+    'UTC',
+  );
+  expect(changed).toContain(
+    'This needs a code change. The system still checks every day, and this alert goes away after the first good import.',
+  );
+  expect(changed).not.toContain('Fix the server. The system tries again every day.');
+});
+
+it('mock episode details and newest good checks match the rows SQL would select', () => {
+  const now = new Date('2026-11-03T12:00:00Z');
+  for (const state of MOCK_IMPORT_STATES) {
+    const input = mockImportInputs(state, now);
+    if (input.health === true) continue;
+    expect(input.health.lastGood).toEqual(
+      input.rows.find((r) => r.goodCheck)?.public ?? null,
+    );
+    if (input.health.issue && input.health.issue.fixed && !input.health.issue.postSuccess)
+      expect(input.health.issue.details!.checkedAt).toBe(input.health.fixSince);
+  }
+  const restored = mockImports('restore_unverified', now).imports;
+  expect(restored.alert!.details!.checkedAt).toBe(restored.alert!.since);
+  const delayed = mockImports('delayed', now).imports;
+  expect(delayed.alert!.details!.runId).toBe(delayed.recentRuns[0]!.runId);
+  const inherited = mockImportInputs('dev_failed', now);
+  if (inherited.health === true) throw Error('readable fixture');
+  expect(inherited.health.waiting).toBeNull();
+  expect(mockImports('dev_failed', now).imports.waiting?.reason).toBe('probe');
+});
+
+it('daily hold rows with no pending file do not invent one', () => {
+  const now = new Date('2026-11-03T12:00:00Z');
+  for (const kind of ['alias_unknown', 'rollback_failed'] as const) {
+    const run = mockImports(kind, now).imports.recentRuns[0]!;
+    expect(run.source).toBeNull();
+    expect(importOutcome(run)).toBe('Checked. Imports are on hold until a fix.');
+  }
+});
+
+it('serving-data check failures never blame a pending file, including on live', () => {
+  const now = new Date('2026-11-03T12:00:00Z');
+  const input = mockImportInputs('probe', now);
+  if (input.health === true) throw Error('readable fixture');
+  const issue = input.health.issue!;
+  issue.suppressesFile = false;
+  issue.details!.workKind = 'recertification';
+  input.health.waiting = {
+    source: { advertisedAtLocal: '2026-11-01T07:30:00', bytes: 100 },
+    since: issue.since,
+    reason: null,
+    retry: 'daily',
+  };
+  const status = projectImports(input.rows, input.schedule, now, input.health);
+  expect(waitingWords(status.waiting!.reason)).toBe('Not imported yet');
+  for (const env of ['dev', 'live'] as const) {
+    const text = alertSentences(status, env, 'UTC').join(' ');
+    expect(text).toContain('The data on the site failed the release checks.');
+    expect(text).not.toMatch(
+      /new data failed|new file failed|file of .* is waiting|not finished its checks/,
+    );
+  }
+  expect(importOutcome(issue.details!)).toBe(
+    'Failed: The data on the site failed the release checks.',
+  );
 });

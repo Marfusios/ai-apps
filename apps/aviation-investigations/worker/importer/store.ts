@@ -238,8 +238,14 @@ export async function startProcessing(
       a.archive_sha256 === value.archive &&
       a.content_sha256 === value.content &&
       a.phase !== 'abandoned'
-    )
+    ) {
+      if (!a.publication && !sameManifest(a.baseline, value.baseline)) {
+        await tx.execute(sql`update import_processing set baseline=${JSON.stringify(value.baseline)}::jsonb
+          where id=${a.processingId}::uuid and publication is null`);
+        return artifact(tx, id);
+      }
       return a;
+    }
     if (a.processingId && ['switching', 'published', 'rolling_back'].includes(a.phase))
       throw new ImportFailure('alias_unknown');
     await tx.execute(

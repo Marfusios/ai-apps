@@ -249,7 +249,8 @@ CREATE OR REPLACE FUNCTION import_switch_hold(p_fence uuid,p_value jsonb) RETURN
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 BEGIN
  PERFORM import_assert_fence(p_fence);
- UPDATE import_control SET switch_hold=p_value,updated_at=clock_timestamp() WHERE id=1;
+ UPDATE import_control SET switch_hold=CASE WHEN p_value IS NULL THEN NULL ELSE
+  p_value||jsonb_build_object('heldAt',to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) END,updated_at=clock_timestamp() WHERE id=1;
 END $$;
 --> statement-breakpoint
 -- Obsolete mutators have no callers under the automatic policy. Historical attestations remain.
@@ -329,14 +330,30 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
    'switchHeld',c.switch_hold IS NOT NULL OR EXISTS(SELECT 1 FROM import_index_refs r JOIN index_switch_attempts a ON a.index_name=r.index_name
       WHERE r.released_at IS NULL AND a.outcome='unknown' AND a.declared_abandoned_at IS NULL),
    'switchHoldReason',CASE WHEN c.switch_hold->>'reason'='rollback_failed' THEN 'rollback_failed' ELSE 'alias_unknown' END,
+   'hold',CASE
+    WHEN c.restore_required OR EXISTS(SELECT 1 FROM paid_operations_hold WHERE id=1 AND held_at IS NOT NULL)
+     THEN jsonb_build_object('since',import_status_time(coalesce((SELECT held_at FROM paid_operations_hold WHERE id=1),
+       (SELECT max(restored_at) FROM drizzle.restores))),'details',null)
+    WHEN c.switch_hold IS NOT NULL THEN jsonb_build_object('since',c.switch_hold->>'heldAt',
+      'details',import_public_run((c.switch_hold->>'runId')::uuid))
+    ELSE (SELECT jsonb_build_object('since',import_status_time(a.created_at),'details',null)
+      FROM import_index_refs r JOIN index_switch_attempts a ON a.index_name=r.index_name
+      WHERE r.released_at IS NULL AND a.outcome='unknown' AND a.declared_abandoned_at IS NULL
+      ORDER BY a.created_at LIMIT 1) END,
    'fixSince',(SELECT import_status_time(min(i.created_at)) FROM import_issues i JOIN latest l ON i.reason=l.reason AND i.origin=l.origin WHERE i.resolved_at IS NULL AND i.fixed),
    'temporaryDays',least(7,(SELECT count(distinct failure_day)::int FROM import_issues WHERE resolved_at IS NULL AND NOT fixed)),
    'delayedSince',(SELECT import_status_time(min(created_at)) FROM import_issues WHERE resolved_at IS NULL AND NOT fixed),
    'lastGood',(SELECT import_public_run(id) FROM import_runs WHERE good_check ORDER BY checked_at DESC LIMIT 1),
    'serving',(SELECT jsonb_build_object('generationId',generation_id,'sourceDate',source_date,'importedAt',import_status_time(published_at),'restoredAt',restored_at) FROM serving),
-   'waiting',CASE WHEN c.pending IS NULL THEN NULL ELSE jsonb_build_object('source',c.pending->'observation','since',c.pending->>'fetchedAt') END,
+   'waiting',CASE WHEN c.pending IS NULL THEN NULL ELSE jsonb_build_object('source',c.pending->'observation','since',c.pending->>'fetchedAt',
+     'reason',(SELECT i.reason FROM import_issues i JOIN import_runs r ON r.id=i.run_id
+       WHERE i.resolved_at IS NULL AND NOT i.post_success AND NOT i.preflight AND r.work_kind<>'recertification'
+       AND i.step NOT IN ('check','cleanup','complete') AND i.archive_sha256=c.pending->>'archive'
+       ORDER BY i.fixed DESC,i.last_at DESC LIMIT 1),
+     'retry',CASE WHEN EXISTS(SELECT 1 FROM import_issues i WHERE i.resolved_at IS NULL AND i.suppresses_file
+       AND i.archive_sha256=c.pending->>'archive') THEN 'new_file_or_release' ELSE 'daily' END) END,
    'issue',(SELECT jsonb_build_object('reason',reason,'fixed',fixed,'since',import_status_time(created_at),'origin',origin,'originRunId',origin_run_id,
-      'siteState',site_state,'postSuccess',post_success,'suppressesFile',suppresses_file,'details',CASE WHEN run_id IS NULL THEN NULL ELSE import_public_run(run_id)||jsonb_build_object(
+      'siteState',site_state,'postSuccess',post_success,'suppressesFile',suppresses_file,'preflight',preflight,'details',CASE WHEN run_id IS NULL THEN NULL ELSE import_public_run(run_id)||jsonb_build_object(
         'code',code,'image',image,'origin',origin,'source',source,'reason',reason,'step',step) END) FROM latest)
  ) FROM import_control c WHERE c.id=1
 $$;
@@ -360,6 +377,7 @@ BEGIN
   DELETE FROM import_runs WHERE finished_at IS NOT NULL AND id NOT IN (
    SELECT run_id FROM import_issues WHERE run_id IS NOT NULL
    UNION SELECT id FROM (SELECT id FROM import_runs WHERE good_check ORDER BY checked_at DESC LIMIT 1) last_good
+   UNION SELECT (switch_hold->>'runId')::uuid FROM import_control WHERE switch_hold->>'runId' IS NOT NULL
    UNION SELECT run_id FROM import_attestations WHERE run_id IS NOT NULL
    UNION SELECT id FROM import_runs WHERE acknowledged_at IS NOT NULL
    UNION SELECT pending_run_id FROM import_runs WHERE pending_run_id IS NOT NULL

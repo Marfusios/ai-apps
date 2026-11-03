@@ -87,12 +87,13 @@ export interface ImportHealth {
   restoreHeld: boolean;
   switchHeld: boolean;
   switchHoldReason: 'rollback_failed' | 'alias_unknown';
+  hold: { since: string | null; details: AdminImportRun | null } | null;
   fixSince: string | null;
   temporaryDays: number;
   delayedSince: string | null;
   serving: AdminImports['serving'];
   lastGood: AdminImportRun | null;
-  waiting: { source: AdminImportRun['source']; since: string } | null;
+  waiting: AdminImports['waiting'];
   issue: {
     reason: AdminImportRun['reason'];
     fixed: boolean;
@@ -101,6 +102,7 @@ export interface ImportHealth {
     siteState: 'unchanged' | 'restored' | 'restore_unverified' | 'uncertain';
     postSuccess: boolean;
     suppressesFile: boolean;
+    preflight: boolean;
     details: AdminImportRun | null;
     originRunId: string | null;
   } | null;
@@ -110,6 +112,7 @@ function retryPolicy(
   issue: ImportHealth['issue'],
 ): NonNullable<AdminImports['waiting']>['retry'] {
   if (issue?.siteState === 'uncertain') return 'release';
+  if (issue?.reason === 'source_retired') return 'release';
   if (issue?.suppressesFile && !issue.postSuccess) return 'new_file_or_release';
   return 'daily';
 }
@@ -137,6 +140,21 @@ export function projectImports(
   const overdue =
     startSince !== null && now.getTime() - Date.parse(startSince) > 36 * 3_600_000;
   const issue = known?.issue ?? null;
+  const servingChecks =
+    !!issue &&
+    !issue.postSuccess &&
+    (issue.preflight ||
+      issue.details?.workKind === 'recertification' ||
+      (!issue.suppressesFile &&
+        issue.details?.step === 'check' &&
+        [
+          'probe',
+          'site_check',
+          'verification',
+          'mapping',
+          'integrity',
+          'schema',
+        ].includes(issue.reason ?? '')));
   const days = known?.temporaryDays ?? 0;
   const retry = retryPolicy(issue);
   const holds: NonNullable<AdminImports['alert']>['holds'] = [];
@@ -154,6 +172,7 @@ export function projectImports(
   }
   let alert: AdminImports['alert'] = null;
   if (cause !== null) {
+    const held = !overdue && (known?.restoreHeld || known?.switchHeld);
     const unavailable = cause === 'status_unavailable';
     const fixed =
       issue?.fixed ||
@@ -167,6 +186,7 @@ export function projectImports(
     if (unavailable)
       since = null; // unreadable, not a new incident on every poll
     else if (overdue) since = startSince;
+    else if (held) since = known?.hold?.since ?? null;
     else if (!issue?.fixed && !known?.restoreHeld && !known?.switchHeld)
       since = known?.delayedSince ?? since;
     let nextAction = retry;
@@ -181,7 +201,7 @@ export function projectImports(
       holds,
       since,
       failedDays: days,
-      origin: issue?.origin ?? 'host',
+      origin: held ? (known?.hold?.details?.origin ?? 'host') : (issue?.origin ?? 'host'),
       siteState,
       nextAction,
       retryAt:
@@ -190,15 +210,27 @@ export function projectImports(
               Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
             ).toISOString()
           : null,
-      postSuccess: issue?.postSuccess === true,
-      devAdvanced: issue?.reason === 'shrunk' && issue.origin === 'live',
-      details: issue?.details ?? null,
-      originRunId: issue?.originRunId ?? null,
+      postSuccess: !held && issue?.postSuccess === true,
+      servingChecks: !held && servingChecks,
+      devAdvanced: !held && issue?.reason === 'shrunk' && issue.origin === 'live',
+      details: held ? (known?.hold?.details ?? null) : (issue?.details ?? null),
+      originRunId: held ? null : (issue?.originRunId ?? null),
     };
   }
   let waiting = known?.waiting ?? null;
-  if (!waiting && issue && !issue.postSuccess && issue.details?.source) {
-    waiting = { source: issue.details.source, since: issue.since };
+  if (
+    !waiting &&
+    issue?.originRunId &&
+    !issue.postSuccess &&
+    !servingChecks &&
+    issue.details?.source
+  ) {
+    waiting = {
+      source: issue.details.source,
+      since: issue.since,
+      reason: issue.details.archiveSha256 ? issue.reason : null,
+      retry,
+    };
   }
   let status: AdminImports['status'] = 'off';
   if (enabled) status = alert?.level ?? 'working';
@@ -217,7 +249,7 @@ export function projectImports(
     lastStartedAt,
     lastCheck,
     lastGoodCheck,
-    waiting: waiting ? { ...waiting, reason: issue?.reason ?? null, retry } : null,
+    waiting,
     alert,
     recentRuns: sorted
       .filter((r) => !(r.recertification && r.public.result === 'unchanged'))

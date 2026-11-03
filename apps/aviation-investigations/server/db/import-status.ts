@@ -23,14 +23,18 @@ const Health = z.strictObject({
   restoreHeld: z.boolean(),
   switchHeld: z.boolean(),
   switchHoldReason: z.enum(['rollback_failed', 'alias_unknown']),
+  hold: z
+    .strictObject({
+      since: z.iso.datetime().nullable(),
+      details: AdminImportRunSchema.nullable(),
+    })
+    .nullable(),
   fixSince: z.iso.datetime().nullable(),
   temporaryDays: z.number().int().min(0).max(7),
   delayedSince: z.iso.datetime().nullable(),
   serving: AdminImportsSchema.shape.serving,
   lastGood: AdminImportRunSchema.nullable(),
-  waiting: z
-    .strictObject({ source: AdminImportRunSchema.shape.source, since: z.iso.datetime() })
-    .nullable(),
+  waiting: AdminImportsSchema.shape.waiting,
   issue: z
     .strictObject({
       reason: z.enum(IMPORT_REASONS).nullable(),
@@ -40,6 +44,7 @@ const Health = z.strictObject({
       siteState: z.enum(['unchanged', 'restored', 'restore_unverified', 'uncertain']),
       postSuccess: z.boolean(),
       suppressesFile: z.boolean(),
+      preflight: z.boolean(),
       details: AdminImportRunSchema.nullable(),
       originRunId: z.uuid().nullable(),
     })

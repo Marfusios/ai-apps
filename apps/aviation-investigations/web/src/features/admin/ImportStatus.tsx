@@ -127,13 +127,16 @@ export function ImportStatus({
       </p>
       {unreadable ? (
         <dl className="mb-3">
-          {['Data on the site', 'Last good check', 'Waiting', 'Next check'].map(
-            (label) => (
-              <Fact key={label} label={label}>
-                {UNKNOWN_IMPORT_STATUS}
-              </Fact>
-            ),
-          )}
+          {[
+            'Data on the site',
+            alert ? 'Last good check' : 'Last check',
+            'Waiting',
+            'Next check',
+          ].map((label) => (
+            <Fact key={label} label={label}>
+              {UNKNOWN_IMPORT_STATUS}
+            </Fact>
+          ))}
         </dl>
       ) : (
         <dl className="mb-3">

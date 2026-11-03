@@ -23,7 +23,7 @@ import {
 } from './store.js';
 import { environmentConfig, type ImporterConfig } from './config.js';
 import { completedRun } from './durable.js';
-import { suppressionKey } from './automatic.js';
+import { suppressionKey, issueEpisodeKey, preFileEpisode } from './automatic.js';
 import { digest } from './provenance.js';
 import { localClock } from './status.js';
 
@@ -35,6 +35,7 @@ const Meta = z.object({
   postSuccess: z.boolean().default(false),
   suppressFile: z.boolean().default(false),
   preflight: z.boolean().default(false),
+  workKind: z.enum(['import', 'recertification']).default('import'),
   origin: z.enum(['dev', 'live', 'host']).optional(),
   originRunId: z.uuid().nullable().optional(),
 });
@@ -101,6 +102,12 @@ export async function replayOutage(
     success = await completedRun(db, r.runId);
   const id = r.runId ?? (await beginRun(db, s, 'automatic'));
   if (!r.runId) await space.json(path, { ...r, runId: id });
+  if (r.meta?.workKind === 'recertification')
+    await fenced(db, s, (tx) =>
+      tx.execute(
+        sql`update import_runs set work_kind='recertification' where id=${id}::uuid`,
+      ),
+    );
   // Legacy failure evidence is retained as history, without resurrecting an approval latch.
   if (!success && !r.meta?.postSuccess)
     await updateRun(db, s, id, {
@@ -114,18 +121,27 @@ export async function replayOutage(
     const m = r.meta,
       post = !!success || m.postSuccess,
       fix = post ? r.reason === 'storage' : new ImportFailure(r.reason).fix;
-    const key =
-      m.origin === 'dev' && environment === 'live' && fix
-        ? skippedIssueKey({ ...m, reason: r.reason })
-        : fix && !post && m.suppressFile
-          ? suppressionKey(environment, m.archive, m.source, m.code, m.image)
-          : digest([id, post, r.reason]);
-    await fenced(db, s, (tx) =>
-      tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,source,reason,step,origin,origin_run_id,fixed,post_success,failure_day,created_at,last_at,preflight,suppresses_file)
+    let key =
+      fix && !post && m.suppressFile
+        ? suppressionKey(environment, m.archive, m.source, m.code, m.image)
+        : digest([id, post, r.reason]);
+    await fenced(db, s, async (tx) => {
+      if (
+        fix &&
+        !post &&
+        ((m.origin === 'dev' && environment === 'live') ||
+          (!m.suppressFile && preFileEpisode(r.reason, m.preflight)))
+      )
+        key = await issueEpisodeKey(tx, id, {
+          ...m,
+          origin: m.origin ?? environment,
+          reason: r.reason,
+        });
+      await tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,source,reason,step,origin,origin_run_id,fixed,post_success,failure_day,created_at,last_at,preflight,suppresses_file)
      values(${key},${id}::uuid,${r.artifactId}::uuid,${m.code},${m.image},${m.archive},${m.source ? JSON.stringify(m.source) : null}::jsonb,
        ${r.reason},${r.step},${m.origin ?? environment},${m.originRunId ?? null}::uuid,${fix},${post},${localClock(new Date(r.recordedAt), zone).day},${r.recordedAt}::timestamptz,${r.recordedAt}::timestamptz,${m.preflight},${fix && !post && m.suppressFile})
-     on conflict(key) do nothing`),
-    );
+     on conflict(key) do nothing`);
+    });
   }
   await unlink(path);
   const dir = await open(space.root, 'r');
@@ -143,25 +159,12 @@ export const SkipSchema = z.strictObject({
   archive: Sha256.nullable(),
   fixed: z.boolean(),
   suppressFile: z.boolean().default(false),
+  preflight: z.boolean().default(false),
+  workKind: z.enum(['import', 'recertification']).default('import'),
   code: z.string().regex(/^[0-9a-f]{40}$/),
   image: z.string().regex(/^sha256:[0-9a-f]{64}$/),
 });
 export type Skip = z.infer<typeof SkipSchema>;
-function skippedIssueKey(
-  s: Pick<Skip, 'archive' | 'code' | 'image' | 'source' | 'reason' | 'suppressFile'>,
-): string {
-  // Stable across run IDs. Cause/scope are immutable issue metadata: a repaired
-  // preflight followed by a file failure must not keep showing the old cause.
-  // The finite reason/scope vocabulary bounds rows per dev file tuple.
-  return digest([
-    'dev-skip',
-    s.archive ?? s.source ?? 'source',
-    s.code,
-    s.image,
-    s.reason,
-    s.suppressFile,
-  ]);
-}
 export async function recordSkippedLiveWith(
   db: Db,
   space: ManagedSpace,
@@ -180,14 +183,16 @@ export async function recordSkippedLiveWith(
         observedSha256: skip.archive ?? undefined,
         sourceCheckSucceeded: false,
       });
-      const key = skip.fixed ? skippedIssueKey(skip) : digest([id, 'dev', skip.reason]);
       await fenced(db, s, async (tx) => {
+        const key = skip.fixed
+          ? await issueEpisodeKey(tx, id, { ...skip, origin: 'dev' })
+          : digest([id, 'dev', skip.reason]);
         await tx.execute(
-          sql`update import_runs set code=${skip.code},image=${skip.image},origin='dev' where id=${id}::uuid`,
+          sql`update import_runs set code=${skip.code},image=${skip.image},origin='dev',work_kind=${skip.workKind} where id=${id}::uuid`,
         );
-        await tx.execute(sql`insert into import_issues(key,run_id,code,image,archive_sha256,source,reason,step,origin,origin_run_id,fixed,failure_day,suppresses_file)
+        await tx.execute(sql`insert into import_issues(key,run_id,code,image,archive_sha256,source,reason,step,origin,origin_run_id,fixed,failure_day,suppresses_file,preflight)
        values(${key},${id}::uuid,${skip.code},${skip.image},${skip.archive},${skip.source ? JSON.stringify(skip.source) : null}::jsonb,
-       ${skip.reason},${skip.step},'dev',${skip.runId}::uuid,${skip.fixed},${localClock(new Date(), config.schedule.timeZone).day},${skip.suppressFile})
+       ${skip.reason},${skip.step},'dev',${skip.runId}::uuid,${skip.fixed},${localClock(new Date(), config.schedule.timeZone).day},${skip.suppressFile},${skip.preflight})
        on conflict(key) do update set last_at=clock_timestamp(),resolved_at=null`);
       });
     });
@@ -207,6 +212,8 @@ export async function recordSkippedLiveWith(
         origin: 'dev',
         originRunId: skip.runId,
         suppressFile: skip.suppressFile,
+        workKind: skip.workKind,
+        preflight: skip.preflight,
       },
     );
   }

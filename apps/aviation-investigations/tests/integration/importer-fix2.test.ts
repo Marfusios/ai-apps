@@ -21,6 +21,7 @@ import { operatorWithResources } from '../../worker/importer/commands.js';
 import { recordHostCleanup } from '../../worker/importer/host-status.js';
 import { digest } from '../../worker/importer/provenance.js';
 import { publishManifest } from '../../server/db/generations.js';
+import { alertSentences } from '../../web/src/features/admin/imports.js';
 const schedule = { enabled: true, localTime: '05:30', timeZone: 'Europe/Prague' };
 
 // PostgreSQL has its own clock. Re-date only the rows produced by the real run,
@@ -108,6 +109,13 @@ it('fixed listing failures retain their first date on dev and live and bound inh
     }
     expect(
       (
+        await dev.owner.execute(
+          sql`select key from import_issues where fixed and resolved_at is null`,
+        )
+      ).rows,
+    ).toHaveLength(1);
+    expect(
+      (
         await live.owner.execute(
           sql`select key from import_issues where fixed and resolved_at is null`,
         )
@@ -135,7 +143,6 @@ it('successful preflight clears only its own fixed failure, leaving a listing fa
     ).rows;
     expect(rows).toEqual([
       { reason: 'configuration', preflight: true, resolved: true },
-      { reason: 'source_listing_changed', preflight: false, resolved: false },
       { reason: 'source_listing_changed', preflight: false, resolved: false },
     ]);
   }));
@@ -203,10 +210,21 @@ it.each(['daily', 'emergency'] as const)(
         (await f.owner.execute(sql`select switch_hold from import_control`)).rows[0]!
           .switch_hold,
       ).toBeNull();
-      expect((await readImportStatus(f.app, schedule)).alert).toMatchObject({
+      const unverified = await readImportStatus(f.app, schedule);
+      expect(unverified.alert).toMatchObject({
+        cause: 'manual_rollback',
         siteState: 'restore_unverified',
         nextAction: 'daily',
       });
+      expect(unverified.recentRuns[0]).toMatchObject({
+        result: 'rolled_back',
+        reason: 'manual_rollback',
+        step: 'complete',
+      });
+      expect(alertSentences(unverified, 'dev', 'UTC')).toEqual([
+        'AirCase switched back to the data from 1 Oct 2026. Its site check has not passed yet.',
+        'The system repeats the site check every day.',
+      ]);
       if (recovery === 'daily') expect((await f.run()).result).toBe('waiting');
       else
         await operatorWithResources(
@@ -268,6 +286,7 @@ it('emergency rollback failure can update an existing suppression issue with the
         )
       ).rows,
     ).toEqual([{ site_state: 'uncertain' }]);
+    const heldAlert = (await readImportStatus(f.app, schedule)).alert!;
     await recordHostCleanup(
       f.resources.db,
       f.config,
@@ -279,7 +298,8 @@ it('emergency rollback failure can update an existing suppression issue with the
     expect((await readImportStatus(f.app, schedule)).alert).toMatchObject({
       cause: 'rollback_failed',
       holds: ['rollback_failed'],
-      details: { reason: 'storage' },
+      since: heldAlert.since,
+      details: { reason: 'rollback_failed', runId: heldAlert.details!.runId },
     });
   }));
 
@@ -309,7 +329,29 @@ it('bounded fixed live skips show a new immutable cause when the same file passe
     expect((await readImportStatus(live.app, schedule)).alert).toMatchObject({
       cause: 'configuration',
       nextAction: 'daily',
+      servingChecks: true,
     });
+    for (let n = 0; n < 2; n++) {
+      await expect(
+        dev.run({
+          deployedImage: async () => {
+            throw new ImportFailure('configuration');
+          },
+        }),
+      ).rejects.toThrow();
+      const repeat = await readDevOutcomeWith(dev.resources.db, dev.config);
+      expect(repeat).toMatchObject({
+        archive: first.archive,
+        source: first.source,
+        preflight: true,
+      });
+      await recordSkippedLiveWith(
+        live.resources.db,
+        live.resources.space,
+        live.config,
+        repeat,
+      );
+    }
     await expect(
       dev.run({
         fault: async (point) => {

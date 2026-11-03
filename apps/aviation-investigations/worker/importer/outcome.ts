@@ -14,25 +14,31 @@ export async function readDevOutcomeWith(db: Db, config: ImporterConfig): Promis
     archive: null,
     fixed: false,
     suppressFile: false,
+    preflight: false,
+    workKind: 'import',
     code: config.code,
     image: config.dev.image,
   };
   const run = (
-    await db.execute(sql`select id,reason,step,source,observed_sha256,code,image
+    await db.execute(sql`select id,reason,step,source,observed_sha256,code,image,work_kind
     from import_runs order by checked_at desc limit 1`)
   ).rows[0];
   if (!run) return fallback;
   // A host cleanup incident can be newer than the child's failure. It did not
   // cause this child to stop. A suppressed check instead refers to its file issue.
   const issue = (
-    await db.execute(sql`select reason,step,source,archive_sha256 as archive,fixed,suppresses_file as "suppressFile",code,image
+    await db.execute(sql`select reason,step,source,archive_sha256 as archive,fixed,suppresses_file as "suppressFile",preflight,code,image
     from import_issues where resolved_at is null and origin<>'host'
       and (run_id=${String(run.id)}::uuid or
         (${run.reason === null} and archive_sha256=${run.observed_sha256 ?? null}
+          and code=${run.code ?? config.code} and image=${run.image ?? config.dev.image}) or
+        (fixed and not post_success and reason=${run.reason ?? null}
+          and (preflight or reason in ('source_listing_changed','source_retired'))
           and code=${run.code ?? config.code} and image=${run.image ?? config.dev.image}))
     order by (run_id=${String(run.id)}::uuid) desc,last_at desc limit 1`)
   ).rows[0];
-  if (issue) return SkipSchema.parse({ ...issue, runId: run.id });
+  if (issue)
+    return SkipSchema.parse({ ...issue, runId: run.id, workKind: run.work_kind });
   if (!run.reason) return { ...fallback, runId: String(run.id) };
   const reason = SkipSchema.shape.reason.parse(run.reason);
   return SkipSchema.parse({
@@ -44,6 +50,7 @@ export async function readDevOutcomeWith(db: Db, config: ImporterConfig): Promis
     code: run.code ?? config.code,
     image: run.image ?? config.dev.image,
     runId: run.id,
+    workKind: run.work_kind,
   });
 }
 
@@ -70,6 +77,8 @@ export async function readDevOutcome(config: ImporterConfig): Promise<Skip> {
       archive: null,
       fixed: false,
       suppressFile: false,
+      preflight: false,
+      workKind: 'import',
       code: config.code,
       image: config.dev.image,
     };

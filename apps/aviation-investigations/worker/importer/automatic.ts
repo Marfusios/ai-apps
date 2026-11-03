@@ -168,6 +168,39 @@ export async function suppressed(
 export function processingFile(c: ImportContext): boolean {
   return c.fileWork && !c.preflightActive && !c.recertifying && !c.options.recertify;
 }
+export function preFileEpisode(reason: ImportReason, preflight: boolean): boolean {
+  return (
+    ['source_listing_changed', 'source_retired'].includes(reason) ||
+    (preflight && ['configuration', 'storage'].includes(reason))
+  );
+}
+/** Called inside the importer fence: reuse only an OPEN episode, never reopen history. */
+export async function issueEpisodeKey(
+  tx: DbOrTx,
+  runId: string,
+  identity: {
+    origin: string;
+    archive: string | null;
+    source: SourceObservation | null;
+    code: string;
+    image: string;
+    reason: ImportReason;
+    preflight: boolean;
+    suppressFile: boolean;
+  },
+): Promise<string> {
+  const i = identity;
+  const row = (
+    await tx.execute(sql`select key from import_issues
+    where resolved_at is null and fixed and not post_success
+      and origin=${i.origin} and code=${i.code} and image=${i.image} and reason=${i.reason}
+      and archive_sha256 is not distinct from ${i.archive}
+      and source is not distinct from ${i.source ? JSON.stringify(i.source) : null}::jsonb
+      and preflight=${i.preflight} and suppresses_file=${i.suppressFile}
+    order by created_at limit 1`)
+  ).rows[0];
+  return row ? String(row.key) : digest(['episode', identity, runId]);
+}
 export async function incident(
   c: ImportContext,
   failure: ImportFailure,
@@ -185,11 +218,27 @@ export async function incident(
   const source = c.pending?.observation ?? c.observation ?? null;
   const image = c.config[c.options.environment]!.image;
   const suppressFile = fixed && !post && processingFile(c);
-  const key = suppressFile
+  let key = suppressFile
     ? suppressionKey(c.options.environment, archive, source, c.config.code, image)
     : digest([c.runId, post, failure.reason]);
   const day = localClock(c.effects.now(), c.config.schedule.timeZone).day;
   await fenced(c.db, c.session, async (tx) => {
+    if (
+      fixed &&
+      !post &&
+      !suppressFile &&
+      preFileEpisode(failure.reason, c.preflightActive)
+    )
+      key = await issueEpisodeKey(tx, c.runId, {
+        origin: opts.origin ?? c.options.environment,
+        archive,
+        source,
+        code: c.config.code,
+        image,
+        reason: failure.reason,
+        preflight: c.preflightActive,
+        suppressFile: false,
+      });
     await tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,source,reason,original_reason,step,origin,fixed,site_state,post_success,failure_day,preflight,suppresses_file)
       values(${key},${c.runId || null}::uuid,${c.artifact?.id ?? null}::uuid,${c.config.code},${image},${archive},${source ? JSON.stringify(source) : null}::jsonb,
         ${failure.reason},${opts.originalReason ?? failure.reason},${c.step},${opts.origin ?? c.options.environment},${fixed},${opts.siteState ?? 'unchanged'},${post},${day},${c.preflightActive},${suppressFile})
@@ -210,7 +259,7 @@ export async function resolveIssues(
 export async function holdSwitch(c: ImportContext, reason: ImportReason): Promise<void> {
   await fenced(c.db, c.session!, (tx) =>
     tx.execute(sql`select import_switch_hold(${c.session!.fence}::uuid,
-    ${JSON.stringify({ code: c.config.code, image: c.config[c.options.environment]!.image, reason, artifactId: c.artifact?.id ?? null })}::jsonb)`),
+    ${JSON.stringify({ code: c.config.code, image: c.config[c.options.environment]!.image, reason, artifactId: c.artifact?.id ?? null, runId: c.runId || null })}::jsonb)`),
   );
 }
 export async function checkSwitchHold(c: ImportContext): Promise<void> {

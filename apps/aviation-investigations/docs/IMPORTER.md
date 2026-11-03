@@ -108,11 +108,13 @@ unchanged checks keep their recorded success if a later report write fails too.
 waits. It preserves pending work, money and acquisition clocks and returns `complete` /
 `unchanged`. The release command needs no bypass. The next daily cycle handles the waiting
 file with the new code. Re-certification includes the full site canary, without provider calls.
-Failures in re-certification or preflight are per-run incidents; they never suppress a
+Failures in re-certification or preflight never suppress a
 waiting file that was not processed. A successful preflight resolves only its explicitly
 marked fixed preflight incidents. Listing failures, other temporary incidents and
 file-suppression rows remain until a completed check or successful import resolves them.
-Successful re-certification resolves only its own warnings. Neither operation changes
+Persistent fixed preflight and listing failures reuse one open incident episode; a recurrence
+after resolution gets a new row, start date and run. Successful re-certification resolves
+only its own warnings. Neither operation changes
 acquisition dates or monetary identity.
 
 ## Money, isolation and retention
@@ -167,12 +169,15 @@ private/no-store responses and client forgetting remain unchanged.
 When enabled, a needs-fix cause alerts at once. No run **start** for 36 hours is a fix,
 including an installation that has never started (measured from migration/monitoring start).
 Overdue takes priority over an existing file issue or hold, while that earlier cause stays
-in Waiting and details. Active restore and switch holds also stay in the alert text,
-including when no issue row exists. The delayed Since date is the earliest unresolved
+in Waiting and details. Waiting reasons are matched to that file’s archive, never borrowed
+from an unrelated incident or a serving-data release check. Active restore and switch holds also stay in the alert text,
+including when no issue row exists. When a hold is the alert cause, its own timestamp and
+run supply Since and details; unknown original metadata stays unknown. The delayed Since date is the earliest unresolved
 temporary failure; a fixed warning uses the earliest unresolved issue with the newest
 issue’s reason and origin, not the latest daily run. Fixed live skips share a key for
 dev’s archive, code and image plus the finite reason/suppression scope, so daily skips
-do not accumulate rows or preserve an obsolete cause after it changes. Temporary skips
+do not accumulate rows or preserve an obsolete cause after it changes. Once resolved, a
+recurrence starts a new episode. Temporary skips
 retain separate daily evidence.
 Temporary failures on **three distinct dates in the schedule zone** give a delayed alert;
 **seven dates** give a fix. Several failures on one day count once. Monthly-budget failure

@@ -988,7 +988,8 @@ mean the history disappeared. Costs appear only on published rows.
 | NTSB/app unavailable, download changed, interrupted/timeout, cache unavailable, busy/backup/lock loss, baseline changed | The system retries daily and adopts a changed serving baseline on the next run. After persistent failures, inspect the service, connectivity, cache and maintenance schedule. |
 | Monthly budget | The import continues on the first of next month; no new allowance is created for that file. |
 | Schema, integrity, verification, mapping, probe/site check, shrunk, unclassified during file processing | Diagnose using private reports. Release changed code/image or wait for new source bytes; identical work is suppressed. A deliberately smaller corpus needs a code change. |
-| Preflight or serving-data re-certification failure; changed listing before file processing | Fix the server. The system tries again every day. These per-run incidents never suppress a file; changed upstream structure may require a code change. |
+| Preflight or serving-data re-certification failure | Fix the server. The system tries again every day. These incidents never suppress an untried file. Release-check failures refer to the data already serving. |
+| Changed NTSB listing | This needs a code change. The system still checks every day, and this alert goes away after the first good import. |
 | Import cap | The file reached its $2 limit; no bypass/reset. Diagnose the input and embedding plan in code. |
 | Storage, cleanup, configuration during suppressed file processing | Fix the server, then release. The file is tried again after the release or when NTSB posts a newer file. Repairing settings alone does not retry a suppressed tuple. |
 | Restore hold | A person must check the cost records. Follow the restore procedure below, including the separate importer latch. The alert goes away after the next good import. |
@@ -1019,7 +1020,8 @@ private activation report, including its timestamp, not the ZIP hash. The comman
 that exact candidate still serves, restores its protected previous pair, and checks it.
 It does not change operational aliases, erase spend or require another command afterwards.
 The rejected file is suppressed under its code/image until new bytes or a release arrive.
-A committed emergency rollback whose site check fails is `restore_unverified`, with no
+A committed emergency rollback whose site check fails records `manual_rollback` /
+`rolled_back` with `restore_unverified` (the command still reports `site_check`), with no
 switch hold; the next daily run repeats the site check. Only a failed rollback commit
 or unknown alias state keeps the switch hold. Use `--env live` only for a deliberate live
 emergency with the exact live publication identity.

@@ -181,13 +181,12 @@ async function dispatch(context: ImportContext): Promise<RunReport> {
     ['switching', 'published', 'rolling_back'].includes(context.artifact.phase)
   ) {
     const a = context.artifact;
-    context.recoveryReason = a.reason ?? 'site_check';
-    // Set the recovery step before any fallible read or file work. Even a
-    // failed read-back must not first write a file suppression at `check`.
-    await steps.stage(context, 'canary');
-    context.fileWork = true;
-    const current = await manifest(context.db);
     if (a.rollback || a.phase === 'rolling_back') {
+      context.recoveryReason = a.reason ?? 'site_check';
+      // Only rollback recovery binds this run to the old file. Fall-through
+      // may discover a newer file and must leave its immutable run fields empty.
+      await steps.stage(context, 'canary');
+      context.fileWork = true;
       const prior = (
         await context.db.execute(sql`select original_reason from import_issues
         where artifact_id=${a.id}::uuid and fixed and not post_success order by created_at desc limit 1`)
@@ -209,7 +208,9 @@ async function dispatch(context: ImportContext): Promise<RunReport> {
       });
       return steps.report(context, 'waiting', null);
     }
+    const current = await manifest(context.db);
     if (a.publication && sameManifest(a.publication, current)) {
+      context.fileWork = true;
       await steps.resumePublished(context);
       await steps.canary(context);
       await steps.cleanup(context);
@@ -234,9 +235,6 @@ async function dispatch(context: ImportContext): Promise<RunReport> {
       );
     }
     context.artifact = await artifact(context.db, a.id);
-    context.fileWork = false;
-    context.recoveryReason = undefined;
-    await steps.stage(context, 'check');
   }
   await steps.preflight(context);
   const decision = await steps.detect(context);
@@ -347,7 +345,11 @@ export async function runWithResources(
       } else if (context.artifact && !context.blocked && !context.recertifying) {
         const fresh = await artifact(resources.db, context.artifact.id);
         context.artifact = fresh;
-        if (fresh.publication && !fresh.canary) {
+        if (
+          ['switching', 'published', 'rolling_back'].includes(fresh.phase) &&
+          fresh.publication &&
+          !fresh.canary
+        ) {
           try {
             await switchBack(context);
             siteState =
@@ -418,6 +420,8 @@ export async function runWithResources(
           postSuccess: completed,
           suppressFile: processingFile(context),
           preflight: context.preflightActive,
+          workKind:
+            context.recertifying || options.recertify ? 'recertification' : 'import',
         },
       ).catch(() => undefined);
     });

@@ -30,6 +30,7 @@ function health(n = 0): ImportHealth {
     restoreHeld: false,
     switchHeld: false,
     switchHoldReason: 'alias_unknown',
+    hold: null,
     fixSince: null,
     temporaryDays: n,
     delayedSince: '2026-11-01T04:30:00Z',
@@ -44,6 +45,7 @@ function health(n = 0): ImportHealth {
       siteState: 'unchanged',
       postSuccess: false,
       suppressesFile: false,
+      preflight: false,
       details: row.public,
       originRunId: null,
     },
@@ -170,6 +172,8 @@ it.each(['issue', 'restore', 'switch'] as const)(
     h.waiting = {
       source: { advertisedAtLocal: '2026-11-01T00:00:00', bytes: 100 },
       since: h.issue.since,
+      reason: 'schema',
+      retry: 'new_file_or_release',
     };
     h.restoreHeld = kind === 'restore';
     h.switchHeld = kind === 'switch';
@@ -215,6 +219,7 @@ it('fixed Since uses the earliest same-cause date, and a hold reason beats an un
   expect(projectImports([row], schedule, now, h).alert).toMatchObject({
     cause: 'rollback_failed',
     holds: ['rollback_failed'],
-    details: row.public,
+    details: null,
+    since: null,
   });
 });

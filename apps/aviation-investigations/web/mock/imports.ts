@@ -198,6 +198,7 @@ export function mockImportInputs(
     restoreHeld: false,
     switchHeld: false,
     switchHoldReason: 'alias_unknown',
+    hold: null,
     temporaryDays: 0,
     delayedSince: null,
     fixSince: null,
@@ -240,7 +241,12 @@ export function mockImportInputs(
       step: 'extract',
       source: { advertisedAtLocal: '2026-11-01T07:30:00', bytes: 105120448 },
     });
-    health.waiting = { source: runs[0]!.source, since: runs[0]!.checkedAt };
+    health.waiting = {
+      source: runs[0]!.source,
+      since: runs[0]!.checkedAt,
+      reason: null,
+      retry: 'daily',
+    };
     health.lastGood = previous;
   } else if (state === 'overdue' || state === 'restore_hold') {
     // import_claim refuses a held restore before creating a run or an issue.
@@ -397,7 +403,7 @@ export function mockImportInputs(
     health.switchHoldReason =
       cause === 'rollback_failed' ? 'rollback_failed' : 'alias_unknown';
     const details = {
-      ...(temporary || postSuccess || unverified ? runs[0]! : stopped),
+      ...(temporary || postSuccess ? runs[0]! : stopped),
       reason: cause,
       step: postSuccess ? ('cleanup' as const) : step,
     };
@@ -413,10 +419,22 @@ export function mockImportInputs(
       siteState,
       postSuccess,
       suppressesFile,
+      preflight: cause === 'configuration',
       details,
       originRunId: inherited ? '10000000-0000-4000-8000-000000000001' : null,
     };
-    if (fileTouched && !postSuccess) health.waiting = { source, since: iso(first) };
+    if (fileTouched && !postSuccess && !inherited)
+      health.waiting = {
+        source,
+        since: iso(first),
+        reason: cause,
+        retry: suppressesFile ? 'new_file_or_release' : 'daily',
+      };
+    if (health.switchHeld)
+      health.hold = {
+        since: stopped.checkedAt,
+        details: { ...stopped, reason: cause, step },
+      };
     if (restored) health.serving!.restoredAt = stopped.restoration!.restoredAt;
     if (postSuccess)
       health.serving = {
@@ -426,6 +444,8 @@ export function mockImportInputs(
         restoredAt: null,
       };
   }
+  health.lastGood =
+    runs.find((r) => r.result === 'published' || r.result === 'unchanged') ?? null;
   return {
     schedule,
     health,

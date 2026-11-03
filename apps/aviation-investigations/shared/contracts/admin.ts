@@ -134,6 +134,7 @@ export const ImportAlertSchema = z.strictObject({
   nextAction: ImportRetry,
   retryAt: Iso.nullable(),
   postSuccess: z.boolean(),
+  servingChecks: z.boolean(),
   devAdvanced: z.boolean(),
   details: AdminImportRunSchema.nullable(),
   originRunId: z.uuid().nullable(),
