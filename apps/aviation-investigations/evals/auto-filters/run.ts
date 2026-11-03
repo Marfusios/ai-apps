@@ -7,7 +7,7 @@
  * allocation's spend gate, one call at a time, every attempt journaled before dispatch and never
  * repeated under its label. `summarize` (free) scores what each part's journal completed.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -26,23 +26,21 @@ import { filterIdentity, productionPort } from '../search-quality/ab-production.
 import { codedMetrics } from '../search-quality/ab-score.js';
 import { appendDurable, EvaluationError } from '../search-quality/money.js';
 import { ARM_IDS, type Arm, type ArmIdentity, type RankingQuestion, type SearchObservation, type SearchRequest } from '../search-quality/ab-types.js';
-import { CappedAllocation, taskTotals, type TaskSpec } from '../langfuse/money.js';
+import { CappedAllocation, prefixTotals, taskTotals } from '../langfuse/money.js';
 import { sha256, stable } from '../langfuse/data.js';
 import { assertTarget, codeIdentity, freezeFile, readJournal, verifyTarget, type QuestionSet } from '../applied-filters/run.js';
 import { compareNarrowR20, fallbackRates, filterMatch, rowScores, type RowRanking } from '../applied-filters/plan.js';
 import { probeWarnings, type LoadedProbes } from './probes.js';
 import { attemptKey, partData, seededOrder, type PartData, type PartItem } from './inputs.js';
 import {
-  AUTO_FIELDS, EXPECTED_MICROS, PART_SPECS, PARTS, ROWS30, STOP_STREAK, attributedRequest, attributionRates, attributionSampleMicros, autoFilters, buttonFilters,
-  c2Verdict, chargeableSampleMicros, decideField, editRequest, expectedRetrievalQuestionMicros, expectedSampleMicros, fieldKey, fieldSummary,
-  groupSummary, isPart, liveRequest, nextStreak30, q0Request, retrievalQuestionMicros, review24Unsafe, stageMicros30, v13Replay,
-  V13_RECORDED, wholeObject, type AttributionPart, type AutoField, type FieldSummary, type PartName, type Row30,
-  type ScoredSample, type StageMicros30,
+  AUTO_FIELDS, EXPECTED_MICROS, PART_BUDGET_MICROS, PART_SPECS, PARTS, ROWS30, STOP_STREAK, TASK30_FAMILY, attributedRequest, attributionRates,
+  attributionSampleMicros, autoFilters, buttonFilters, c2Verdict, chargeableSampleMicros, decideField, editRequest, expectedRetrievalQuestionMicros,
+  expectedSampleMicros, fieldKey, fieldSummary, groupSummary, isPart, laneName, laneSpec, liveRequest, nextStreak30, parseShard, q0Request,
+  retrievalQuestionMicros, review24Unsafe, shardItems, stageMicros30, v13Replay, V13_RECORDED, wholeObject, type AttributionPart, type AutoField,
+  type FieldSummary, type PartName, type Row30, type ScoredSample, type Shard, type StageMicros30,
 } from './plan.js';
 import { attributionPort, MODEL, type AttributionObservation } from './port.js';
 
-export const TASK30: TaskSpec = { allocation: 'eval-task30', lockKey: 733000030, capMicros: 8_000_000, label: 'Task 30',
-  probeStage: 'task30_preflight', applicationName: 'aircase-task30-evaluation' };
 export const MANIFEST_VERSION = 'task30-auto-filters-v1';
 export const DEFAULT_POLICY: EvidenceAutoFilterVersion = 'attributed.v1' as EvidenceAutoFilterVersion;
 
@@ -118,16 +116,18 @@ export function summarizeAttributionPart(part: AttributionPart, data: PartData, 
   const fields = (part === 'state-replay' ? ['state'] as const : AUTO_FIELDS);
   const usd = (stage: string) => observations.reduce((s, o) => s + o.usage.filter(l => l.stage === stage).reduce((n, l) => n + l.usd, 0), 0);
   const probes = Boolean(data.probes);
+  // A scripted scope proposes the item's own values; a real scope's positives are every item whose gold holds the field.
+  const basis = spec.scope === 'real' ? 'gold' as const : 'forced' as const;
   return {
     part, family: spec.family, items: data.items.length, samples: spec.samples, attempts: observations.length,
     policy: autoFilterIdentity(policy), enabledFields: enabled,
-    fields: Object.fromEntries(fields.map(f => [f, fieldSummary(rows, f, enabled.includes(f))])) as Partial<Record<AutoField, FieldSummary>>,
+    fields: Object.fromEntries(fields.map(f => [f, fieldSummary(rows, f, enabled.includes(f), basis)])) as Partial<Record<AutoField, FieldSummary>>, positivesBy: basis,
     wholeObject: wholeObject(rows, enabled.filter(f => (fields as readonly AutoField[]).includes(f))),
     rates: attributionRates(observations.map(o => ({ ...o, scopeReal: o.scope === 'real' }))),
     usd: { total: observations.reduce((s, o) => s + o.actualUsd, 0), scope: usd('scope'), attribution: usd('attribution'), embed: usd('embed') },
     ...(probes ? {
       review24: Object.fromEntries(AUTO_FIELDS.map(f => [f, review24Unsafe(rows, f)])),
-      byPattern: groupSummary(rows, 'pattern'), bySource: groupSummary(rows, 'source'), byKind: groupSummary(rows, 'kind'), byField: groupSummary(rows, 'field'),
+      byPattern: groupSummary(rows, 'pattern', basis), bySource: groupSummary(rows, 'source', basis), byKind: groupSummary(rows, 'kind', basis), byField: groupSummary(rows, 'field', basis),
       warnings: probeWarnings(data.probes!.file),
     } : {}),
     ...(data.replay ? { replay: { attributed: (({ tp, fp, fn, tn }) => ({ tp, fp, fn, tn }))(fieldSummary(rows, 'state', enabled.includes('state')).confusion),
@@ -226,8 +226,8 @@ export type RetrievalSetSummary = ReturnType<typeof summarizeRetrievalSet>;
 // Reports
 
 function writeSummary(dir: string, part: PartName, manifest: { codeCommit: string }, manifestSha256: string, summary: unknown) {
-  writeFileSync(join(dir, `summary-${part}.json`), JSON.stringify({ part, manifestSha256, runCommit: manifest.codeCommit, summarizedCommit: codeIdentity(),
-    summary }, null, 2) + '\n', { mode: 0o600 });
+  writeAtomic(join(dir, `summary-${part}.json`), JSON.stringify({ part, manifestSha256, runCommit: manifest.codeCommit, summarizedCommit: codeIdentity(),
+    summary }, null, 2) + '\n');
 }
 const pct = (x: number | null | undefined, digits = 1) => x === null || x === undefined ? 'n/a' : `${(x * 100).toFixed(digits)}%`;
 function attributionTable(s: AttributionSummary): string[] {
@@ -275,7 +275,7 @@ function writeMarkdown(dir: string) {
   }
   const decision = join(dir, 'summary-decision.json');
   if (existsSync(decision)) lines.push(...decisionTable(JSON.parse(readFileSync(decision, 'utf8')).fields), '');
-  writeFileSync(join(dir, 'summary.md'), lines.join('\n'), { mode: 0o600 });
+  writeAtomic(join(dir, 'summary.md'), lines.join('\n'));
 }
 function readSummary(dir: string, part: PartName): AttributionSummary | null {
   const path = join(dir, `summary-${part}.json`);
@@ -289,27 +289,100 @@ function writeDecision(dir: string, devDir: string) {
   const enabled = new Set((confirmForced ?? confirmE2e)!.enabledFields);
   const fields = AUTO_FIELDS.map(f => decideField(f, { enabled: enabled.has(f), confirmForced: confirmForced?.fields[f] ?? null,
     confirmE2e: confirmE2e?.fields[f] ?? null, development: development.map(d => ({ part: d.part, unsafe: d.summary?.review24?.[f] ?? null })) }));
-  writeFileSync(join(dir, 'summary-decision.json'), JSON.stringify({ rule: 'spec.md Evaluation, registered 2026-11-03 22:15 CET', policy: (confirmForced ?? confirmE2e)!.policy,
-    development: development.map(d => ({ part: d.part, present: Boolean(d.summary), policy: d.summary?.policy ?? null })), fields }, null, 2) + '\n', { mode: 0o600 });
+  writeAtomic(join(dir, 'summary-decision.json'), JSON.stringify({ rule: 'spec.md Evaluation, registered 2026-11-03 22:15 CET', policy: (confirmForced ?? confirmE2e)!.policy,
+    development: development.map(d => ({ part: d.part, present: Boolean(d.summary), policy: d.summary?.policy ?? null })), fields }, null, 2) + '\n');
+}
+
+// ---------------------------------------------------------------------------
+// Lanes on disk: `<out>/<label>/<part>/manifest.json` once per part, `<part>/<i>of<k>/` per lane.
+
+const partDirOf = (dir: string, part: PartName) => join(dir, part);
+const laneDirOf = (dir: string, part: PartName, shard: Shard) => join(dir, part, laneName(shard));
+/** The lane record, frozen at the lane's first run: its shard, ledger prefix, lock, cap and items. */
+export interface LaneRecord { part: PartName; shard: Shard; allocation: string; lockKey: number; capMicros: number; manifestSha256: string; items: string[] }
+/**
+ * Freezes a file several lanes may create at once (the part manifest): an atomic first write, then
+ * every later writer must hold exactly the same content.
+ */
+export function freezeShared(path: string, value: unknown, what: string) {
+  const text = stable(value) + '\n';
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, text, { flag: 'wx', mode: 0o600 });
+  try { linkSync(tmp, path); }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    if (stable(JSON.parse(readFileSync(path, 'utf8'))) !== stable(value)) throw new EvaluationError(`The ${what} differs from the one this part froze first (another commit, policy, input, order or shard count)`);
+  } finally { rmSync(tmp, { force: true }); }
+}
+/** Replaces a report file in one step, so a lane finishing at the same time never reads half of it. */
+function writeAtomic(path: string, text: string) {
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, text, { mode: 0o600 });
+  renameSync(tmp, path);
+}
+/** True when the lane's last allocation event is a balanced close: nothing open, nothing to reconcile. */
+export function laneClosed(laneDir: string): boolean {
+  const path = join(laneDir, 'allocation.jsonl');
+  if (!existsSync(path)) return false;
+  const last = readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).at(-1);
+  if (!last) return false;
+  const event = JSON.parse(last) as { event?: string; balanced?: boolean };
+  return event.event === 'close' && event.balanced === true;
+}
+/**
+ * Every lane journal of a part, merged. Refuses lanes outside the part's k shards, a lane that does not
+ * belong to this run or holds other items, an attempt journaled twice, and an unreconciled lane; a lane
+ * not started, still running or not closed makes the part incomplete (`Incomplete schedule`).
+ */
+export function mergeLanes(dir: string, part: PartName, k: number, manifestSha256: string, itemsOf?: (shard: Shard) => string[]): Map<string, Recorded> {
+  const partDirectory = partDirOf(dir, part);
+  const names = readdirSync(partDirectory, { withFileTypes: true }).filter(d => d.isDirectory() && /^\d+of\d+$/.test(d.name)).map(d => d.name);
+  // A directory a preflight opened but no run used holds no lane record.
+  const ran = names.filter(n => existsSync(join(partDirectory, n, 'lane.json')));
+  const expected = Array.from({ length: k }, (_, j) => laneName({ i: j + 1, k }));
+  const extra = ran.filter(n => !expected.includes(n));
+  if (extra.length) throw new EvaluationError(`${part}: lanes outside its ${k} shard(s): ${extra.join(', ')}`);
+  const missing = expected.filter(n => !ran.includes(n));
+  if (missing.length) throw new EvaluationError(`Incomplete schedule: ${part} lanes not started: ${missing.join(', ')}`);
+  const merged = new Map<string, Recorded>();
+  for (const [j, name] of expected.entries()) {
+    const shard = { i: j + 1, k }, laneDirectory = join(partDirectory, name);
+    const lane = JSON.parse(readFileSync(join(laneDirectory, 'lane.json'), 'utf8')) as LaneRecord;
+    if (lane.part !== part || lane.shard.i !== shard.i || lane.shard.k !== k || lane.manifestSha256 !== manifestSha256) throw new EvaluationError(`${part}: lane ${name} belongs to another run`);
+    if (itemsOf && stable(lane.items) !== stable(itemsOf(shard))) throw new EvaluationError(`${part}: lane ${name} holds other items than its shard`);
+    // Throws on an attempt without a durable result: that lane needs reconciliation.
+    const journal = readJournal<Recorded>(join(laneDirectory, 'results.jsonl'));
+    if (!laneClosed(laneDirectory)) throw new EvaluationError(`Incomplete schedule: ${part} lane ${name} is still running or not closed balanced`);
+    const items = new Set(lane.items);
+    for (const [key, r] of journal) {
+      if (r.part !== part || (itemsOf && !items.has(r.itemId))) throw new EvaluationError(`${part}: lane ${name} journaled an item of another shard`);
+      if (merged.has(key)) throw new EvaluationError(`${part}: an attempt is journaled in two lanes`);
+      merged.set(key, r);
+    }
+  }
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
 
 export async function main() {
-  const { values } = parseArgs({ options: { mode: { type: 'string', default: 'preflight' }, part: { type: 'string' }, 'env-files': { type: 'string', default: '.env.local' },
-    'keys-file': { type: 'string' }, out: { type: 'string', default: 'data/work/task30' }, 'run-label': { type: 'string' }, policy: { type: 'string', default: DEFAULT_POLICY },
-    'dev-label': { type: 'string' }, 'confirm-cost': { type: 'boolean', default: false } } });
+  const { values } = parseArgs({ options: { mode: { type: 'string', default: 'preflight' }, part: { type: 'string' }, shard: { type: 'string', default: '1/1' },
+    'env-files': { type: 'string', default: '.env.local' }, 'keys-file': { type: 'string' }, out: { type: 'string', default: 'data/work/task30' },
+    'run-label': { type: 'string' }, policy: { type: 'string', default: DEFAULT_POLICY }, 'dev-label': { type: 'string' }, 'confirm-cost': { type: 'boolean', default: false } } });
   const label = values['run-label'] ?? '';
   if (!['preflight', 'run', 'summarize'].includes(values.mode!) || !/^[a-zA-Z0-9-]{1,40}$/.test(label)) throw new EvaluationError('Invalid mode or run label (--run-label required)');
   if (values['dev-label'] !== undefined && !/^[a-zA-Z0-9-]{1,40}$/.test(values['dev-label'])) throw new EvaluationError('Invalid development label');
   if (values.part !== undefined && !isPart(values.part)) throw new EvaluationError(`Unknown part; one of ${PARTS.join(', ')}`);
   if (values.mode === 'run' && (!values.part || !values['confirm-cost'])) throw new EvaluationError('A paid run needs --part and --confirm-cost');
+  let shard: Shard;
+  try { shard = parseShard(values.shard!); } catch (e) { throw new EvaluationError((e as Error).message); }
+  if (values.part === 'retrieval' && shard.k !== 1) throw new EvaluationError('The retrieval part runs as one lane: --shard 1/1');
   const parts: PartName[] = values.part ? [values.part as PartName] : [...PARTS];
   const policy = resolvePolicy(values.policy!);
   const codeCommit = codeIdentity();
   const root = resolve(values.out!), dir = join(root, label);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (values.mode === 'summarize') return summarize(dir, join(root, values['dev-label'] ?? label), parts, label, policy);
+  if (values.mode === 'summarize') return summarize(dir, join(root, values['dev-label'] ?? label), parts, label);
 
   const needsTarget = parts.includes('retrieval');
   const settings = evaluationSettings(values['env-files']!, values['keys-file'], needsTarget);
@@ -322,63 +395,89 @@ export async function main() {
   const s = stages(policy);
   const db = needsTarget ? createDb(settings.config.databaseUrl!, { max: 3, applicationName: 'aircase-task30-ranking-read' }) : undefined;
   const es = needsTarget ? createEsClient(settings.config.elasticsearch, 'read') : undefined;
-  let allocation: CappedAllocation | undefined;
   try {
     const target = needsTarget ? await verifyTarget(db!, es!) : undefined;
     const preflight: Record<string, unknown>[] = [];
     for (const part of parts) {
-      try { preflight.push(preflightPart(part, dir, policy, s, target?.sets, values.mode === 'preflight')); }
+      const laneShard = part === 'retrieval' ? { i: 1, k: 1 } : shard;
+      try { preflight.push(preflightPart(part, dir, policy, s, target?.sets, values.mode === 'preflight', laneShard, Boolean(values.part))); }
       catch (e) { if (!(e instanceof EvaluationError)) throw e; preflight.push({ part, ready: false, reason: e.message }); }
     }
     console.log(JSON.stringify({ event: 'preflight', label, codeCommit, policy: policyRecord(policy), stages: s, identities: currentIdentities(),
       ...(target ? { generation: target.identity.source.generationId, revision: target.identity.dataset.revision, passages: target.identity.passages.indexVersion } : {}),
-      capMicros: TASK30.capMicros, parts: preflight }));
-    allocation = await CappedAllocation.open(settings, dir, TASK30);
+      family: TASK30_FAMILY, budgets: PART_BUDGET_MICROS, parts: preflight }));
     if (values.mode === 'preflight') {
-      const first = Math.max(...preflight.map(p => Number(p.firstBlockMicros ?? 0)), 1);
-      await allocation.assertBlock(first);
-      console.log(JSON.stringify({ event: 'allowance', task: await taskTotals(allocation.db, TASK30), firstBlockMicros: first }));
+      if (values.part) await preflightLane(settings, dir, values.part as PartName, shard, Number(preflight[0]?.firstBlockMicros ?? 1));
+      else await familyTotals(settings);
       return;
     }
-    const part = parts[0]!;
-    const ready = preflight[0]!;
+    const part = parts[0]!, ready = preflight[0]!;
     if (ready.ready === false) throw new EvaluationError(`${part} is not ready: ${String(ready.reason)}`);
-    if (part === 'retrieval') await runRetrieval(settings, db!, es!, target!, allocation, dir, label, codeCommit, policy, s);
-    else await runAttributionPart(settings, allocation, dir, label, codeCommit, policy, s, part);
-    const closing = allocation; allocation = undefined;
-    console.log(JSON.stringify({ event: 'complete', part, ledger: await closing.close() }));
+    if (part === 'retrieval') await runRetrieval(settings, db!, es!, target!, dir, label, codeCommit, policy, s);
+    else await runAttributionLane(settings, dir, label, codeCommit, policy, s, part, shard);
+    // The last lane of a part to close finds every lane closed and writes the part's summary.
+    summarizePart(dir, dir, part, label);
   } finally {
-    try { if (allocation) await allocation.close(); }
-    finally { await es?.close(); if (db) await closeDb(db); }
+    await es?.close(); if (db) await closeDb(db);
   }
 }
 
-/** One part's free preflight: its inputs validated, sizing, and (for a confirmation part) the probes' freeze. */
-export function preflightPart(part: PartName, dir: string, policy: EvidenceAutoFilterPolicy, s: StageMicros30, sets: readonly QuestionSet[] | undefined, freeze: boolean) {
+/** The free check of one lane: its allocation opened (lock, family allowance) and its first block asserted, nothing reserved. */
+async function preflightLane(settings: EvaluationSettings, dir: string, part: PartName, shard: Shard, firstBlockMicros: number) {
+  const task = laneSpec(part, shard);
+  const allocation = await CappedAllocation.open(settings, laneDirOf(dir, part, shard), task);
+  try {
+    await allocation.assertBlock(Math.max(1, firstBlockMicros));
+    console.log(JSON.stringify({ event: 'allowance', lane: task.allocation, lockKey: task.lockKey, capMicros: task.capMicros,
+      lane_totals: await taskTotals(allocation.db, task), family: await prefixTotals(allocation.db, `${TASK30_FAMILY.prefix}%`), firstBlockMicros }));
+  } finally { await allocation.close(); }
+}
+/** Without --part: what the whole family of lanes has charged and holds open (a read; no lock, nothing reserved). */
+async function familyTotals(settings: EvaluationSettings) {
+  const db = createDb(settings.config.databaseIngestUrl!, { max: 1, applicationName: 'aircase-task30-preflight' });
+  try { console.log(JSON.stringify({ event: 'family', prefix: TASK30_FAMILY.prefix, capMicros: TASK30_FAMILY.capMicros, totals: await prefixTotals(db, `${TASK30_FAMILY.prefix}%`) })); }
+  finally { await closeDb(db); }
+}
+
+/** One part's free preflight: its inputs validated, sizing per part and per lane, and (for a confirmation part) the probes' freeze. */
+export function preflightPart(part: PartName, dir: string, policy: EvidenceAutoFilterPolicy, s: StageMicros30, sets: readonly QuestionSet[] | undefined,
+  freeze: boolean, shard: Shard = { i: 1, k: 1 }, oneLane = false) {
   const spec = PART_SPECS[part];
   if (part === 'retrieval') {
     if (!sets) throw new EvaluationError('The retrieval part needs the development target');
     const worst = sets.reduce((n, set) => n + set.questions.length * retrievalQuestionMicros(s, set.samples.length), 0);
+    const expected = sets.reduce((n, set) => n + set.questions.length * expectedRetrievalQuestionMicros(set.samples.length), 0);
+    const task = laneSpec('retrieval', { i: 1, k: 1 });
     return { part, ready: true, sets: sets.map(set => ({ name: set.name, questions: set.questions.length, samples: set.samples.length,
       labelChanges: set.changes.filter(c => c.added || c.removed), crossGroupShares: set.crossGroupShares })),
-      worstCaseMicros: worst, chargeableWorstMicros: worst, expectedMicros: sets.reduce((n, set) => n + set.questions.length * expectedRetrievalQuestionMicros(set.samples.length), 0),
-      firstBlockMicros: retrievalQuestionMicros(s, 3), importWindowNow: inReleaseQuietWindow(new Date()) };
+      worstCaseMicros: worst, chargeableWorstMicros: worst, expectedMicros: expected, firstBlockMicros: retrievalQuestionMicros(s, 3),
+      lanes: [{ lane: '1of1', allocation: task.allocation, lockKey: task.lockKey, capMicros: task.capMicros, expectedMicros: expected, expectedFits: expected <= task.capMicros }],
+      importWindowNow: inReleaseQuietWindow(new Date()) };
   }
   const data = partData(part);
-  const scripted = spec.scope !== 'real', attempts = data.items.length * spec.samples;
+  const scripted = spec.scope !== 'real';
   const confirm = spec.family === 'confirm' && data.probes ? freezeConfirm(dir, data.probes, freeze) : undefined;
   // A scripted part calls the check exactly for its items with a candidate; a real scope's answers are unknown before the run.
-  const coverage = scripted ? candidateCoverage(data.items, policy) : undefined;
-  const checks = coverage ? coverage.withCandidate * spec.samples : attempts;
-  return { part, ready: true, file: data.path, sha256: data.sha256, items: data.items.length, samples: spec.samples, attempts,
-    ...(coverage ? { candidates: coverage } : {}),
+  const size = (items: readonly PartItem[]) => {
+    const attempts = items.length * spec.samples, coverage = scripted ? candidateCoverage(items, policy) : undefined;
+    const checks = coverage ? coverage.withCandidate * spec.samples : attempts;
+    return { items: items.length, attempts, coverage, worstCaseMicros: attempts * attributionSampleMicros(s),
+      chargeableWorstMicros: scripted ? checks * s.attribution : attempts * chargeableSampleMicros(s, false),
+      expectedMicros: scripted ? checks * EXPECTED_MICROS.attribution : attempts * expectedSampleMicros(false) };
+  };
+  const whole = size(data.items), order = seededOrder(data.items);
+  const lanes = (oneLane ? [shard] : Array.from({ length: shard.k }, (_, j) => ({ i: j + 1, k: shard.k }))).map(sh => {
+    const task = laneSpec(part, sh), l = size(shardItems(order, sh));
+    return { lane: laneName(sh), allocation: task.allocation, lockKey: task.lockKey, capMicros: task.capMicros, items: l.items,
+      chargeableWorstMicros: l.chargeableWorstMicros, expectedMicros: l.expectedMicros, expectedFits: l.expectedMicros <= task.capMicros };
+  });
+  return { part, ready: true, file: data.path, sha256: data.sha256, items: whole.items, samples: spec.samples, attempts: whole.attempts,
+    ...(whole.coverage ? { candidates: whole.coverage } : {}),
     ...(data.probes ? { sources: tallyBy(data.probes.file.probes.map(p => p.source)), fields: tallyBy(data.probes.file.probes.map(p => p.field)),
       kinds: tallyBy(data.probes.file.probes.map(p => p.kind)), warnings: (({ kindMismatch, goldNotForced }) => ({ kindMismatch: kindMismatch.length, goldNotForced: goldNotForced.length }))(probeWarnings(data.probes.file)) } : {}),
     ...(confirm ? { confirmFreeze: confirm } : {}),
-    worstCaseMicros: attempts * attributionSampleMicros(s),
-    chargeableWorstMicros: scripted ? checks * s.attribution : attempts * chargeableSampleMicros(s, false),
-    expectedMicros: scripted ? checks * EXPECTED_MICROS.attribution : attempts * expectedSampleMicros(false),
-    firstBlockMicros: spec.samples * attributionSampleMicros(s), policy: autoFilterIdentity(policy) };
+    worstCaseMicros: whole.worstCaseMicros, chargeableWorstMicros: whole.chargeableWorstMicros, expectedMicros: whole.expectedMicros,
+    budgetMicros: PART_BUDGET_MICROS[part], firstBlockMicros: spec.samples * attributionSampleMicros(s), lanes, policy: autoFilterIdentity(policy) };
 }
 const tallyBy = (xs: string[]) => Object.fromEntries([...new Set(xs)].sort().map(k => [k, xs.filter(x => x === k).length]));
 /**
@@ -399,160 +498,183 @@ export function candidateCoverage(items: readonly PartItem[], policy: EvidenceAu
   return { scriptedSearches: items.filter(i => i.scripted?.kind === 'search').length, withCandidate, reasons };
 }
 
-async function runAttributionPart(settings: EvaluationSettings, allocation: CappedAllocation, dir: string, label: string, codeCommit: string,
-  policy: EvidenceAutoFilterPolicy, s: StageMicros30, part: AttributionPart) {
-  const spec = PART_SPECS[part], data = partData(part), order = seededOrder(data.items);
-  const directory = join(dir, part); mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const confirmFreeze = spec.family === 'confirm' ? freezeConfirm(dir, data.probes!, false).sha256 : undefined;
-  const prior = existsSync(join(directory, 'manifest.json')) ? JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8')) : undefined;
-  const manifest = { version: MANIFEST_VERSION, part, codeCommit, label, startedAt: prior?.startedAt ?? new Date().toISOString(), task: TASK30,
-    policy: policyRecord(policy), ranking: evidenceRankingIdentity(evidenceRankingConfig('er-q-v1')), stages: s, samples: spec.samples, scope: spec.scope,
+/** The part manifest every lane of a part must match: code, policy, ranking, input, order and shard count. */
+function attributionManifest(part: AttributionPart, data: PartData, order: readonly PartItem[], codeCommit: string, label: string,
+  policy: EvidenceAutoFilterPolicy, s: StageMicros30, k: number, confirmFreeze?: string) {
+  const spec = PART_SPECS[part];
+  return { version: MANIFEST_VERSION, part, codeCommit, label, family: TASK30_FAMILY, policy: policyRecord(policy),
+    ranking: evidenceRankingIdentity(evidenceRankingConfig('er-q-v1')), stages: s, samples: spec.samples, scope: spec.scope, shards: k,
     data: { path: data.path, sha256: data.sha256, items: data.items.length, orderSha256: sha256(stable(order.map(i => i.id))) },
     ...(confirmFreeze ? { confirmFreeze } : {}) };
-  freezeFile(join(directory, 'manifest.json'), manifest);
-  const hash = sha256(stable(manifest));
-  const journalPath = join(directory, 'results.jsonl'), journal = readJournal<Recorded>(journalPath);
-  const port = attributionPort(settings, allocation, spec.phase, hash, directory, policy);
-  const samples = Array.from({ length: spec.samples }, (_, i) => i + 1);
-  let streak = 0, done = 0;
-  for (const item of order) {
-    const remaining = samples.filter(n => !journal.has(attemptKey(label, part, item.id, n))).length;
-    // An item starts only when its remaining worst case fits the cap and the allowance; the gate still checks every stage.
-    if (remaining) await allocation.assertBlock(remaining * attributionSampleMicros(s));
-    for (const sample of samples) {
-      const key = attemptKey(label, part, item.id, sample);
-      let observation = journal.get(key)?.observation as AttributionObservation | undefined;
-      if (!observation) {
-        appendDurable(journalPath, { event: 'started', key, part, itemId: item.id, sample, at: new Date().toISOString() });
-        observation = await port.run({ key, part, itemId: item.id, sample }, { id: item.id, question: item.question, scripted: item.scripted });
-        const recorded: Recorded = { event: 'result', key, part, itemId: item.id, sample, observation };
-        appendDurable(journalPath, recorded); journal.set(key, recorded);
-      }
-      // A failed search is never scored or repeated under this label, including on resume.
-      if (observation.failure || observation.safetyFaults.length) throw new EvaluationError(`Search failed (${observation.failure ?? observation.safetyFaults.join(',')}); stop and inspect the journal`);
-      streak = nextStreak30(streak, { scope: observation.scope === 'real' ? observation.scopeOutcome : undefined,
-        attribution: observation.attributionCalled ? observation.attributionOutcome : undefined });
-      if (streak >= STOP_STREAK) throw new EvaluationError('Three consecutive provider infrastructure outcomes; stopped, incomplete, no retries');
-    }
-    done += 1;
-    if (done % 25 === 0 || done === order.length) console.log(JSON.stringify({ event: 'progress', part, items: done, of: order.length }));
-  }
-  const summary = summarizeAttributionPart(part, data, journal, label, policy);
-  writeSummary(dir, part, manifest, hash, summary);
-  writeDecision(dir, dir);
-  writeMarkdown(dir);
-  console.log(attributionTable(summary).join('\n'));
 }
 
-async function runRetrieval(settings: EvaluationSettings, db: Db, es: Client, target: Awaited<ReturnType<typeof verifyTarget>>, allocation: CappedAllocation,
+async function runAttributionLane(settings: EvaluationSettings, dir: string, label: string, codeCommit: string,
+  policy: EvidenceAutoFilterPolicy, s: StageMicros30, part: AttributionPart, shard: Shard) {
+  const spec = PART_SPECS[part], data = partData(part), order = seededOrder(data.items), items = shardItems(order, shard);
+  const confirmFreeze = spec.family === 'confirm' ? freezeConfirm(dir, data.probes!, false).sha256 : undefined;
+  mkdirSync(partDirOf(dir, part), { recursive: true, mode: 0o700 });
+  const manifest = attributionManifest(part, data, order, codeCommit, label, policy, s, shard.k, confirmFreeze);
+  freezeShared(join(partDirOf(dir, part), 'manifest.json'), manifest, 'part manifest');
+  const hash = sha256(stable(manifest)), task = laneSpec(part, shard), directory = laneDirOf(dir, part, shard);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  freezeShared(join(directory, 'lane.json'), { part, shard, allocation: task.allocation, lockKey: task.lockKey, capMicros: task.capMicros,
+    manifestSha256: hash, items: items.map(i => i.id) } satisfies LaneRecord, 'lane record');
+  let allocation: CappedAllocation | undefined = await CappedAllocation.open(settings, directory, task);
+  try {
+    const journalPath = join(directory, 'results.jsonl'), journal = readJournal<Recorded>(journalPath);
+    const port = attributionPort(settings, allocation, spec.phase, hash, directory, policy);
+    const samples = Array.from({ length: spec.samples }, (_, i) => i + 1);
+    let streak = 0, done = 0;
+    for (const item of items) {
+      const remaining = samples.filter(n => !journal.has(attemptKey(label, part, item.id, n))).length;
+      // An item starts only when its remaining worst case fits the lane's cap and the allowance; the gate still checks every stage.
+      if (remaining) await allocation.assertBlock(remaining * attributionSampleMicros(s));
+      for (const sample of samples) {
+        const key = attemptKey(label, part, item.id, sample);
+        let observation = journal.get(key)?.observation as AttributionObservation | undefined;
+        if (!observation) {
+          appendDurable(journalPath, { event: 'started', key, part, itemId: item.id, sample, at: new Date().toISOString() });
+          observation = await port.run({ key, part, itemId: item.id, sample }, { id: item.id, question: item.question, scripted: item.scripted });
+          const recorded: Recorded = { event: 'result', key, part, itemId: item.id, sample, observation };
+          appendDurable(journalPath, recorded); journal.set(key, recorded);
+        }
+        // A failed search is never scored or repeated under this label, including on resume.
+        if (observation.failure || observation.safetyFaults.length) throw new EvaluationError(`Search failed (${observation.failure ?? observation.safetyFaults.join(',')}); stop and inspect the journal`);
+        streak = nextStreak30(streak, { scope: observation.scope === 'real' ? observation.scopeOutcome : undefined,
+          attribution: observation.attributionCalled ? observation.attributionOutcome : undefined });
+        if (streak >= STOP_STREAK) throw new EvaluationError('Three consecutive provider infrastructure outcomes; stopped, incomplete, no retries');
+      }
+      done += 1;
+      if (done % 25 === 0 || done === items.length) console.log(JSON.stringify({ event: 'progress', part, lane: laneName(shard), items: done, of: items.length }));
+    }
+    const closing = allocation; allocation = undefined;
+    console.log(JSON.stringify({ event: 'lane_complete', part, lane: laneName(shard), ledger: await closing.close() }));
+  } finally { if (allocation) await allocation.close(); }
+}
+
+async function runRetrieval(settings: EvaluationSettings, db: Db, es: Client, target: Awaited<ReturnType<typeof verifyTarget>>,
   dir: string, label: string, codeCommit: string, policy: EvidenceAutoFilterPolicy, s: StageMicros30) {
-  const directory = join(dir, 'retrieval'); mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const shard = { i: 1, k: 1 }, partDirectory = partDirOf(dir, 'retrieval'), directory = laneDirOf(dir, 'retrieval', shard);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
   const identities = currentIdentities();
-  const prior = existsSync(join(directory, 'manifest.json')) ? JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8')) : undefined;
-  const manifest = { version: MANIFEST_VERSION, part: 'retrieval', codeCommit, label, startedAt: prior?.startedAt ?? new Date().toISOString(), task: TASK30,
-    target: target.identity, configurations: [identities.Q0, identities.QH50], policy: policyRecord(policy), rows: ROWS30, stages: s,
+  const manifest = { version: MANIFEST_VERSION, part: 'retrieval', codeCommit, label, family: TASK30_FAMILY,
+    target: target.identity, configurations: [identities.Q0, identities.QH50], policy: policyRecord(policy), rows: ROWS30, stages: s, shards: 1,
     sets: target.sets.map(set => ({ name: set.name, samples: set.samples.length, sourceFileSha256: set.sourceFileSha256, goldSha256: set.goldSha256,
       questions: set.questions.map(q => q.id) })) };
-  freezeFile(join(directory, 'manifest.json'), manifest);
+  freezeShared(join(partDirectory, 'manifest.json'), manifest, 'part manifest');
   // The re-derived sets, so the free summary needs no database.
-  freezeFile(join(directory, 'questions.json'), target.sets);
-  const hash = sha256(stable(manifest));
-  const journalPath = join(directory, 'results.jsonl'), journal = readJournal<Recorded>(journalPath);
-  const port = productionPort(settings, db, es, target.pinned, allocation, 'selection', hash, directory, identities as unknown as Record<Arm, ArmIdentity>);
-  let streak = 0;
-  const search = async (set: QuestionSet, row: Row30, arm: 'Q0' | 'QH50', q: RankingQuestion, sample: number, request: SearchRequest) => {
-    const key = attemptKey(label, 'retrieval', q.id, sample, row, set.name);
-    let observation = journal.get(key)?.observation as SearchObservation | undefined;
-    if (!observation) {
-      if (inReleaseQuietWindow(new Date())) throw new EvaluationError('The daily import window (03:30 to 06:00 Europe/Prague) has started; resume after it');
-      await assertTarget(db, target.pinned);
-      appendDurable(journalPath, { event: 'started', key, part: 'retrieval', set: set.name, row, itemId: q.id, sample, at: new Date().toISOString() });
-      observation = await port.run({ key, questionId: q.id, arm, sample: sample as 1 | 2 | 3 }, q, request);
-      const recorded: Recorded = { event: 'result', key, part: 'retrieval', set: set.name, row, itemId: q.id, sample, observation };
-      appendDurable(journalPath, recorded); journal.set(key, recorded);
-      console.log(JSON.stringify({ event: 'search', set: set.name, row, questionId: q.id, sample, chargedMicros: Math.round(observation.actualUsd * 1e6),
-        scope: observation.scopeOutcome, attribution: observation.attributionOutcome, rerank: observation.rerankOutcome, failure: observation.failure, cases: observation.ranking.length }));
-    }
-    if (observation.failure || observation.safetyFaults.length) throw new EvaluationError(`Search failed (${observation.failure ?? observation.safetyFaults.join(',')}); stop and inspect the journal`);
-    streak = nextStreak30(streak, { scope: observation.scopeOutcome !== 'skipped' ? observation.scopeOutcome : undefined,
-      rerank: observation.timing.rerank.attempted ? observation.rerankOutcome : undefined,
-      attribution: observation.attributionCalled ? observation.attributionOutcome : undefined });
-    if (streak >= STOP_STREAK) throw new EvaluationError('Three consecutive provider infrastructure outcomes; stopped, incomplete, no retries');
-    return observation;
-  };
-  const remainingMicros = (set: QuestionSet, q: RankingQuestion) => {
-    const has = (row: Row30, sample: number) => journal.get(attemptKey(label, 'retrieval', q.id, sample, row, set.name))?.observation as SearchObservation | undefined;
-    let n = has('Q0', 1) ? 0 : s.embed;
-    for (const sample of set.samples) {
-      for (const [row, edit, cost] of [['QH50', 'QH50+F', s.scope + s.embed + s.rerank], ['QH50+A', 'QH50+A+F', s.scope + s.attribution + s.embed + s.rerank]] as const) {
-        const parent = has(row, sample);
-        if (!parent) n += cost;
-        if ((!parent || (!parent.failure && buttonFilters(parent))) && !has(edit, sample)) n += s.embed + s.rerank;
+  freezeShared(join(partDirectory, 'questions.json'), target.sets, 're-derived question sets');
+  const hash = sha256(stable(manifest)), task = laneSpec('retrieval', shard);
+  freezeShared(join(directory, 'lane.json'), { part: 'retrieval', shard, allocation: task.allocation, lockKey: task.lockKey, capMicros: task.capMicros,
+    manifestSha256: hash, items: target.sets.flatMap(set => set.questions.map(q => `${set.name}:${q.id}`)) } satisfies LaneRecord, 'lane record');
+  let allocation: CappedAllocation | undefined = await CappedAllocation.open(settings, directory, task);
+  try {
+    const journalPath = join(directory, 'results.jsonl'), journal = readJournal<Recorded>(journalPath);
+    const port = productionPort(settings, db, es, target.pinned, allocation, 'selection', hash, directory, identities as unknown as Record<Arm, ArmIdentity>);
+    let streak = 0;
+    const search = async (set: QuestionSet, row: Row30, arm: 'Q0' | 'QH50', q: RankingQuestion, sample: number, request: SearchRequest) => {
+      const key = attemptKey(label, 'retrieval', q.id, sample, row, set.name);
+      let observation = journal.get(key)?.observation as SearchObservation | undefined;
+      if (!observation) {
+        if (inReleaseQuietWindow(new Date())) throw new EvaluationError('The daily import window (03:30 to 06:00 Europe/Prague) has started; resume after it');
+        await assertTarget(db, target.pinned);
+        appendDurable(journalPath, { event: 'started', key, part: 'retrieval', set: set.name, row, itemId: q.id, sample, at: new Date().toISOString() });
+        observation = await port.run({ key, questionId: q.id, arm, sample: sample as 1 | 2 | 3 }, q, request);
+        const recorded: Recorded = { event: 'result', key, part: 'retrieval', set: set.name, row, itemId: q.id, sample, observation };
+        appendDurable(journalPath, recorded); journal.set(key, recorded);
+        console.log(JSON.stringify({ event: 'search', set: set.name, row, questionId: q.id, sample, chargedMicros: Math.round(observation.actualUsd * 1e6),
+          scope: observation.scopeOutcome, attribution: observation.attributionOutcome, rerank: observation.rerankOutcome, failure: observation.failure, cases: observation.ranking.length }));
       }
-    }
-    return n;
-  };
-  const summaries: RetrievalSetSummary[] = [];
-  for (const set of target.sets) {
-    for (const q of set.questions) {
-      const needed = remainingMicros(set, q);
-      if (needed) await allocation.assertBlock(needed);
-      await search(set, 'Q0', 'Q0', q, 1, q0Request());
+      if (observation.failure || observation.safetyFaults.length) throw new EvaluationError(`Search failed (${observation.failure ?? observation.safetyFaults.join(',')}); stop and inspect the journal`);
+      streak = nextStreak30(streak, { scope: observation.scopeOutcome !== 'skipped' ? observation.scopeOutcome : undefined,
+        rerank: observation.timing.rerank.attempted ? observation.rerankOutcome : undefined,
+        attribution: observation.attributionCalled ? observation.attributionOutcome : undefined });
+      if (streak >= STOP_STREAK) throw new EvaluationError('Three consecutive provider infrastructure outcomes; stopped, incomplete, no retries');
+      return observation;
+    };
+    const remainingMicros = (set: QuestionSet, q: RankingQuestion) => {
+      const has = (row: Row30, sample: number) => journal.get(attemptKey(label, 'retrieval', q.id, sample, row, set.name))?.observation as SearchObservation | undefined;
+      let n = has('Q0', 1) ? 0 : s.embed;
       for (const sample of set.samples) {
-        const live = await search(set, 'QH50', 'QH50', q, sample, liveRequest());
-        const f = buttonFilters(live);
-        if (f) await search(set, 'QH50+F', 'QH50', q, sample, editRequest(f, live));
-        const auto = await search(set, 'QH50+A', 'QH50', q, sample, attributedRequest(policy));
-        const g = buttonFilters(auto);
-        if (g) await search(set, 'QH50+A+F', 'QH50', q, sample, editRequest(g, auto, policy));
+        for (const [row, edit, cost] of [['QH50', 'QH50+F', s.scope + s.embed + s.rerank], ['QH50+A', 'QH50+A+F', s.scope + s.attribution + s.embed + s.rerank]] as const) {
+          const parent = has(row, sample);
+          if (!parent) n += cost;
+          if ((!parent || (!parent.failure && buttonFilters(parent))) && !has(edit, sample)) n += s.embed + s.rerank;
+        }
       }
+      return n;
+    };
+    for (const set of target.sets) {
+      for (const q of set.questions) {
+        const needed = remainingMicros(set, q);
+        if (needed) await allocation.assertBlock(needed);
+        await search(set, 'Q0', 'Q0', q, 1, q0Request());
+        for (const sample of set.samples) {
+          const live = await search(set, 'QH50', 'QH50', q, sample, liveRequest());
+          const f = buttonFilters(live);
+          if (f) await search(set, 'QH50+F', 'QH50', q, sample, editRequest(f, live));
+          const auto = await search(set, 'QH50+A', 'QH50', q, sample, attributedRequest(policy));
+          const g = buttonFilters(auto);
+          if (g) await search(set, 'QH50+A+F', 'QH50', q, sample, editRequest(g, auto, policy));
+        }
+      }
+      // Each set is summarized as soon as it completes, so a stop in a later set keeps this one's result.
+      const done = summarizeRetrievalSet(set, journal, label, policy);
+      console.log(retrievalTable([done]).join('\n'));
     }
-    // Each set is summarized as soon as it completes, so a stop in a later set keeps this one's result.
-    summaries.push(summarizeRetrievalSet(set, journal, label, policy));
-    writeSummary(dir, 'retrieval', manifest, hash, { sets: summaries });
-    writeMarkdown(dir);
-    console.log(retrievalTable([summaries.at(-1)!]).join('\n'));
-  }
+    const closing = allocation; allocation = undefined;
+    console.log(JSON.stringify({ event: 'lane_complete', part: 'retrieval', lane: '1of1', ledger: await closing.close() }));
+  } finally { if (allocation) await allocation.close(); }
 }
 
-/** Free: scores whatever each selected part's journal completed; incomplete parts are reported, never scored. */
-function summarize(dir: string, devDir: string, parts: PartName[], label: string, policyArg: EvidenceAutoFilterPolicy) {
-  for (const part of parts) {
-    const directory = join(dir, part), manifestPath = join(directory, 'manifest.json');
-    if (!existsSync(manifestPath)) { console.log(JSON.stringify({ event: 'not_started', part })); continue; }
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    const hash = sha256(stable(manifest));
-    // The part's own policy, as frozen at its first run (the flag only selects it for a new part).
+/**
+ * Scores one part from all its lanes, or reports why not: a part not started, a lane missing, running or
+ * unreconciled, or an incomplete schedule is reported and never scored (nor used for decisions).
+ */
+function summarizePart(dir: string, devDir: string, part: PartName, label: string): boolean {
+  const manifestPath = join(partDirOf(dir, part), 'manifest.json');
+  if (!existsSync(manifestPath)) { console.log(JSON.stringify({ event: 'not_started', part })); return false; }
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const hash = sha256(stable(manifest));
+  try {
+    // The part's own policy, as frozen at its first run.
     const policy = resolvePolicy(manifest.policy.version);
     if (autoFilterIdentity(policy).sha256 !== manifest.policy.sha256) throw new EvaluationError(`${part}: its policy is no longer registered with the same identity`);
-    if (policyArg.version !== policy.version) console.log(JSON.stringify({ event: 'note', part, policy: policy.version }));
-    const journal = readJournal<Recorded>(join(directory, 'results.jsonl'));
-    try {
-      if (part === 'retrieval') {
-        const sets = JSON.parse(readFileSync(join(directory, 'questions.json'), 'utf8')) as QuestionSet[];
-        const done: RetrievalSetSummary[] = [];
-        for (const set of sets) {
-          try { done.push(summarizeRetrievalSet(set, journal, label, policy)); }
-          catch (e) { if (!(e instanceof EvaluationError && /^Incomplete schedule/.test(e.message))) throw e; console.log(JSON.stringify({ event: 'incomplete', part, set: set.name })); }
-        }
-        if (done.length) writeSummary(dir, part, manifest, hash, { sets: done });
-        continue;
+    if (part === 'retrieval') {
+      const journal = mergeLanes(dir, part, manifest.shards, hash);
+      const sets = JSON.parse(readFileSync(join(partDirOf(dir, part), 'questions.json'), 'utf8')) as QuestionSet[];
+      const done: RetrievalSetSummary[] = [];
+      for (const set of sets) {
+        try { done.push(summarizeRetrievalSet(set, journal, label, policy)); }
+        catch (e) { if (!(e instanceof EvaluationError && /^Incomplete schedule/.test(e.message))) throw e; console.log(JSON.stringify({ event: 'incomplete', part, set: set.name })); }
       }
+      if (done.length) writeSummary(dir, part, manifest, hash, { sets: done });
+    } else {
       const data = partData(part);
       if (data.sha256 !== manifest.data.sha256) throw new EvaluationError(`${part}: its frozen input changed since the run`);
-      writeSummary(dir, part, manifest, hash, summarizeAttributionPart(part, data, journal, label, policy));
-    } catch (e) {
-      // An incomplete or failed part is reported, never scored.
-      if (!(e instanceof EvaluationError)) throw e;
-      console.log(JSON.stringify({ event: 'not_scored', part, results: journal.size, reason: e.message }));
+      const order = seededOrder(data.items);
+      if (sha256(stable(order.map(i => i.id))) !== manifest.data.orderSha256) throw new EvaluationError(`${part}: its item order changed since the run`);
+      const journal = mergeLanes(dir, part, manifest.shards, hash, sh => shardItems(order, sh).map(i => i.id));
+      writeSummary(dir, part, manifest, hash, summarizeAttributionPart(part as AttributionPart, data, journal, label, policy));
     }
+  } catch (e) {
+    // An incomplete or failed part is reported, never scored.
+    if (!(e instanceof EvaluationError)) throw e;
+    console.log(JSON.stringify({ event: 'not_scored', part, reason: e.message }));
+    return false;
+  } finally {
+    writeDecision(dir, devDir);
+    writeMarkdown(dir);
   }
-  writeDecision(dir, devDir);
-  writeMarkdown(dir);
-  console.log(readFileSync(join(dir, 'summary.md'), 'utf8'));
+  return true;
+}
+/** Free: scores whatever each selected part's lanes completed; incomplete parts are reported, never scored. */
+function summarize(dir: string, devDir: string, parts: PartName[], label: string) {
+  for (const part of parts) summarizePart(dir, devDir, part, label);
+  const path = join(dir, 'summary.md');
+  if (existsSync(path)) console.log(readFileSync(path, 'utf8'));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main().catch(e => {
   console.error(e instanceof EvaluationError ? e.message : 'Evaluation stopped; raw exception details suppressed. Inspect the durable journal.'); process.exitCode = 1;
 });
-

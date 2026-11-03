@@ -26,11 +26,17 @@ export const PROBE_KINDS = ['trap', 'positive', 'mixed'] as const;
 const listed = (values: readonly string[]) => z.array(z.enum(values as [string, ...string[]])).min(1).max(values.length)
   .refine(v => new Set(v).size === v.length, 'repeated value');
 const Year = z.number().int().min(1900).max(2100);
+/** Any four-digit number the question writes ("1500 hours" is a trap); outside 1900-2100 a scope's answer carrying it is invalid. */
+const ForcedYear = z.number().int().min(1000).max(9999);
 const ordered = (f: { yearFrom?: number; yearTo?: number }) => f.yearFrom === undefined || f.yearTo === undefined || f.yearFrom <= f.yearTo;
-/** What a scope can emit for these fields (the edit and scope schemas' vocabulary, without `blank`). */
+/**
+ * What a naive scope might emit: state and category codes from the scope's vocabulary (without `blank`),
+ * years as written. A value the scope schema cannot carry makes the scripted answer invalid, so the
+ * pipeline falls back exactly as it would for a real scope's (reported as `scope:invalid_output`).
+ */
 export const ProbeForcedSchema = z.strictObject({
   state: listed(FACET_VALUES.state.filter(v => v !== 'blank')).optional(),
-  yearFrom: Year.optional(), yearTo: Year.optional(),
+  yearFrom: ForcedYear.optional(), yearTo: ForcedYear.optional(),
   category: listed(FACET_VALUES.category.filter(v => v !== 'blank')).optional(),
 }).refine(ordered, 'yearFrom after yearTo').refine(f => Object.keys(f).length > 0, 'forced names no field');
 /** What may be applied automatically: US states and DC, a year range, aircraft categories (never UNK). */

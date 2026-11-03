@@ -1,6 +1,6 @@
 /** Task 30's evaluation harness, offline: probe schema, scoring, exact bounds, the decision rule, sizing and request shapes. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { probeWarnings, validateProbes, type Probe } from '../../evals/auto-filters/probes.js';
@@ -9,10 +9,13 @@ import {
   editRequest, exactLower, exactUpper, fieldKey, fieldOutcome, fieldSummary, fittedTerms, groupSummary, liveRequest, nextStreak30, positiveRecall,
   precisionOf, q0Request, questionPrecision, replayScope, retrievalQuestionMicros, review24Unsafe, scriptedScopeOutput, stageMicros30, trapFailures,
   trapStops, v13Replay, wholeObject, wholeOutcome, Z_ONE_SIDED_95, Z_SIMULTANEOUS, type AutoFilters, type DecisionInputs, type ScoredSample,
+  MAX_SHARDS, PART_BUDGET_MICROS, PARTS, TASK30_FAMILY, laneCapMicros, laneLockKey, laneSpec, parseShard, shardItems,
 } from '../../evals/auto-filters/plan.js';
+import { categoryAllowanceMicros } from '../../evals/langfuse/money.js';
 import { wilson } from '../../evals/search-quality/field-score.js';
 import { validateEvidenceScope } from '../../server/ai/prompts/scope.e1.js';
-import { autoFilterIdentity, autoFilterPolicy } from '../../server/evidence/auto-filters.js';
+import { attributionStage, autoFilterIdentity, autoFilterPolicy } from '../../server/evidence/auto-filters.js';
+import { attributionWorstCaseUsd } from '../../server/evidence/pricing.js';
 import { evidenceRankingConfig } from '../../server/evidence/ranking-config.js';
 import { stageWorstCaseUsd } from '../../server/ai/pricing.js';
 import type { SearchObservation } from '../../evals/search-quality/ab-types.js';
@@ -52,7 +55,8 @@ describe('Task 30 probe files', () => {
     ['an unknown state', probe({ forced: { state: ['XX'] } })],
     ['a repeated value', probe({ forced: { state: ['OH', 'OH'] } })],
     ['an inverted year range', probe({ forced: { yearFrom: 2019, yearTo: 2018 }, field: 'years' })],
-    ['a year outside 1900 to 2100', probe({ forced: { yearFrom: 1899 }, field: 'years' })],
+    ['a gold year outside 1900 to 2100', probe({ forced: { yearFrom: 1899 }, gold: { yearFrom: 1899 }, field: 'years' })],
+    ['a forced number that is no four-digit year', probe({ forced: { yearFrom: 999 }, gold: {}, field: 'years', kind: 'trap' })],
     ['an empty set', probe({ gold: { state: [] } })],
     ['UNK in gold', probe({ forced: { category: ['UNK'] }, gold: { category: ['UNK'] }, field: 'category' })],
     ['a territory in gold', probe({ forced: { state: ['PR'] }, gold: { state: ['PR'] } })],
@@ -61,8 +65,9 @@ describe('Task 30 probe files', () => {
   ])('refuses %s', (_name, p) => {
     expect(() => validateProbes(file([p]), 'dev')).toThrow(/Invalid dev probe file/);
   });
-  it('accepts what a scope may emit in forced even when it can never be applied (a territory, UNK)', () => {
-    expect(validateProbes(file([probe({ forced: { state: ['PR'] }, gold: {}, kind: 'trap' })]), 'dev').probes).toHaveLength(1);
+  it('accepts forced values that can never be applied (a territory, UNK, a four-digit number that is no event year)', () => {
+    expect(validateProbes(file([probe({ forced: { state: ['PR'] }, gold: {}, kind: 'trap' }),
+      probe({ id: 'b-years-036', question: 'pilots with 1500 hours who crashed on night VFR flights', forced: { yearFrom: 1500, yearTo: 1500 }, gold: {}, field: 'years', kind: 'trap' })]), 'dev').probes).toHaveLength(2);
   });
   it('refuses repeated ids and repeated questions (whitespace and case normalised)', () => {
     expect(() => validateProbes(file([probe(), probe({ question: 'Other' })]), 'dev')).toThrow(/repeated id/);
@@ -168,6 +173,15 @@ describe('Task 30 question-level trap and precision measures', () => {
   it('reports recall on positives with candidate coverage and the check-only share', () => {
     expect(positiveRecall(rows, 'state')).toMatchObject({ items: 2, samples: 6, found: 2, allSamples: 0, anySample: 1,
       candidateSamples: 3, modelOnly: { samples: 3, found: 2 } });
+  });
+  it('counts, for a real scope, every item whose gold holds the field as a positive (a wrong forced bound included)', () => {
+    // "accidents before 2000": a naive scope proposes yearTo 2000; gold is 1999. Forced, it is a trap; end to end, a positive.
+    const wrongBound = [1, 2, 3].map(n => sample({ itemId: 'y1', sample: n, applied: n === 1 ? { yearTo: 1999 } : {}, gold: { yearTo: 1999 }, forced: { yearTo: 2000 },
+      reasons: { years: n === 1 ? 'applied' : 'not_candidate:range_mismatch' } }));
+    expect(positiveRecall(wrongBound, 'years')).toMatchObject({ items: 0 });
+    expect(positiveRecall(wrongBound, 'years', 'gold')).toMatchObject({ items: 1, samples: 3, found: 1, anySample: 1 });
+    expect(trapFailures(wrongBound, 'years')).toMatchObject({ items: 1, failures: 0 });
+    expect(trapStops(wrongBound, 'years').byReason).toEqual({ applied_gold: 1, 'not_candidate:range_mismatch': 2 });
   });
   it('breaks results down by tag and finds unsafe review-24 applications', () => {
     const g = groupSummary(rows, 'pattern');
@@ -426,6 +440,13 @@ describe('Task 30 attribution parts through the production entry point', () => {
     expect(o).toMatchObject({ failure: null, safetyFaults: [], intent: null, scopeOutcome: 'unbilled_provider_error', autoFilterReason: 'scope_unavailable',
       autoFilterFields: {}, attributionCalled: false, automaticFilters: null, actualUsd: 0 });
   });
+  it('treats a forced value no scope can carry (a year 1500) as the scope fallback a real one would be', async () => {
+    mocks.provider = createFakeProvider();
+    const h = gateSetup(), port = attributionPort(settings, h.allocation, 'selection', 'a'.repeat(64), portDir, attributed());
+    const o = await port.run(attempt, item('pilots with 1500 hours who crashed on night VFR flights', { kind: 'search', filters: { yearFrom: 1500, yearTo: 1500 } }));
+    expect(o).toMatchObject({ failure: null, safetyFaults: [], scopeOutcome: 'invalid_output', automaticFilters: null, attributionCalled: false, actualUsd: 0 });
+    expect(mocks.provider.calls).toHaveLength(0);
+  });
   it('charges the real scope in an end-to-end part', async () => {
     mocks.provider = createFakeProvider({ evidenceScope: { output: { intent: 'case_search', filters: { state: ['AK'], yearFrom: 2019, yearTo: 2019 }, terms: 'engine power loss' } } });
     const h = gateSetup(), port = attributionPort(settings, h.allocation, 'selection', 'a'.repeat(64), portDir, attributed());
@@ -557,7 +578,7 @@ describe('Task 30 preflight', () => {
   it('sizes a scripted part from its candidates, a real-scope part from its attempts, and refuses an unfrozen probe file', async () => {
     const { preflightPart, stages, resolvePolicy } = await import('../../evals/auto-filters/run.js');
     const policy = resolvePolicy('attributed.v1'), s = stages(policy);
-    expect(s.attribution).toBe(625);
+    expect(s.attribution).toBe(Math.round(attributionWorstCaseUsd(attributionStage(policy)!) * 1e6));
     const dir = mkdtempSync(join(tmpdir(), 'task30-preflight-'));
     try {
       const replayPart = preflightPart('state-replay', dir, policy, s, undefined, true) as any;
@@ -569,7 +590,15 @@ describe('Task 30 preflight', () => {
       const c2 = preflightPart('c2', dir, policy, s, undefined, true) as any;
       expect(c2).toMatchObject({ items: 1600, attempts: 1600, chargeableWorstMicros: 1600 * (s.scope + s.attribution) });
       expect(c2.candidates).toBeUndefined();
-      expect(() => preflightPart('dev-forced', dir, policy, s, undefined, true)).toThrow(/not frozen yet/);
+      const dev = preflightPart('dev-forced', dir, policy, s, undefined, true, { i: 1, k: 3 }) as any;
+      expect(dev).toMatchObject({ ready: true, items: 622, samples: 3, attempts: 1866, budgetMicros: 800_000 });
+      expect(dev.lanes.map((l: any) => l.lane)).toEqual(['1of3', '2of3', '3of3']);
+      expect(dev.lanes.reduce((n: number, l: any) => n + l.items, 0)).toBe(622);
+      expect(dev.lanes.every((l: any) => l.capMicros === Math.floor(800_000 / 3) && l.allocation.startsWith('eval-task30-dev-forced-'))).toBe(true);
+      expect(dev.lanes.reduce((n: number, l: any) => n + l.chargeableWorstMicros, 0)).toBe(dev.chargeableWorstMicros);
+      const confirm = preflightPart('confirm-forced', dir, policy, s, undefined, true) as any;
+      expect(confirm).toMatchObject({ items: 1644, confirmFreeze: { probes: 1644 } });
+      expect(preflightPart('confirm-forced', dir, policy, s, undefined, false)).toMatchObject({ ready: true });
       expect(() => preflightPart('retrieval', dir, policy, s, undefined, true)).toThrow(/development target/);
       expect(() => resolvePolicy('state-explicit.v1.3')).toThrow(/no attribution check/);
       expect(() => resolvePolicy('attributed.v9')).toThrow(/Unregistered/);
@@ -585,5 +614,112 @@ describe('Task 30 preflight', () => {
       expect(freezeConfirm(dir, probes, false).sha256).toBe('a'.repeat(64));
       expect(() => freezeConfirm(dir, { ...probes, sha256: 'b'.repeat(64) }, true)).toThrow(/changed after their first preflight/);
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('Task 30 parallel lanes', () => {
+  it('partitions a part\'s seeded order into k disjoint, complete shards', () => {
+    const order = Array.from({ length: 23 }, (_, n) => `item-${n}`);
+    for (let k = 1; k <= MAX_SHARDS; k += 1) {
+      const lanes = Array.from({ length: k }, (_, j) => shardItems(order, { i: j + 1, k }));
+      expect(lanes.flat().sort()).toEqual([...order].sort());
+      expect(new Set(lanes.flat()).size).toBe(order.length);
+      const sizes = lanes.map(l => l.length);
+      expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
+      lanes.forEach((l, j) => l.forEach(id => expect(order.indexOf(id) % k).toBe(j)));
+    }
+  });
+  it('parses --shard i/k with 1 <= i <= k <= 9', () => {
+    expect(parseShard('1/1')).toEqual({ i: 1, k: 1 });
+    expect(parseShard('3/4')).toEqual({ i: 3, k: 4 });
+    for (const bad of ['0/2', '3/2', '1/10', '1-2', '', 'a/b', '2/02']) expect(() => parseShard(bad)).toThrow(/--shard/);
+  });
+  it('caps lanes from a fixed per-part budget table that sums to $8.00', () => {
+    const total = Object.values(PART_BUDGET_MICROS).reduce((a, b) => a + b, 0);
+    expect(total).toBeLessThanOrEqual(8_000_000);
+    expect(total).toBe(TASK30_FAMILY.capMicros);
+    expect(Object.keys(PART_BUDGET_MICROS).sort()).toEqual([...PARTS].sort());
+    for (let k = 1; k <= MAX_SHARDS; k += 1) {
+      const sum = PARTS.reduce((n, part) => n + (part === 'retrieval' ? laneCapMicros(part, 1) : k * laneCapMicros(part, k)), 0);
+      expect(sum).toBeLessThanOrEqual(8_000_000);
+      for (const part of PARTS) expect(k * laneCapMicros(part, k)).toBeLessThanOrEqual(PART_BUDGET_MICROS[part]);
+    }
+    expect(laneSpec('confirm-forced', { i: 2, k: 4 })).toMatchObject({ allocation: 'eval-task30-confirm-forced-2of4', capMicros: 325_000, family: TASK30_FAMILY });
+  });
+  it('gives every lane its own lock key, ledger prefix and application name', () => {
+    const lanes = PARTS.flatMap(part => (part === 'retrieval' ? [{ i: 1, k: 1 }] : Array.from({ length: MAX_SHARDS }, (_, j) => ({ i: j + 1, k: MAX_SHARDS })))
+      .map(shard => laneSpec(part, shard)));
+    expect(new Set(lanes.map(l => l.lockKey)).size).toBe(lanes.length);
+    for (const other of [732400024, 732500025, 732900029, 733000030]) expect(lanes.map(l => l.lockKey)).not.toContain(other);
+    expect(laneLockKey('dev-forced', 1)).toBe(733000101); expect(laneLockKey('retrieval', 1)).toBe(733000161);
+    expect(lanes.every(l => l.allocation.length <= 40 && l.allocation.startsWith(TASK30_FAMILY.prefix) && l.applicationName.length <= 63)).toBe(true);
+    expect(new Set(lanes.map(l => `${l.allocation}:`)).size).toBe(lanes.length);
+    // No lane's ledger prefix (with its colon) is the start of another's.
+    for (const a of lanes) for (const b of lanes) if (a !== b) expect(`${b.allocation}:`.startsWith(`${a.allocation}:`)).toBe(false);
+    expect(() => laneSpec('retrieval', { i: 1, k: 2 })).toThrow(/one lane/);
+    expect(() => laneSpec('c2', { i: 3, k: 2 })).toThrow();
+  });
+  it('opens each lane with the whole family\'s remaining liability as its evaluation allowance', () => {
+    const totals = (charged: number, open = 0) => ({ chargedMicros: charged, ledgerMicros: charged, openMicros: open, open: open ? 1 : 0, reservations: 1 });
+    const lane = laneSpec('dev-e2e', { i: 1, k: 3 });
+    // Lane cap $0.50, family $8.00 with $2.00 spent: the lane may run while the family has room; its own cap is checked per block.
+    expect(categoryAllowanceMicros(10_000_000, lane, totals(100_000), totals(2_000_000))).toBe(10_000_000 + 6_000_000);
+    expect(categoryAllowanceMicros(10_000_000, lane, totals(0), totals(7_900_000, 100_000))).toBe(10_000_000);
+    // Without a family (Tasks 25 and 29) nothing changes: this month's spend plus the task's own remaining cap, at most $50.
+    const single = { ...lane, family: undefined, capMicros: 800_000 };
+    expect(categoryAllowanceMicros(10_000_000, single, totals(300_000))).toBe(10_500_000);
+    expect(categoryAllowanceMicros(49_900_000, single, totals(0))).toBe(50_000_000);
+  });
+  it('freezes a part manifest once; every later lane must hold the same content', async () => {
+    const { freezeShared } = await import('../../evals/auto-filters/run.js');
+    const dir = mkdtempSync(join(tmpdir(), 'task30-freeze-shared-'));
+    try {
+      const path = join(dir, 'manifest.json');
+      freezeShared(path, { part: 'c2', shards: 2 }, 'part manifest');
+      freezeShared(path, { shards: 2, part: 'c2' }, 'part manifest');
+      expect(() => freezeShared(path, { part: 'c2', shards: 3 }, 'part manifest')).toThrow(/differs from the one this part froze first/);
+      expect(readdirSync(dir)).toEqual(['manifest.json']);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('merges every lane of a part and refuses missing, extra, foreign, overlapping or unreconciled lanes', async () => {
+    const { mergeLanes } = await import('../../evals/auto-filters/run.js');
+    const root = mkdtempSync(join(tmpdir(), 'task30-merge-'));
+    try {
+      const part = 'c2' as const, hash = 'h'.repeat(64), order = ['a', 'b', 'c', 'd', 'e'];
+      const itemsOf = (sh: { i: number; k: number }) => shardItems(order, sh);
+      const lane = (sh: { i: number; k: number }, opts: { items?: string[]; extraItem?: string; manifest?: string; close?: boolean; started?: boolean } = {}) => {
+        const d = join(root, part, `${sh.i}of${sh.k}`); mkdirSync(d, { recursive: true });
+        const items = opts.items ?? itemsOf(sh);
+        writeFileSync(join(d, 'lane.json'), JSON.stringify({ part, shard: sh, allocation: `eval-task30-${part}-${sh.i}of${sh.k}`, lockKey: 1, capMicros: 1, manifestSha256: opts.manifest ?? hash, items }));
+        const lines = [...items, ...(opts.extraItem ? [opts.extraItem] : [])].flatMap(itemId => {
+          const key = attemptKey('l', part, itemId, 1);
+          return [{ event: 'started', key }, ...(opts.started ? [] : [{ event: 'result', key, part, itemId, sample: 1, observation: {} }])];
+        });
+        writeFileSync(join(d, 'results.jsonl'), lines.map(l => JSON.stringify(l)).join('\n') + '\n');
+        writeFileSync(join(d, 'allocation.jsonl'), [{ event: 'open' }, ...(opts.close === false ? [] : [{ event: 'close', balanced: true }])].map(l => JSON.stringify(l)).join('\n') + '\n');
+      };
+      const reset = () => { rmSync(join(root, part), { recursive: true, force: true }); mkdirSync(join(root, part), { recursive: true }); };
+      reset(); lane({ i: 1, k: 2 }); lane({ i: 2, k: 2 });
+      expect([...mergeLanes(root, part, 2, hash, itemsOf).values()].map(r => r.itemId).sort()).toEqual(order);
+      // A directory a preflight opened, with no lane record, is not a lane.
+      mkdirSync(join(root, part, '1of3'));
+      expect(mergeLanes(root, part, 2, hash, itemsOf).size).toBe(5);
+      reset(); lane({ i: 1, k: 2 });
+      expect(() => mergeLanes(root, part, 2, hash, itemsOf)).toThrow(/^Incomplete schedule: c2 lanes not started: 2of2/);
+      lane({ i: 2, k: 2 }); lane({ i: 3, k: 3 });
+      expect(() => mergeLanes(root, part, 2, hash, itemsOf)).toThrow(/lanes outside its 2 shard\(s\): 3of3/);
+      reset(); lane({ i: 1, k: 2 }); lane({ i: 2, k: 2 }, { manifest: 'x'.repeat(64) });
+      expect(() => mergeLanes(root, part, 2, hash, itemsOf)).toThrow(/belongs to another run/);
+      reset(); lane({ i: 1, k: 2 }); lane({ i: 2, k: 2 }, { items: ['b'] });
+      expect(() => mergeLanes(root, part, 2, hash, itemsOf)).toThrow(/holds other items/);
+      reset(); lane({ i: 1, k: 2 }); lane({ i: 2, k: 2 }, { extraItem: 'a' });
+      expect(() => mergeLanes(root, part, 2, hash, itemsOf)).toThrow(/an item of another shard/);
+      reset(); lane({ i: 1, k: 2 }); lane({ i: 2, k: 2 }, { extraItem: 'a' });
+      expect(() => mergeLanes(root, part, 2, hash)).toThrow(/journaled in two lanes/);
+      reset(); lane({ i: 1, k: 2 }); lane({ i: 2, k: 2 }, { started: true });
+      expect(() => mergeLanes(root, part, 2, hash, itemsOf)).toThrow(/no durable result/);
+      reset(); lane({ i: 1, k: 2 }); lane({ i: 2, k: 2 }, { close: false });
+      expect(() => mergeLanes(root, part, 2, hash, itemsOf)).toThrow(/^Incomplete schedule: c2 lane 2of2 is still running or not closed balanced/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

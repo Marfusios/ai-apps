@@ -14,6 +14,7 @@ import { scoreC2, type C2Dataset } from '../search-quality/part5/field-score.js'
 import type { FieldObservation } from '../search-quality/types.js';
 import type { SearchObservation, SearchRequest } from '../search-quality/ab-types.js';
 import { INFRASTRUCTURE, applyFiltersRequest, stageMicros } from '../applied-filters/plan.js';
+import type { TaskSpec } from '../langfuse/money.js';
 
 export const AUTO_FIELDS = ['state', 'years', 'category'] as const;
 export type AutoField = typeof AUTO_FIELDS[number];
@@ -40,6 +41,36 @@ export const PART_SPECS: Readonly<Record<PartName, PartSpec>> = Object.freeze({
   retrieval: { family: 'retrieval', data: 'retrieval', samples: 0, scope: 'retrieval', phase: 'selection' },
 } satisfies Record<PartName, PartSpec>);
 export const isPart = (v: unknown): v is PartName => typeof v === 'string' && (PARTS as readonly string[]).includes(v);
+
+// ---------------------------------------------------------------------------
+// Parallel lanes: every (part, shard) runs as its own process with its own allocation, lock, cap and
+// journal. A lane still makes one reservation at a time; lanes only run side by side.
+
+export interface Shard { i: number; k: number }
+/** At most nine shards a part, so the lock-key table below stays one block of ten per part. */
+export const MAX_SHARDS = 9;
+export function parseShard(value: string): Shard {
+  const m = /^([1-9])\/([1-9])$/.exec(value);
+  if (!m || Number(m[1]) > Number(m[2])) throw new Error(`--shard must be i/k with 1 <= i <= k <= ${MAX_SHARDS}`);
+  return { i: Number(m[1]), k: Number(m[2]) };
+}
+export const laneName = (s: Shard): string => `${s.i}of${s.k}`;
+/** One shard's items: those whose index in the part's seeded order is i - 1 modulo k. */
+export const shardItems = <T>(order: readonly T[], s: Shard): T[] => order.filter((_, index) => index % s.k === s.i - 1);
+/** Fixed per-part budgets in microdollars, $8.00 in all; a lane's cap is its part's budget divided by its k. */
+export const PART_BUDGET_MICROS: Readonly<Record<PartName, number>> = Object.freeze({ 'dev-forced': 800_000, 'dev-e2e': 1_500_000,
+  'state-replay': 400_000, c2: 1_200_000, 'confirm-forced': 1_300_000, 'confirm-e2e': 1_500_000, retrieval: 1_300_000 });
+/** Every lane's ledger prefix starts with `eval-task30-`; the evaluation allowance a lane opens with covers the whole family. */
+export const TASK30_FAMILY = Object.freeze({ prefix: 'eval-task30-', capMicros: 8_000_000 });
+export const laneCapMicros = (part: PartName, k: number): number => Math.floor(PART_BUDGET_MICROS[part] / k);
+/** Lock keys: 733000100 + 10 x (the part's index in PARTS, from 0) + i; dev-forced 101-109 ... retrieval 161. */
+export const laneLockKey = (part: PartName, i: number): number => 733_000_100 + 10 * PARTS.indexOf(part) + i;
+export function laneSpec(part: PartName, s: Shard): TaskSpec {
+  if (!isPart(part) || !Number.isInteger(s.i) || !Number.isInteger(s.k) || s.i < 1 || s.i > s.k || s.k > MAX_SHARDS) throw new Error('invalid lane');
+  if (part === 'retrieval' && s.k !== 1) throw new Error('The retrieval part runs as one lane (1/1)');
+  return { allocation: `eval-task30-${part}-${laneName(s)}`, lockKey: laneLockKey(part, s.i), capMicros: laneCapMicros(part, s.k),
+    label: `Task 30 ${part} lane ${laneName(s)}`, probeStage: 'task30_preflight', applicationName: `aircase-task30-${part}-${laneName(s)}`, family: TASK30_FAMILY };
+}
 
 // ---------------------------------------------------------------------------
 // Money: worst cases as `rankEvidence` reserves them, and estimates of what is charged.
@@ -311,9 +342,14 @@ export function questionPrecision(samples: readonly ScoredSample[], field: AutoF
   return { applications, wrong, correct, rate: applications ? correct / applications : null,
     lower95: applications ? exactLower(correct, applications) : null, wrongItems: wrongItems.sort() };
 }
-/** Recall on positive items (the proposed value is gold): samples, all/any samples per question, candidate coverage and the check's own share. */
-export function positiveRecall(samples: readonly ScoredSample[], field: AutoField) {
-  const rows = samples.filter(s => itemRole(s.forced, s.gold, field) === 'positive');
+/**
+ * Recall on positive items: samples, all/any samples per question, candidate coverage and the check's own share.
+ * A positive is an item whose proposed value is gold (`forced`, for a scripted scope) or whose gold holds the
+ * field at all (`gold`, for a real scope, which proposes values of its own).
+ */
+export type PositiveBasis = 'forced' | 'gold';
+export function positiveRecall(samples: readonly ScoredSample[], field: AutoField, basis: PositiveBasis = 'forced') {
+  const rows = samples.filter(s => basis === 'gold' ? s.forced !== null && fieldKey(s.gold, field) !== null : itemRole(s.forced, s.gold, field) === 'positive');
   const hit = (r: ScoredSample) => fieldKey(r.applied, field) === fieldKey(r.gold, field);
   const groups = [...byItem(rows).values()];
   const reached = rows.filter(r => r.reasons[field] !== undefined && !r.reasons[field]!.startsWith('not_candidate:'));
@@ -350,7 +386,7 @@ export function attributionRates(rows: readonly { scopeOutcome: string; attribut
 }
 
 /** Everything one field of one part reports. The probe-only figures need `forced`. */
-export function fieldSummary(samples: readonly ScoredSample[], field: AutoField, enabled: boolean) {
+export function fieldSummary(samples: readonly ScoredSample[], field: AutoField, enabled: boolean, positives: PositiveBasis = 'forced') {
   const c = confusion(samples, field);
   const probes = samples.some(s => s.forced !== null);
   return { field, enabled, confusion: c, precision: precisionOf(c), recall: recallOf(c),
@@ -358,7 +394,7 @@ export function fieldSummary(samples: readonly ScoredSample[], field: AutoField,
     questionPrecision: questionPrecision(samples, field),
     ...(probes ? {
       traps: { policy: trapFailures(samples, field), modelOnly: trapFailures(samples, field, true), stops: trapStops(samples, field) },
-      positives: positiveRecall(samples, field),
+      positives: positiveRecall(samples, field, positives),
       goldNotForced: new Set(samples.filter(s => itemRole(s.forced, s.gold, field) === 'gold_not_forced').map(s => s.itemId)).size,
     } : {}) };
 }
@@ -368,13 +404,13 @@ export type FieldSummary = ReturnType<typeof fieldSummary>;
  * Counts per value of a tag (pattern, source, kind, field, stratum): sample-level TP/FP/FN, and at question
  * level traps and their failures, applications and wrong ones, positives found (the last need `forced`).
  */
-export function groupSummary(samples: readonly ScoredSample[], tag: string) {
+export function groupSummary(samples: readonly ScoredSample[], tag: string, positives: PositiveBasis = 'forced') {
   const values = [...new Set(samples.map(s => s.tags[tag] ?? '(none)'))].sort();
   return Object.fromEntries(values.map(v => {
     const rows = samples.filter(s => (s.tags[tag] ?? '(none)') === v);
     return [v, { items: new Set(rows.map(r => r.itemId)).size, samples: rows.length,
       fields: Object.fromEntries(AUTO_FIELDS.map(f => {
-        const c = confusion(rows, f), t = trapFailures(rows, f), p = questionPrecision(rows, f), r = positiveRecall(rows, f);
+        const c = confusion(rows, f), t = trapFailures(rows, f), p = questionPrecision(rows, f), r = positiveRecall(rows, f, positives);
         return [f, { tp: c.tp, fp: c.fp, fn: c.fn, traps: t.items, trapFailures: t.failures, applications: p.applications, wrong: p.wrong,
           positives: r.items, positiveSamples: r.samples, found: r.found }];
       })) }];
