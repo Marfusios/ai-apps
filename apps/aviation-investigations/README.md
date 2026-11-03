@@ -1395,7 +1395,7 @@ accounts at the example domains, 30 days of use with a weekly rhythm, a small be
 ratings the mock was given and the configuration it stands in for. Its automatic importer
 (`web/mock/imports.ts`) has deterministic states selected by `createHandlers({ imports })`
 or the tab's `casebook-mock-admin-imports`: `healthy` (default), `published`, `delayed`,
-`fix`, `disabled`, `never_run`, `overdue`, `unreadable`, plus every current failure cause,
+`fix`, `disabled`, `never_run`, `overdue`, `unreadable`, `disabled_unreadable`, plus every current failure cause,
 legacy history, manual rollback, baseline changes and checked/unverified restoration,
 post-success and dev-held-live examples. `MOCK_IMPORT_STATES` is the full list.
 The server sends severity, serving facts, waiting state, durable incidents and recent runs;

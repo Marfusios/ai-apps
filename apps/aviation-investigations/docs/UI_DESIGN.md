@@ -1326,27 +1326,31 @@ plain words and formatted numbers; times are in the viewer's own time zone, name
     36 hours while enabled. Temporary failures on 3 distinct schedule-zone dates give
     delayed; 7 dates give fix. A single bad day appears only in Recent runs. The monthly
     budget follows 3/7 and says it continues on the first of next month. Overdue takes
-    precedence over an earlier file issue or hold, keeping that cause in Waiting and details.
-    The delay’s Since date is its first unresolved temporary failure.
+    precedence over an earlier file issue or hold, keeping that cause in Waiting and details and any active holds in the alert text.
+    The delay’s Since date is its first unresolved temporary failure. A fix uses the first
+    unresolved date with the latest issue’s reason and origin.
   - **System → Automatic import:** chip Working / Delayed / Needs a fix / Off, plus one
     line. Off says “Automatic import is turned off.” and has no alert. Healthy says
     “Each new NTSB file goes in by itself.” Overdue says “No check since <date, time>.”;
     unreadable status says “The status could not be read.”; monthly budget says
     “Since <date>. Continues on the 1st of next month.”; other daily retries say
-    “Since <date>, retrying daily.”, and other known start dates say “Since <date>.”
+    “Since <date>, retrying daily.”, and other known start dates say “Since <date>.” Unknown starts say “Start date unknown.”
   - **Facts:** Data on the site (NTSB date, import or checked restoration time); Last check,
     or Last good check while alerted; Waiting (file not yet imported); Next check with
     “Every day at 05:30, Europe/Prague”. Times use the viewer's zone; the source's date is
     never timezone shifted. Missing metadata says “Not recorded”. An unreadable status
-    shows every fact and the runs as “Unknown: the status could not be read.” instead.
+    shows every fact and the runs as “Unknown: the status could not be read.” instead, even
+    while Off (`readable: false`, no alert).
     Off shows “None” for Next check. Waiting includes the fixed plain reason for the stop.
+    Without an incident it says “Not imported yet”; temporary reasons say “Not imported
+    yet: the system tries again every day”.
   - **Recent runs:** newest first, at most 20, a responsive time/outcome/cost list. An import
     says “Imported the 1 Nov 2026 file: 152 new cases, 501 updated, 2 removed”. Costs are
     the artifact's total across attempts, shown only for published imports. Failed, deferred
     and waiting rows never repeat that amount as though they incurred a new charge. Waiting
     says “No new file. The 1 Dec 2026 file waits for a fix.” A healthy check says “No new
     file.” All causes have fixed wording in `features/admin/imports.ts`; no raw enums or
-    IDs appear outside technical details.
+    IDs appear outside technical details. Only failed and cancelled rows use magenta.
 - A failed read says "The admin figures didn't load." with Try again. When who is signed in cannot be
   read (the account read and its retry failed, Task 25b), the page says "This page didn't load." and
   "Check your connection and try again." with Try again, rather than not-found; an account the server

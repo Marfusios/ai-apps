@@ -976,26 +976,28 @@ pair during a release even while a file waits.
 Admin is the only alert channel. Its top box says what failed, which file serves, and what
 happens next. Copy details gives bounded technical IDs and enums for diagnosis. Off means
 the schedule is disabled and emits no alert. Enabled schedules show a fix if no run started
-for 36 hours, even if an earlier file failure or hold is still open. Temporary failures on 3 schedule-zone dates give delayed; on 7 dates, fix.
+for 36 hours, even if an earlier file failure or hold is still open. The active hold stays stated in the alert and its details. Temporary failures on 3 schedule-zone dates give delayed; on 7 dates, fix.
 A successful check clears resolved causes. Suppressed work still records daily checks;
 re-certification cannot hide an unfixed candidate. A delay’s Since date is the first
-unresolved temporary failure. Unreadable status labels each fact unknown; it does not
+unresolved temporary failure. A fix uses the first unresolved date for the same reason
+and origin; daily retries do not move it. Unreadable status labels each fact unknown; it does not
 mean the history disappeared. Costs appear only on published rows.
 
 | Cause | Operator action and automatic next step |
 | --- | --- |
-| NTSB/app unavailable, download changed, interrupted/timeout, cache unavailable, busy/backup/lock loss | The system retries daily. After persistent failures, inspect the service, connectivity, cache and maintenance schedule. |
+| NTSB/app unavailable, download changed, interrupted/timeout, cache unavailable, busy/backup/lock loss, baseline changed | The system retries daily and adopts a changed serving baseline on the next run. After persistent failures, inspect the service, connectivity, cache and maintenance schedule. |
 | Monthly budget | The import continues on the first of next month; no new allowance is created for that file. |
-| Schema, listing change, integrity, verification, mapping, probe/site check, shrunk, unclassified | Diagnose using private reports. Release changed code/image or wait for new source bytes; identical work is suppressed. A deliberately smaller corpus needs a code change. |
+| Schema, integrity, verification, mapping, probe/site check, shrunk, unclassified during file processing | Diagnose using private reports. Release changed code/image or wait for new source bytes; identical work is suppressed. A deliberately smaller corpus needs a code change. |
+| Preflight or serving-data re-certification failure; changed listing before file processing | Fix the server. The system tries again every day. These per-run incidents never suppress a file; changed upstream structure may require a code change. |
 | Import cap | The file reached its $2 limit; no bypass/reset. Diagnose the input and embedding plan in code. |
-| Storage, cleanup, configuration | Fix the server, then release. The file is tried again after the release or when NTSB posts a newer file. Repairing settings alone does not retry a suppressed tuple. |
+| Storage, cleanup, configuration during suppressed file processing | Fix the server, then release. The file is tried again after the release or when NTSB posts a newer file. Repairing settings alone does not retry a suppressed tuple. |
 | Restore hold | A person must check the cost records. Follow the restore procedure below, including the separate importer latch. The alert goes away after the next good import. |
 | Accounting | The file’s cost records refuse more work (for example its first charge is 89 days old). Check the private report; a newer NTSB file is imported normally. Never erase histories or original reservation markers. |
 | Source retired | A new NTSB source needs a code change. Disable the old timer and enabled intent until its replacement is deployed. |
 | Overdue | Check the user timer, clean pinned checkout, service and host logs. Host refusal can happen before a database run exists. |
 | Status unavailable | Repair the status/database connection or missing migration. The app must not guess that imports are healthy. |
 | Switch unknown or rollback commit failed | The site may show mixed data. Both pairs stay protected; a release permits automatic reconciliation. Do not clear unknown attempts on elapsed time alone. |
-| Failure after recorded success | The data stays published. Storage alerts immediately; other incidents follow 3/7 dates. Repair the reported cause; do not roll back good data for cleanup/report failure. |
+| Failure after recorded success | The data stays published. Storage alerts immediately; other incidents follow 3/7 dates. Repair the reported cause; the system still retries every day, with no release required. Do not roll back good data for cleanup/report failure. |
 
 The worker automatically restores the exact previous pair when switching or canaries fail
 before recorded success, then checks the restored site. It says “restored” only after those
@@ -1017,7 +1019,9 @@ private activation report, including its timestamp, not the ZIP hash. The comman
 that exact candidate still serves, restores its protected previous pair, and checks it.
 It does not change operational aliases, erase spend or require another command afterwards.
 The rejected file is suppressed under its code/image until new bytes or a release arrive.
-A failed rollback commit or unknown alias state keeps the switch hold. Use `--env live` only for a deliberate live
+A committed emergency rollback whose site check fails is `restore_unverified`, with no
+switch hold; the next daily run repeats the site check. Only a failed rollback commit
+or unknown alias state keeps the switch hold. Use `--env live` only for a deliberate live
 emergency with the exact live publication identity.
 
 The importer is disabled by default. Before installation, prove mutual backup exclusion,

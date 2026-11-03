@@ -61,7 +61,7 @@ cannot clear a waiting-file issue.
 
 | Kind | Reasons | Behavior |
 | --- | --- | --- |
-| Temporary | NTSB/app unavailable, file changed during download, busy/backup window, lost lock, timeout, interrupted worker, monthly budget, cache unavailable | Retry daily, without an attempt limit. |
+| Temporary | NTSB/app unavailable, file changed during download, busy/backup window, lost lock, timeout, interrupted worker, monthly budget, cache unavailable, serving baseline changed | Retry daily, without an attempt limit. A changed baseline is adopted on the next run. |
 | Needs a fix | Schema, integrity, verification, mapping, probe/site check, per-file cap, storage, configuration, cleanup, restore/accounting hold, changed listing, retired source, shrunk file, unclassified error | Alert immediately. File-processing failures suppress identical work until new bytes or a release; preflight/re-certification incidents do not suppress a file. Restore/accounting holds still require reconciliation. |
 | Unknown switch or failed rollback commit | Alias state unknown, rollback failed | Keep both datasets protected. Block switches; a release permits reconciliation, never a timed waiver. |
 
@@ -109,8 +109,11 @@ waits. It preserves pending work, money and acquisition clocks and returns `comp
 `unchanged`. The release command needs no bypass. The next daily cycle handles the waiting
 file with the new code. Re-certification includes the full site canary, without provider calls.
 Failures in re-certification or preflight are per-run incidents; they never suppress a
-waiting file that was not processed. A successful retry resolves that incident, without
-clearing an unrelated file failure or changing acquisition dates or monetary identity.
+waiting file that was not processed. A successful preflight resolves only its explicitly
+marked fixed preflight incidents. Listing failures, other temporary incidents and
+file-suppression rows remain until a completed check or successful import resolves them.
+Successful re-certification resolves only its own warnings. Neither operation changes
+acquisition dates or monetary identity.
 
 ## Money, isolation and retention
 
@@ -164,8 +167,13 @@ private/no-store responses and client forgetting remain unchanged.
 When enabled, a needs-fix cause alerts at once. No run **start** for 36 hours is a fix,
 including an installation that has never started (measured from migration/monitoring start).
 Overdue takes priority over an existing file issue or hold, while that earlier cause stays
-in Waiting and details. The delayed Since date is the earliest unresolved temporary
-failure, not the latest run.
+in Waiting and details. Active restore and switch holds also stay in the alert text,
+including when no issue row exists. The delayed Since date is the earliest unresolved
+temporary failure; a fixed warning uses the earliest unresolved issue with the newest
+issue’s reason and origin, not the latest daily run. Fixed live skips share a key for
+dev’s archive, code and image plus the finite reason/suppression scope, so daily skips
+do not accumulate rows or preserve an obsolete cause after it changes. Temporary skips
+retain separate daily evidence.
 Temporary failures on **three distinct dates in the schedule zone** give a delayed alert;
 **seven dates** give a fix. Several failures on one day count once. Monthly-budget failure
 uses the same rule and says the import continues on the first of next month. A good check
@@ -177,7 +185,8 @@ Live skips include dev's actual reason and originating run. The newest finished 
 last good check are separate. Serving metadata comes from the actual manifest, not the
 last successful run in the recent window. A process outage is replayed from a bounded
 private spool; it does not invent a successful check. An unreadable status shows unknown
-facts rather than claiming history is missing; its Since date is unknown too. Normal
+facts rather than claiming history is missing, including while the schedule is off
+(`readable: false`, no alert); its Since date is unknown too. Normal
 pending alias switches and declared-abandoned attempts do not create a mixed-data alert.
 An unresolved unknown outcome or a durable switch hold does. Recent runs show the file’s
 total cost only on published rows, never as a new charge on every waiting check.
