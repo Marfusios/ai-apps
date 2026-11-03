@@ -183,14 +183,17 @@ describe('evidence scope preflight (offline)', () => {
 describe('attribution preflight (offline)', () => {
   it('sizes the frozen prompt and wire schema, a small request and the output at its bounds against the caps', async () => {
     const { ATTRIBUTION_CAPS } = await import('../../server/ai/pricing.js');
-    const { ATTRIBUTION_SYSTEM, AttributionInputSchema, AttributionWireOutputSchema, renderAttributionUser } = await import('../../server/ai/prompts/attribution.a1.js');
+    const { ATTRIBUTION_SYSTEM, AttributionInputSchema, AttributionWireOutputSchema, renderAttributionUser } = await import('../../server/ai/prompts/attribution.a2.js');
     const { attributionPreflightRequests } = await import('../../worker/ai-preflight.js');
     const a = attributionPreflightRequests();
     const base = fixed(ATTRIBUTION_SYSTEM, AttributionWireOutputSchema);
     expect(base).toBeLessThanOrEqual(CACHED_PREFIX_MAX);
     expect(base + text(renderAttributionUser(a.fixed))).toBeLessThanOrEqual(ATTRIBUTION_CAPS.input);
     expect(AttributionWireOutputSchema.safeParse(JSON.parse(a.output)).success).toBe(true);
-    expect(text(a.output)).toBeLessThanOrEqual(ATTRIBUTION_CAPS.output);
+    // Twelve checks at their schema bounds (160-character quotes) are about 620 cl100k tokens, near 1,100 with the
+    // conservative offline factor: only the provider's count at preflight shows whether 800 holds. A real answer
+    // that long truncates and applies nothing.
+    expect(countTokens(a.output)).toBeLessThanOrEqual(ATTRIBUTION_CAPS.output);
     // The largest requests are valid inputs; only the provider's counter decides whether they fit (never truncated).
     for (const w of a.worst) expect(AttributionInputSchema.safeParse(w.input).success, w.label).toBe(true);
   });

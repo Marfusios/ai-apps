@@ -3,7 +3,7 @@ import { attributionStage, automaticFieldsOf, automaticState, assertAutoFilterPo
 import { attributedFilters, attributionInput, checkedAttribution, type AutoFieldReason } from './attribution.js';
 import { attributionWorstCaseUsd } from './pricing.js';
 import type { RerankInput } from '../ai/prompts/rerank.r1.js';
-import type { AttributionOutput } from '../ai/prompts/attribution.a1.js';
+import type { AttributionOutput } from '../ai/prompts/attribution.a2.js';
 import type { EvidenceNote, EvidenceScopeSuggestion, EvidenceAutomaticFilters } from '../../shared/contracts/evidence.js';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import { automaticCandidates, type AutomaticField } from '../../shared/automatic-candidates.js';

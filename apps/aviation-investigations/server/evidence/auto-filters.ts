@@ -13,7 +13,7 @@ import { EvidenceAutomaticFiltersSchema, type EvidenceAutomaticFilters } from '.
 import { eligibleEmittedStates, STATE_GUARD_VERSION, type StateEligibility } from '../../shared/state-eligibility.js';
 import { AUTOMATIC_FIELDS, CATEGORY_MENTION_VERSION, STATE_MENTION_VERSION, YEAR_MENTION_VERSION, type AutomaticField } from '../../shared/automatic-candidates.js';
 import { DEFAULT_EVIDENCE_AUTO_FILTERS, type EvidenceAutoFilterVersion } from '../../shared/evidence-auto-filters.js';
-import { ATTRIBUTION_SYSTEM, ATTRIBUTION_VERSION, AttributionWireOutputSchema } from '../ai/prompts/attribution.a1.js';
+import { ATTRIBUTION_SYSTEM, ATTRIBUTION_VERSION, AttributionWireOutputSchema } from '../ai/prompts/attribution.a2.js';
 import { ATTRIBUTION_CAPS } from '../ai/pricing.js';
 import { ATTRIBUTION_MODEL } from '../ai/provider.js';
 import { canonicalConfig } from '../search/retrieval-config.js';

@@ -6,11 +6,10 @@
 import { RerankInputSchema, RerankOutputSchema, RERANK_SYSTEM, RERANK_VERSION, renderRerankUser, type RerankInput, type RerankOutput } from './prompts/rerank.r1.js';
 import { assertEvidenceRanking, type EvidenceRankingConfig } from '../evidence/ranking-config.js';
 import { ATTRIBUTION_CAPS, EVIDENCE_SCOPE_CAPS } from './pricing.js';
-import { AttributionInputSchema, AttributionOutputSchema, ATTRIBUTION_SYSTEM, ATTRIBUTION_VERSION, renderAttributionUser, type AttributionInput, type AttributionOutput } from './prompts/attribution.a1.js';
+import { AttributionInputSchema, AttributionOutputSchema, ATTRIBUTION_SYSTEM, ATTRIBUTION_VERSION, renderAttributionUser, type AttributionInput, type AttributionOutput } from './prompts/attribution.a2.js';
 import { automaticCandidates, normalizedQuestion } from '../../shared/automatic-candidates.js';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
-import { AIRCRAFT_CATEGORY } from '../../shared/vocab.js';
-import { ACCIDENT_CLASS } from '../evidence/attribution.js';
+import { ACCIDENT_CLASS, candidateValues } from '../evidence/attribution.js';
 import { EvidenceScopeInputSchema, EvidenceScopeOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser, type EvidenceScopeInput, type EvidenceScopeOutput } from './prompts/scope.e1.js';
 import type { z } from 'zod';
 import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v9.js';
@@ -147,14 +146,15 @@ interface FakeStageSpec<I, O> {
   count: number | ((input: I) => number) | undefined;
 }
 
-/** The suggestion a candidate's rendered values came from (server/evidence/attribution.ts `candidateValues`). */
+/** The suggestion the candidate values came from (server/evidence/attribution.ts `candidateValues`). */
 function suggestedFilters(input: AttributionInput): BriefFilters {
   const filters: BriefFilters = {};
   for (const c of input.candidates) {
-    if (c.id === 'state') filters.state = c.values.map(v => /\(([A-Z]{2})\)$/.exec(v)?.[1] ?? v);
-    else if (c.id === 'category') filters.category = c.values.map(v => Object.keys(AIRCRAFT_CATEGORY).find(k => AIRCRAFT_CATEGORY[k]!.toLowerCase() === v) ?? v);
+    const code = c.id.slice(c.id.indexOf(':') + 1);
+    if (c.field === 'state') (filters.state ??= []).push(code);
+    else if (c.field === 'category') (filters.category ??= []).push(code);
     else {
-      const v = c.values[0]!;
+      const v = c.value;
       const range = /^(\d{4}) to (\d{4})$/.exec(v), later = /^(\d{4}) or later$/.exec(v), earlier = /^(\d{4}) or earlier$/.exec(v), year = /^(\d{4})$/.exec(v);
       if (range) Object.assign(filters, { yearFrom: Number(range[1]), yearTo: Number(range[2]) });
       else if (later) filters.yearFrom = Number(later[1]);
@@ -166,16 +166,15 @@ function suggestedFilters(input: AttributionInput): BriefFilters {
 }
 
 /**
- * The default attribution answer: every candidate is about the accident itself, quoted as the
- * shortest span of the question holding all of its values' witnesses ("" when none is found).
+ * The default attribution answer: every value is about the accident itself, quoted as exactly its
+ * witness in the question ("" when the candidate builder finds none).
  */
 export function approveCandidates(input: AttributionInput): { output: AttributionOutput } {
   const text = normalizedQuestion(input.question);
-  const { candidates } = automaticCandidates(input.question, suggestedFilters(input), {});
+  const values = automaticCandidates(input.question, suggestedFilters(input), {}).candidates.flatMap(candidateValues);
   return { output: { checks: input.candidates.map(c => {
-    const w = candidates.find(k => k.field === c.id)?.witnesses ?? [];
-    const quote = w.length ? text.slice(Math.min(...w.map(x => x.start)), Math.max(...w.map(x => x.end))).slice(0, 160) : '';
-    return { id: c.id, about: ACCIDENT_CLASS[c.id], quote };
+    const w = values.find(v => v.id === c.id)?.witness;
+    return { id: c.id, about: ACCIDENT_CLASS[c.field], quote: w ? text.slice(w.start, w.end).slice(0, 160) : '' };
   }) } };
 }
 

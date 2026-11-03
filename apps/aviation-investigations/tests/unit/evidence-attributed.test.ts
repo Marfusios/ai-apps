@@ -12,7 +12,7 @@ import { createFakeProvider, approveCandidates, type FakeScript } from '../../se
 import { createAnthropicProvider, outputFormat, type AnthropicMessagesClient } from '../../server/ai/anthropic.js';
 import { ATTRIBUTION_CAPS, CACHED_PREFIX_MAX, stageWorstCaseUsd } from '../../server/ai/pricing.js';
 import { ATTRIBUTION_MODEL, evidenceAttributionCtx, isValidStageCtx } from '../../server/ai/provider.js';
-import { ATTRIBUTION_SYSTEM, AttributionWireOutputSchema, renderAttributionUser } from '../../server/ai/prompts/attribution.a1.js';
+import { ATTRIBUTION_SYSTEM, AttributionWireOutputSchema, renderAttributionUser } from '../../server/ai/prompts/attribution.a2.js';
 import { attributionStage, autoFilterIdentity, autoFilterPolicy, automaticFieldsOf, automaticState, type EvidenceAutoFilterPolicy } from '../../server/evidence/auto-filters.js';
 import { attributedFilters, attributionInput } from '../../server/evidence/attribution.js';
 import { candidateFingerprint, CANDIDATE_PROBES } from '../../server/evidence/candidate-probes.js';
@@ -53,10 +53,10 @@ describe('the attributed.v1 policy', () => {
     expect(Object.isFrozen(attributed)).toBe(true); expect(Object.isFrozen(attributed.attribution.caps)).toBe(true);
     expect(attributed).toMatchObject({ version: 'attributed.v1', fields: ['state', 'years', 'category'],
       rules: { state: 'state-mention.v1', years: 'year-mention.v1', category: 'category-mention.v1' },
-      attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a1' }, caps: { input: 5000, output: 500 },
+      attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a2' }, caps: { input: 5000, output: 800 },
         timeoutMs: 8000, settings: { thinking: 'off', effort: 'low', retries: 0, cache: 'system-5m' } },
       behaviour: { version: 'candidate-probes.v1' }, appliesTo: 'question-case-search' });
-    expect(autoFilterIdentity(attributed).sha256).toBe('6bab4b01717bfa59755abec1c9912164c656f241bc05f6423c7a9767e2c98f6f');
+    expect(autoFilterIdentity(attributed).sha256).toBe('00eb8b65349cb0d1add0106112de79f5ae45383ba1e8499a848a4f8cb2560cad');
     expect(autoFilterIdentity(autoFilterPolicy('none')).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
     expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.3')).sha256).toBe('8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de');
   });
@@ -64,7 +64,7 @@ describe('the attributed.v1 policy', () => {
     const { createHash } = await import('node:crypto');
     const { z } = await import('zod');
     const hash = (s: string) => createHash('sha256').update(s).digest('hex');
-    expect(attributed.attribution.prompt).toEqual({ version: 'attr.a1', sha256: hash(ATTRIBUTION_SYSTEM),
+    expect(attributed.attribution.prompt).toEqual({ version: 'attr.a2', sha256: hash(ATTRIBUTION_SYSTEM),
       schemaSha256: hash(JSON.stringify(z.toJSONSchema(AttributionWireOutputSchema))) });
   });
   it('names its fields for /api/config; the deterministic policies decide without a check', () => {
@@ -120,7 +120,7 @@ describe('rankEvidence with attributed.v1', () => {
   });
   it('applies only the fields the check approves, all or nothing per field', async () => {
     const h = setup({ evidenceAttribution: input => ({ output: { checks: approveCandidates(input).output.checks.map(c =>
-      c.id === 'years' ? { ...c, about: 'aircraft_history' as const } : c.id === 'category' ? { ...c, quote: 'engine failure' } : c) } }) });
+      c.id === 'years' ? { ...c, about: 'aircraft_history' as const } : c.id === 'category:HELI' ? { ...c, quote: 'engine failure' } : c) } }) });
     const out = await rankEvidence(h.config, h.input, h.providers, h.spend);
     expect(out).toMatchObject({ automaticFilters: { state: ['AK'] }, appliedFilters: { state: ['AK'] }, autoFilterReason: 'applied',
       autoFilterFields: { state: 'applied', years: 'attribution:aircraft_history', category: 'bad_quote' } });
@@ -142,7 +142,7 @@ describe('rankEvidence with attributed.v1', () => {
     else expect(line).toBeUndefined(); // unbilled
   });
   it('a structurally incomplete answer applies nothing but settles its known usage', async () => {
-    const h = setup({ evidenceAttribution: { output: { checks: [{ id: 'state', about: 'accident_location', quote: 'in Alaska' }] } } });
+    const h = setup({ evidenceAttribution: { output: { checks: [{ id: 'state:AK', about: 'accident_location', quote: 'in Alaska' }] } } });
     const out = await rankEvidence(h.config, h.input, h.providers, h.spend);
     expect(out).toMatchObject({ attributionOutcome: 'invalid_output', automaticFilters: null,
       autoFilterFields: { state: 'attribution_unavailable', years: 'attribution_unavailable', category: 'attribution_unavailable' } });
@@ -219,16 +219,17 @@ describe('money', () => {
     const none = evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', c);
     const with_ = evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', c, attributed);
     expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', c, autoFilterPolicy('state-explicit.v1.3'))).toEqual(none);
-    expect(with_.worstCaseUsd - none.worstCaseUsd).toBeCloseTo(0.000875, 12);
+    expect(with_.worstCaseUsd - none.worstCaseUsd).toBeCloseTo(0.001025, 12);
     expect(with_.reservationUsd).toBe(Math.ceil(with_.worstCaseUsd * 1e4) / 1e4);
   });
-  it('is $0.000875: 5,000 input tokens all written to the cache, 500 output tokens', () => {
-    expect(WORST).toBeCloseTo((5000 * 0.1 + 500 * 0.5 + 5000 * (0.125 - 0.1)) / 1e6, 12);
+  it('is $0.001025: 5,000 input tokens all written to the cache, 800 output tokens (twelve checks)', () => {
+    expect(WORST).toBeCloseTo((5000 * 0.1 + 800 * 0.5 + 5000 * (0.125 - 0.1)) / 1e6, 12);
     expect(attributionWorstCaseUsd(attributed.attribution)).toBe(WORST);
-    expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig('er-q-v1'), attributed).reservationUsd).toBe(0.0034);
-    expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig('er-q-h50-v1'), attributed).reservationUsd).toBe(0.0099);
+    const reserve = (version: Parameters<typeof evidenceRankingConfig>[0]) =>
+      evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig(version), attributed).reservationUsd;
+    expect(reserve('er-q-v1')).toBe(0.0035); expect(reserve('er-q-h50-v1')).toBe(0.01); expect(reserve('er-q-h100-v1')).toBe(0.015);
   });
-  it('the admitted HTTP gate holds every stage within the attributed reservation, and refuses the check without it', async () => {
+  it('the admitted HTTP gate holds every stage within the attributed reservation; without the check\'s share it runs out at the last stage', async () => {
     const c = evidenceRankingConfig('er-q-h50-v1'), r = c.rerank!;
     const calls = [
       { stage: 'scope' as const, provider: 'anthropic' as const, model: 'claude-haiku-5-5', worstCaseUsd: 0.0024125 },
@@ -244,13 +245,13 @@ describe('money', () => {
   });
   it('the startup check prices the configured policy, and an uncertain check counts toward the daily allowance', () => {
     const cfg = loadConfig({ env: { NODE_ENV: 'test', AI_LLM_PROVIDER: 'fake', AVIATION_EVIDENCE_AUTO_FILTERS: 'attributed.v1' }, files: [] });
-    expect(evidenceStartupCheck(cfg).reservationUsd).toBe(0.0034);
+    expect(evidenceStartupCheck(cfg).reservationUsd).toBe(0.0035);
     expect(UNCERTAIN_CALL_STAGES).toContain('attribution');
   });
 });
 
 describe('the real adapter on an offline transport', () => {
-  const output = { checks: [{ id: 'state' as const, about: 'accident_location' as const, quote: 'in Alaska' }] };
+  const output = { checks: [{ id: 'state:AK', about: 'accident_location' as const, quote: 'in Alaska' }] };
   const input = attributionInput('Find accidents in Alaska.', automaticCandidates('Find accidents in Alaska.', { state: ['AK'] }, {}).candidates);
   function provider(parsed: unknown = { result: output }, counted = 1000) {
     const count = vi.fn(async () => ({ input_tokens: counted }));
@@ -264,10 +265,10 @@ describe('the real adapter on an offline transport', () => {
     const { p, count, parse } = provider();
     const ctx = evidenceAttributionCtx(new AbortController().signal, 8000);
     const result = await p.evidenceAttribution!(input, ctx);
-    expect(result).toMatchObject({ output, model: ATTRIBUTION_MODEL, promptVersion: 'attr.a1', provider: 'anthropic' });
+    expect(result).toMatchObject({ output, model: ATTRIBUTION_MODEL, promptVersion: 'attr.a2', provider: 'anthropic' });
     const [sent, options] = (parse.mock.calls as unknown as [Record<string, any>, Record<string, any>][])[0]!;
     const [counted] = (count.mock.calls as unknown as [Record<string, any>][])[0]!;
-    expect(sent).toEqual({ ...counted, max_tokens: 500 });
+    expect(sent).toEqual({ ...counted, max_tokens: 800 });
     expect(sent.model).toBe('claude-haiku-5-5'); expect(sent.thinking).toEqual({ type: 'disabled' }); expect(sent.output_config.effort).toBe('low');
     expect(sent.system).toEqual([{ type: 'text', text: ATTRIBUTION_SYSTEM, cache_control: { type: 'ephemeral' } }]);
     expect(sent.messages).toEqual([{ role: 'user', content: renderAttributionUser(input) }]);
@@ -279,7 +280,7 @@ describe('the real adapter on an offline transport', () => {
     const { p, parse } = provider(null);
     const ctx = evidenceAttributionCtx(new AbortController().signal, 8000);
     await expect(p.evidenceAttribution!(input, { ...ctx, maxInputTokens: 5001 })).rejects.toMatchObject({ category: 'invalid_input', billing: { kind: 'none' } });
-    expect(isValidStageCtx('attribution', { ...ctx, maxOutputTokens: 501 })).toBe(false);
+    expect(isValidStageCtx('attribution', { ...ctx, maxOutputTokens: 801 })).toBe(false);
     expect(parse).not.toHaveBeenCalled();
     await expect(p.evidenceAttribution!(input, ctx)).rejects.toMatchObject({ category: 'invalid_output', stage: 'attribution', billing: { kind: 'usage' } });
     const over = provider(undefined, 5001);
@@ -293,16 +294,20 @@ describe('preflight and prompt mirror', () => {
   it('counts the real request at its largest under attributed.v1, and reports OVER instead of truncating', async () => {
     const a = attributionPreflightRequests();
     expect(a.worst.map(w => w.input.question.length)).toEqual([600, 600]);
-    expect(a.worst[0]!.input.candidates.map(c => c.values.length)).toEqual([51, 1, 1]);
-    expect(a.worst[0]!.input.candidates.slice(1).map(c => c.values)).toEqual([['1999 or earlier'], ['powered parachute']]);
-    const provider = createFakeProvider({ attributionCounts: input => input.candidates[0]!.values.length > 1 ? 5001 : 2000 });
+    // The most values one check takes: the eight longest state labels, the longest year value, the three longest categories.
+    expect(a.worst[0]!.input.candidates.map(c => c.id)).toEqual(['state:DC', 'state:NC', 'state:SC', 'state:MA', 'state:NH', 'state:WV',
+      'state:ND', 'state:PA', 'years', 'category:PPAR', 'category:PLFT', 'category:WSFT']);
+    expect(a.worst[0]!.input.candidates.slice(8).map(c => c.value)).toEqual(['1999 or earlier', 'powered parachute', 'powered-lift', 'weight-shift']);
+    expect(a.worst[1]!.input.candidates).toEqual(a.worst[0]!.input.candidates);
+    expect(JSON.parse(a.output).result.checks.map((c: { id: string }) => c.id)).toEqual(a.worst[0]!.input.candidates.map(c => c.id));
+    const provider = createFakeProvider({ attributionCounts: input => input.candidates.length > 1 ? 5001 : 2000 });
     const reservationUsd = evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig(), attributed).reservationUsd;
     const rows = (await runAiPreflight(provider, async (_m, text) => Math.ceil(text.length / 4), models,
       { embeddingModel: 'text-embedding-3-small', reservationUsd, autoFilters: attributed })).filter(r => r.stage === 'attribution');
     expect(rows.map(r => [r.request, r.limit, r.ok])).toEqual([
-      ['attr.a1: fixed prompt + schema', 5000, true], ['attr.a1: cached prefix', CACHED_PREFIX_MAX, true],
-      ['attr.a1: most candidates, 600-character Latin question', 5000, false], ['attr.a1: most candidates, 600-character dense question', 5000, false],
-      ['attr.a1: output at its schema bounds', 500, true]]);
+      ['attr.a2: fixed prompt + schema', 5000, true], ['attr.a2: cached prefix', CACHED_PREFIX_MAX, true],
+      ['attr.a2: most values, 600-character Latin question', 5000, false], ['attr.a2: most values, 600-character dense question', 5000, false],
+      ['attr.a2: output at its schema bounds', 800, true]]);
     expect(rows.every(r => r.model === 'claude-haiku-5-5')).toBe(true);
     expect(provider.calls).toHaveLength(0);
     // The reservation must cover the check, and no other policy counts it.
@@ -311,8 +316,8 @@ describe('preflight and prompt mirror', () => {
     expect((await runAiPreflight(provider, async () => 1, models, { embeddingModel: 'text-embedding-3-small', reservationUsd: 0.0025 }))
       .some(r => r.stage === 'attribution')).toBe(false);
   });
-  it('mirrors attr.a1 with its user turn as a template', () => {
-    const mirror = MIRRORED_PROMPTS.find(p => p.name === 'aircase-attr.a1')!;
+  it('mirrors attr.a2 with its user turn as a template', () => {
+    const mirror = MIRRORED_PROMPTS.find(p => p.name === 'aircase-attr.a2')!;
     expect(mirror.prompt).toEqual([{ role: 'system', content: ATTRIBUTION_SYSTEM },
       { role: 'user', content: '<question>\n{{question}}\n</question>\nCandidates from AirCase: {{candidates_json}}' }]);
   });

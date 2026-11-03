@@ -9,7 +9,7 @@
 import { createHash } from 'node:crypto';
 import { automaticCandidates, type AutomaticField } from '../../shared/automatic-candidates.js';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
-import { renderAttributionUser, type AttributionOutput } from '../ai/prompts/attribution.a1.js';
+import { renderAttributionUser, type AttributionOutput } from '../ai/prompts/attribution.a2.js';
 import { canonicalConfig } from '../search/retrieval-config.js';
 import { attributedFilters, attributionInput } from './attribution.js';
 
@@ -332,30 +332,55 @@ const probes: Probe[] = [
 ];
 
 type AttributionProbe = readonly [question: string, suggested: BriefFilters, output: AttributionOutput | null];
-const check = (id: 'state' | 'years' | 'category', about: AttributionOutput['checks'][number]['about'], quote: string) => ({ id, about, quote });
+const check = (id: string, about: AttributionOutput['checks'][number]['about'], quote: string) => ({ id, about, quote });
 const MIXED = 'Find helicopter accidents in Alaska during 2019.';
 const MIXED_SUGGESTED = { state: ['AK'], category: ['HELI'], ...Y2019 };
+const NV_CA = 'Find crashes in Nevada of aircraft registered in California.';
+const EIGHT = 'Find accidents in Ohio, Iowa, Utah, Idaho, Texas, Maine, Kansas or Alaska.';
+const EIGHT_CODES = ['AK', 'IA', 'ID', 'KS', 'ME', 'OH', 'TX', 'UT'];
+const EIGHT_NAMES: Record<string, string> = { AK: 'Alaska', IA: 'Iowa', ID: 'Idaho', KS: 'Kansas', ME: 'Maine', OH: 'Ohio', TX: 'Texas', UT: 'Utah' };
 const attributionProbes: AttributionProbe[] = [
-  [MIXED, MIXED_SUGGESTED, { checks: [check('state', 'accident_location', 'in Alaska'), check('years', 'accident_date', 'during 2019'), check('category', 'accident_aircraft', 'helicopter accidents')] }],
+  // One check per value (attr.a2): its id, its accident class and its own witness.
+  [MIXED, MIXED_SUGGESTED, { checks: [check('state:AK', 'accident_location', 'in Alaska'), check('years', 'accident_date', 'during 2019'), check('category:HELI', 'accident_aircraft', 'helicopter accidents')] }],
   [MIXED, MIXED_SUGGESTED, null],
-  [MIXED, MIXED_SUGGESTED, { checks: [check('state', 'aircraft_history', 'in Alaska'), check('years', 'unclear', 'during 2019'), check('category', 'other_aircraft', 'helicopter')] }],
-  [MIXED, MIXED_SUGGESTED, { checks: [check('state', 'accident_location', 'ALASKA'), check('years', 'accident_date', '2019'), check('category', 'accident_aircraft', '')] }],
-  [MIXED, MIXED_SUGGESTED, { checks: [check('state', 'accident_location', 'in  Alaska'), check('years', 'accident_date', 'Alaska during'), check('category', 'accident_aircraft', 'helicopters')] }],
-  [MIXED, MIXED_SUGGESTED, { checks: [check('state', 'accident_location', 'in Alaska'), check('years', 'accident_date', 'during 2019')] }],
-  [MIXED, MIXED_SUGGESTED, { checks: [check('state', 'accident_location', 'in Alaska'), check('state', 'accident_location', 'Alaska'), check('category', 'accident_aircraft', 'helicopter')] }],
+  [MIXED, MIXED_SUGGESTED, { checks: [check('state:AK', 'aircraft_history', 'in Alaska'), check('years', 'unclear', 'during 2019'), check('category:HELI', 'other_aircraft', 'helicopter')] }],
+  [MIXED, MIXED_SUGGESTED, { checks: [check('state:AK', 'accident_location', 'ALASKA'), check('years', 'accident_date', '2019'), check('category:HELI', 'accident_aircraft', '')] }],
+  [MIXED, MIXED_SUGGESTED, { checks: [check('state:AK', 'accident_location', 'in  Alaska'), check('years', 'accident_date', 'Alaska during'), check('category:HELI', 'accident_aircraft', 'helicopters')] }],
+  [MIXED, MIXED_SUGGESTED, { checks: [check('state:AK', 'accident_location', 'in Alaska'), check('years', 'accident_date', 'during 2019')] }],
+  [MIXED, MIXED_SUGGESTED, { checks: [check('state:AK', 'accident_location', 'in Alaska'), check('state:AK', 'accident_location', 'Alaska'), check('category:HELI', 'accident_aircraft', 'helicopter')] }],
+  [MIXED, MIXED_SUGGESTED, { checks: [check('state:AK', 'accident_location', 'in Alaska'), check('years', 'accident_date', 'during 2019'), check('category:HELI', 'accident_aircraft', 'helicopter'), check('state:HI', 'accident_location', 'Alaska')] }],
+  // attr.a1's field ids are no checks of attr.a2.
+  [MIXED, MIXED_SUGGESTED, { checks: [check('state', 'accident_location', 'in Alaska'), check('years', 'accident_date', 'during 2019'), check('category', 'accident_aircraft', 'helicopter')] }],
+  // Two values of one field are judged apart, and the field applies only when both are approved.
+  [NV_CA, { state: ['NV', 'CA'] }, { checks: [check('state:CA', 'aircraft_history', 'registered in California'), check('state:NV', 'accident_location', 'crashes in Nevada')] }],
+  [NV_CA, { state: ['NV', 'CA'] }, { checks: [check('state:CA', 'accident_location', 'California'), check('state:NV', 'accident_location', 'Nevada')] }],
+  [NV_CA, { state: ['NV', 'CA'] }, { checks: [check('state:CA', 'accident_location', 'Nevada'), check('state:NV', 'accident_location', 'California')] }],
   ['Find crashes in Ohio discussed by an instructor in Indianapolis, IN.', { state: ['OH', 'IN'] },
-    { checks: [check('state', 'accident_location', 'crashes in Ohio')] }],
+    { checks: [check('state:IN', 'accident_location', 'IN'), check('state:OH', 'accident_location', 'crashes in Ohio')] }],
   ['Find crashes in Ohio discussed by an instructor in Indianapolis, IN.', { state: ['OH', 'IN'] },
-    { checks: [check('state', 'accident_location', 'in Ohio discussed by an instructor in Indianapolis, IN')] }],
-  ['Find accidents in Alaska or Hawaii.', { state: ['AK', 'HI'] }, { checks: [check('state', 'accident_location', 'Alaska or')] }],
-  ['Find accidents in Alaska or Hawaii.', { state: ['AK', 'HI'] }, { checks: [check('state', 'accident_location', 'alaska or hawaii')] }],
+    { checks: [check('state:IN', 'accident_location', 'in Indianapolis, IN'), check('state:OH', 'accident_location', 'crashes in Ohio')] }],
+  ['Find accidents in Alaska or Hawaii.', { state: ['AK', 'HI'] }, { checks: [check('state:AK', 'accident_location', 'Alaska or'), check('state:HI', 'accident_location', 'or Hawaii')] }],
+  ['Find accidents in Alaska or Hawaii.', { state: ['AK', 'HI'] }, { checks: [check('state:AK', 'accident_location', 'alaska or hawaii'), check('state:HI', 'excluded', 'alaska or hawaii')] }],
+  [EIGHT, { state: EIGHT_CODES }, { checks: EIGHT_CODES.map(c => check(`state:${c}`, 'accident_location', EIGHT_NAMES[c]!)) }],
+  [EIGHT, { state: EIGHT_CODES }, { checks: EIGHT_CODES.map(c => check(`state:${c}`, c === 'UT' ? 'unclear' : 'accident_location', EIGHT_NAMES[c]!)) }],
   ['Find accidents after 2015.', { yearFrom: 2016 }, { checks: [check('years', 'accident_date', 'after 2015')] }],
   ['Find accidents after 2015.', { yearFrom: 2016 }, { checks: [check('years', 'accident_date', '2015')] }],
   ['Find accidents after 2015.', { yearFrom: 2016 }, { checks: [check('years', 'accident_date', 'after 2016')] }],
-  ['Find accidents near Anchorage, AK.', AK, { checks: [check('state', 'accident_location', 'AK')] }],
-  ['Find accidents near Anchorage, AK.', AK, { checks: [check('state', 'accident_location', 'near Anchorage, AK')] }],
-  ['Find powered parachute accidents.', { category: ['PPAR'] }, { checks: [check('category', 'accident_aircraft', 'parachute accidents')] }],
-  ['Find powered parachute accidents.', { category: ['PPAR'] }, { checks: [check('category', 'accident_aircraft', 'Powered Parachute')] }],
+  ['Find accidents near Anchorage, AK.', AK, { checks: [check('state:AK', 'accident_location', 'AK')] }],
+  ['Find accidents near Anchorage, AK.', AK, { checks: [check('state:AK', 'accident_location', 'near Anchorage, AK')] }],
+  ['Find powered parachute accidents.', { category: ['PPAR'] }, { checks: [check('category:PPAR', 'accident_aircraft', 'parachute accidents')] }],
+  ['Find powered parachute accidents.', { category: ['PPAR'] }, { checks: [check('category:PPAR', 'accident_aircraft', 'Powered Parachute')] }],
+  ['Find helicopter or gyroplane accidents.', { category: ['HELI', 'GYRO'] },
+    { checks: [check('category:GYRO', 'accident_aircraft', 'gyroplane'), check('category:HELI', 'other_aircraft', 'helicopter')] }],
+  ['Find helicopter or gyroplane accidents.', { category: ['HELI', 'GYRO'] },
+    { checks: [check('category:GYRO', 'accident_aircraft', 'gyroplane'), check('category:HELI', 'accident_aircraft', 'helicopter or')] }],
+  ['Find blimp or airship accidents.', { category: ['BLIM'] }, { checks: [check('category:BLIM', 'accident_aircraft', 'blimp or airship')] }],
+  ['Find blimp or airship accidents.', { category: ['BLIM'] }, { checks: [check('category:BLIM', 'accident_aircraft', 'airship')] }],
+  // Nested punctuation inside a quote.
+  ['Find ((helicopter)) accidents ((in [Alaska])), during 2019.', MIXED_SUGGESTED,
+    { checks: [check('state:AK', 'accident_location', '((in [Alaska]))'), check('years', 'accident_date', ')), during 2019.'), check('category:HELI', 'accident_aircraft', '((helicopter))')] }],
+  ['Find ((helicopter)) accidents ((in [Alaska])), during 2019.', MIXED_SUGGESTED,
+    { checks: [check('state:AK', 'accident_location', '[Alaska'), check('years', 'accident_date', 'during 2019'), check('category:HELI', 'accident_aircraft', 'helicopter))')] }],
 ];
 
 export const CANDIDATE_PROBES = Object.freeze(probes.map(([question, suggested, requested]) =>
