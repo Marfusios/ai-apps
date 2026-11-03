@@ -5,6 +5,7 @@
  * (`AI_LLM_PROVIDER`); there is no per-request routing or failover.
  */
 import type { RerankInput, RerankOutput } from './prompts/rerank.r1.js';
+import type { AttributionInput, AttributionOutput } from './prompts/attribution.a1.js';
 import type { EvidenceRankingConfig } from '../evidence/ranking-config.js';
 import { z } from 'zod';
 import type { EvidenceScopeInput, EvidenceScopeOutput } from './prompts/scope.e1.js';
@@ -18,7 +19,7 @@ import {
   SPEAKERS,
   type ComposeOutput,
 } from '../../shared/contracts/briefs.js';
-import { CACHED_PREFIX_MAX, STAGE_CAPS, EVIDENCE_SCOPE_CAPS } from './pricing.js';
+import { ATTRIBUTION_CAPS, CACHED_PREFIX_MAX, STAGE_CAPS, EVIDENCE_SCOPE_CAPS } from './pricing.js';
 
 export { ComposeOutputSchema, GLYPH_KINDS, GROUP_KINDS, type ComposeOutput };
 
@@ -27,6 +28,10 @@ export type LlmProviderName = 'anthropic' | 'openai' | 'fake';
 
 /** Pipeline stages that call a language model. `compose` runs on the answer model. */
 export type LlmStage = 'scope' | 'compose' | 'check';
+/** Every stage a provider call can belong to: the evidence rerank and attribution check fix their own models. */
+export type ProviderStage = LlmStage | 'rerank' | 'attribution';
+/** The automatic-filter attribution check's model, fixed like the reranker's (never a configured role). */
+export const ATTRIBUTION_MODEL = 'claude-haiku-5-5';
 
 export interface StageModels {
   readonly scope: string;
@@ -104,8 +109,14 @@ export function evidenceScopeCtx(signal: AbortSignal, timeoutMs: number): StageC
   return { signal, timeoutMs, maxInputTokens: EVIDENCE_SCOPE_CAPS.input, maxOutputTokens: EVIDENCE_SCOPE_CAPS.output };
 }
 
+/** The attribution check's hard caps (`ATTRIBUTION_CAPS`). */
+export function evidenceAttributionCtx(signal: AbortSignal, timeoutMs: number): StageCtx {
+  return { signal, timeoutMs, maxInputTokens: ATTRIBUTION_CAPS.input, maxOutputTokens: ATTRIBUTION_CAPS.output };
+}
+
 /** True when caps are positive integers within the stage maximum and the timeout is positive. */
-export function isValidStageCtx(stage: LlmStage | 'rerank', ctx: StageCtx, caps = stage === 'rerank' ? { input: 0, output: 0 } : STAGE_CAPS[STAGE_ROLE[stage]]): boolean {
+export function isValidStageCtx(stage: ProviderStage, ctx: StageCtx, caps = stage === 'rerank' ? { input: 0, output: 0 }
+  : stage === 'attribution' ? ATTRIBUTION_CAPS : STAGE_CAPS[STAGE_ROLE[stage]]): boolean {
   const within = (n: number, max: number) => Number.isInteger(n) && n > 0 && n <= max;
   return (
     within(ctx.maxOutputTokens, caps.output) &&
@@ -458,6 +469,9 @@ export interface LlmProvider {
   countEvidenceScopeTokens?(input: EvidenceScopeInput, ctx: StageCtx): Promise<number>;
   rerank?(input: RerankInput, ctx: StageCtx, config: EvidenceRankingConfig): Promise<StageResult<RerankOutput>>;
   countRerankTokens?(input: RerankInput, ctx: StageCtx, config: EvidenceRankingConfig): Promise<number>;
+  /** The automatic-filter attribution check (`attr.a1`, on `ATTRIBUTION_MODEL`). */
+  evidenceAttribution?(input: AttributionInput, ctx: StageCtx): Promise<StageResult<AttributionOutput>>;
+  countEvidenceAttributionTokens?(input: AttributionInput, ctx: StageCtx): Promise<number>;
   scope(input: ScopeInput, ctx: StageCtx): Promise<StageResult<ScopeOutput>>;
   compose(input: ComposeInput, ctx: StageCtx): Promise<StageResult<ComposeOutput>>;
   check(input: CheckInput, ctx: StageCtx): Promise<StageResult<CheckOutput>>;
@@ -493,7 +507,7 @@ export type StageErrorCategory =
 export type StageBilling = { kind: 'usage'; usage: StageUsage } | { kind: 'none' } | { kind: 'uncertain' };
 
 export interface StageErrorInfo {
-  stage: LlmStage | 'rerank';
+  stage: ProviderStage;
   provider: LlmProviderName;
   model: string;
   promptVersion: string;
@@ -513,7 +527,7 @@ export interface StageErrorInfo {
 /** A failed stage. Messages name the stage and category only, never model or user text. */
 export class StageError extends Error {
   override readonly name = 'StageError';
-  readonly stage: LlmStage | 'rerank';
+  readonly stage: ProviderStage;
   readonly provider: LlmProviderName;
   readonly model: string;
   readonly promptVersion: string;

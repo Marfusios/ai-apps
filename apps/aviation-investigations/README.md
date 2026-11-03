@@ -1213,8 +1213,9 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   1" sends `kind: "edited"`, a new 24-hour search that keeps the question, with exactly the
   filters left, `terms` only when the reader typed new words and `keywords: "question"` when they
   removed the added terms. While the page says the search's one free undo is there (`undo:
-  "available"`), a draft that only removes what AirCase added (the whole automatic state, the
-  added terms, or both) reads "Search again · free", by the server's rule
+  "available"`), a draft that only removes what AirCase added (one or more whole automatic
+  facets: the state, both year bounds, the aircraft category; the added terms; or both) reads
+  "Search again · free", by the server's rule
   (`web/src/features/evidence/undo.ts`, held to `server/evidence/undo.ts` by
   `tests/unit/evidence-undo.test.ts`); it runs with the visitor's own searches used up and through
   the usual check, and the searches it came from then say `used`. The created page's `freeUndo`
@@ -1935,7 +1936,7 @@ log what keeps any part off (setting names only). The tables are in migration 00
 ### AI evidence view
 
 The backend contract is `evidence.v3` (`shared/contracts/evidence.ts`): it discloses
-executed keywords, automatic state filters, ordering and mark source, plus `freeUndo`
+executed keywords, automatic filters (state, years, aircraft category), ordering and mark source, plus `freeUndo`
 for the created search and the current `undo: available | used | none` hint.
 The hint is read from the claim column on every page read or replay, never stored
 in the immutable result; admission remains authoritative if another tab uses it.
@@ -2505,16 +2506,19 @@ still required before any alternative is allowed on live.
 
 
 Evidence.v3 adds server-owned disclosures for executed keywords, automatically applied
-state, ordering, mark source and a one-use quota-free undo. The page's `undo` is
+filters, ordering, mark source and a one-use quota-free undo. The page's `undo` is
 `available` for an unexpired original v3 question with automatic additions and no
 claim, `used` after its claim is consumed, and `none` for edits, v2 rows or questions
 without additions; expired searches return 404. Automatic filtering is
 independent of ranking: `AVIATION_EVIDENCE_AUTO_FILTERS=none` is the default;
-`state-explicit.v1.3` is an explicit opt-in on dev or live. No other scope field
-is applied automatically. See
-[the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migration
-0025, the matching client, rollback and accounting. Existing v2 records upgrade on
-read; the original scope.e3 wire schema and all evaluated ranking hashes are unchanged.
+`attributed.v1` (dev and live, needs migration 0030) applies a state, years and an aircraft
+category the question names explicitly, each approved by one Haiku attribution check
+(`attr.a1`); `state-explicit.v1.3` (state only) is a dev-only opt-in, not cleared for live. No
+other scope field is applied automatically. See
+[the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migrations
+0025 and 0030, the matching client, rollback and accounting. Existing v2 records upgrade on
+read; the original scope.e3 wire schema is unchanged. Task 30 raised the evidence scope timeout
+from 10 to 15 seconds, which changed all eleven ranking identities; saved searches keep theirs.
 
 ### Search progress, ratings and administration
 
@@ -2547,7 +2551,7 @@ counted as neither known failures nor free undos.
 
 Before enabling tracing for a release, mirror the frozen prompt templates with
 `pnpm -s worker langfuse-prompts --sync` using that environment's project credentials.
-The command creates version 1 of `aircase-scope.e3` and `aircase-rerank.r1`, or verifies
+The command creates version 1 of `aircase-scope.e3`, `aircase-rerank.r1` and `aircase-attr.a1`, or verifies
 the existing content hash. A mismatch stops it; prompts are never fetched by searches.
 Generation spans link these versions and export model names. Export failures remain
 non-blocking, produce at most one sanitized warning every five minutes, and appear

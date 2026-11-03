@@ -706,10 +706,12 @@ async function main(argv: string[]): Promise<number> {
       (await client.messages.countTokens({ model, messages: [{ role: 'user', content: text }] })).input_tokens;
     const { evidenceReservation } = await import('../server/evidence/pricing.js');
     const { evidenceRankingConfig } = await import('../server/evidence/ranking-config.js');
+    const { autoFilterPolicy } = await import('../server/evidence/auto-filters.js');
     const ranking = evidenceRankingConfig(config.ai.evidenceRanking);
+    const autoFilters = autoFilterPolicy(config.ai.evidenceAutoFilters);
     const embeddingModel = config.ai.openai.embeddingModel;
     const rows = await runAiPreflight(provider, countText, models, {
-      embeddingModel, ranking, reservationUsd: evidenceReservation(models.scope, embeddingModel, ranking).reservationUsd,
+      embeddingModel, ranking, autoFilters, reservationUsd: evidenceReservation(models.scope, embeddingModel, ranking, autoFilters).reservationUsd,
     });
     console.log(formatPreflight(rows));
     const over = rows.filter((r) => !r.ok);

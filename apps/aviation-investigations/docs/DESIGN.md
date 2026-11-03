@@ -443,8 +443,8 @@ omit them. Provider calls settle with result storage in one transaction. A faile
 returns its quota unit but retains real spend; a result with any note counts once.
 Crash recovery closes abandoned searches and returns their units while charging the reservation conservatively. A
 client disconnect leaves admitted work running and replayable; shutdown, deletion
-and the configured server deadline can stop it (30 seconds for the baseline, 50 or
-60 seconds with a reranker).
+and the configured server deadline can stop it (35 seconds for the baseline, 55 or
+65 seconds with a reranker, 8 seconds more for the `attributed.v1` attribution check).
 
 Before enabling this path, freeze and review scope/excerpt/pagination versions; replay
 context-loss counterexamples through the actual UI, including required context on the
@@ -966,13 +966,15 @@ The evaluated scope.e3 prompt/schema/settings are unchanged.
 
 ### Evidence.v3: applied state, disclosures and undo
 
-The public response is `evidence.v3`. The ranking configurations and their hashes
-remain those evaluated for Task 24; automatic filters are an independent, frozen
+The public response is `evidence.v3`. The ranking configurations remain those evaluated
+for Task 24 except the scope timeout (10 to 15 seconds in Task 30), which changed their
+hashes; automatic filters are an independent, frozen
 policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
 identity includes the outputs of a fixed, versioned guard-probe set; a changed response
 to any probe changes the hash even without a guard version bump. Live accepts
-`none` and the reviewed `state-explicit.v1.3`; the default stays `none` and an operator
-must explicitly enable state in the environment settings. The independent live
+`none` and `attributed.v1` (Task 30); `state-explicit.v1.3` is dev-only since the
+2026-10-25 security re-check. The default stays `none` and an operator must explicitly
+enable automatic filters in the environment settings. The independent live
 ranking allowlist is `er-q-v1` and `er-q-h50-v1`. `state-explicit.v1.3` uses
 only a valid scope.e3 case-search result's state set, on original question searches.
 It requires agreement with the complete explicitly named state set. Its finite
@@ -1068,8 +1070,8 @@ free undo. Existing expiry, authorization and backup exclusions remain unchanged
 ### Evidence pricing (initial AI feature)
 
 `server/evidence/pricing.ts` derives the reservation from the configured scope and
-embedding models and their hard caps, plus the selected reranker, with one final
-rounding. For the baseline with Haiku 5.5 and `text-embedding-3-small`,
+embedding models and their hard caps, plus the selected reranker and, under
+`attributed.v1`, the attribution check ($0.000625), with one final rounding. For the baseline with Haiku 5.5 and `text-embedding-3-small`,
 10,000 scope input tokens, a cache-write premium on up to 6,500 prefix tokens,
 2,500 output tokens and 1,000 embedding tokens cost at most **$0.0024325**. Round up
 to **$0.0025** per admitted search. These scope caps are independent of `scope.v2` for
@@ -1307,7 +1309,8 @@ model) is refused further generated-summary requests until 00:00 UTC: admission 
 `uncertain_limit`, the API 429 `quota_exhausted` with `Retry-After`, nothing reserved and no search taken.
 That allows at most two answer-stage cancels or timeouts a day (about $0.68, the cost of
 six finished briefs) and some thirty check-stage ones. Only the named calls count (the
-scope, the answer's compose, the check and the query embedding: `UNCERTAIN_CALL_STAGES`).
+scope, the answer's compose, the check, the query embedding, the evidence rerank and the
+automatic-filter attribution check: `UNCERTAIN_CALL_STAGES`).
 A charge in full that follows a server failure is not the principal's uncertain call and
 is left out, though it still counts in full against the budgets: lease expiry, and a step
 that broke outside its stages (a database error between stages, an exception while the

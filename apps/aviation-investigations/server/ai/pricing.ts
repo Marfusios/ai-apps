@@ -115,6 +115,13 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
 /** Advisory scope has the full Explore vocabulary. Kept separate from gated summary caps.
  * Includes the strict object envelope and maximum-length Unicode suggested terms. */
 export const EVIDENCE_SCOPE_CAPS = Object.freeze({ input: 10_000, output: 2_500 });
+/**
+ * The automatic-filter attribution check (`attr.a1`, Haiku 5.5): a question of at most 600
+ * characters and at most three candidates. Its worst case is priced like scope's, with the cached
+ * prefix (`CACHED_PREFIX_MAX`) bounded by the input cap, so the whole input is a cache write:
+ * 3,000 × $0.10 + 500 × $0.50 + 3,000 × $0.025 premium per million = $0.000625.
+ */
+export const ATTRIBUTION_CAPS = Object.freeze({ input: 3_000, output: 500 });
 
 export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; readonly output: number }>> = {
   scope: { input: 6_500, output: 600 },

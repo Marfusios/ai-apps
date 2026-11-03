@@ -725,7 +725,7 @@ describe('advisory isolation', () => {
     const page = searchOf(await h.request());
     expect(page.suggestion).toBeNull(); expect(page.note).toBeNull(); expect(page.total).toBeGreaterThan(0);
     expect((await usage()).quota_counted).toBe(true); expect(h.embed).toHaveBeenCalledTimes(1);
-  }, 20_000);
+  }, 30_000); // waits for the real 15-second scope bound
   it('filter-only edits inherit the executed query, and cleared filters never return', async () => {
     const plans: unknown[] = [];
     const h = harness({ evidenceScope: { output: { ...success, filters: { state: ['CA'] }, terms: 'UNACCEPTED' } } }, r => ({ ...r, search(p, plan, signal, cb, terms) {
@@ -861,11 +861,11 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
   const undoBody = (id: string, changes: Record<string, unknown> = {}) => ({ kind: 'edited', question: undefined, from: id, filters: {}, ...changes });
   const stored = async (id: string) => (await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, id)))[0]!;
 
-  it.each(['none', 'state-explicit.v1.3'] as const)('publishes automatic fields from the configured %s policy without paid work', async policy => {
+  it.each(['none', 'state-explicit.v1.3', 'attributed.v1'] as const)('publishes automatic fields from the configured %s policy without paid work', async policy => {
     const h = harness(undefined, undefined, undefined, { env: { AVIATION_EVIDENCE_AUTO_FILTERS: policy } });
     const response = await h.app.inject('/api/config');
     expect(response.statusCode).toBe(200);
-    expect(ConfigResponseSchema.parse(response.json()).aiAutomaticFilters).toEqual(policy === 'none' ? [] : ['state']);
+    expect(ConfigResponseSchema.parse(response.json()).aiAutomaticFilters).toEqual(policy === 'none' ? [] : policy === 'attributed.v1' ? ['state', 'years', 'category'] : ['state']);
     expect(h.llm.calls).toHaveLength(0); expect(h.embed).not.toHaveBeenCalled();
   });
 
@@ -1298,7 +1298,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     const legacy = await migrator.execute(sql`INSERT INTO evidence_searches
       (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
       SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
-        status, (data - 'addedTerms' - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'marks' - 'freeUndo' - 'executed' - 'lexicalSource' - 'rankingConfig') ||
+        status, (data - 'addedTerms' - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'autoFilterFields' - 'attributionOutcome' - 'marks' - 'freeUndo' - 'executed' - 'lexicalSource' - 'rankingConfig') ||
           jsonb_build_object('version', 'evidence.v2', 'query', jsonb_build_object('source', 'question')), created_at, expires_at
       FROM evidence_searches WHERE id = ${page.id} RETURNING id`);
     const before = await spent();
@@ -1311,7 +1311,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     const legacy = await migrator.execute(sql`INSERT INTO evidence_searches
       (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
       SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
-        status, (data - 'addedTerms' - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'freeUndo') ||
+        status, (data - 'addedTerms' - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'autoFilterFields' - 'attributionOutcome' - 'freeUndo') ||
           jsonb_build_object('version', 'evidence.v2', 'query', jsonb_build_object('source', 'question')), created_at, expires_at
       FROM evidence_searches WHERE id = ${page.id} RETURNING id`);
     const id = String(legacy.rows[0]!.id);
@@ -1328,6 +1328,73 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
   });
 });
 
+describe('attributed.v1: automatic years and aircraft category', () => {
+  const scope = { intent: 'case_search' as const, filters: { yearFrom: 2008, yearTo: 2008, category: ['HELI'], phase: ['takeoff'] }, terms: 'engine' };
+  const question = 'Find helicopter accidents in 2008';
+  const withFields = (script: FakeScript = { evidenceScope: { output: scope } }) => harness(script, undefined, 'er-t-v1', { autoFilters: 'attributed.v1' });
+  const stored = async (id: string) => (await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, id)))[0]!;
+
+  it('a question search is admitted under the larger reservation, settles to results and charges the check', async () => {
+    const plans: Parameters<EvidenceRetriever['search']>[1][] = [];
+    const h = harness({ evidenceScope: { output: scope } }, r => ({ ...r, search: async (...args) => { plans.push(args[1]); return r.search(...args); } }),
+      'er-t-v1', { autoFilters: 'attributed.v1' });
+    const page = searchOf(await h.request({ question }));
+    expect(plans[0]?.filters).toEqual({ yearFrom: 2008, yearTo: 2008, category: ['HELI'] });
+    expect(page).toMatchObject({ automaticFilters: { yearFrom: 2008, yearTo: 2008, category: ['HELI'] },
+      appliedFilters: { yearFrom: 2008, yearTo: 2008, category: ['HELI'] }, undo: 'available', freeUndo: false,
+      suggestion: { filters: { phase: ['takeoff'] }, terms: null } });
+    const row = await stored(page.id);
+    expect(row.status).toBe('results');
+    expect(row.data).toMatchObject({ autoFilterPolicy: autoFilterIdentity(h.ai.evidenceAutoFilters), autoFilterReason: 'applied',
+      autoFilterFields: { state: 'not_candidate:empty', years: 'applied', category: 'applied' }, attributionOutcome: 'applied' });
+    expect(page).not.toHaveProperty('autoFilterFields'); expect(page).not.toHaveProperty('attributionOutcome');
+    expect(h.llm.calls.map(c => c.stage)).toEqual(['scope', 'attribution']);
+    const reserved = await db.execute(sql`SELECT usd::float AS usd, status FROM reservations ORDER BY id DESC LIMIT 1`);
+    expect(reserved.rows[0]).toEqual({ usd: evidenceReservation('claude-haiku-5-5', FIXTURE_EMBEDDING.model, h.ai.evidenceRanking, h.ai.evidenceAutoFilters).reservationUsd, status: 'settled' });
+    const lines = await db.execute(sql`SELECT stage, uncertain FROM cost_ledger ORDER BY id`);
+    expect(lines.rows).toEqual([{ stage: 'scope', uncertain: false }, { stage: 'attribution', uncertain: false }, { stage: 'embed', uncertain: false }]);
+  });
+  it('removing the automatic years and category together is the free undo; removing one category of two is not', async () => {
+    const h = withFields(), page = searchOf(await h.request({ question })); nextMinute();
+    const child = searchOf(await h.request({ kind: 'edited', question: undefined, from: page.id, filters: {} }));
+    expect(child).toMatchObject({ freeUndo: true, undo: 'none', automaticFilters: null, appliedFilters: {} });
+    expect((await usage())).toMatchObject({ quota_counted: false, status: 'settled' });
+    expect(h.llm.calls.map(c => c.stage)).toEqual(['scope', 'attribution']);
+    nextMinute();
+    const two = withFields({ evidenceScope: { output: { ...scope, filters: { category: ['HELI', 'GLI'] } } } });
+    const parent = searchOf(await two.request({ question: 'Find helicopter or glider accidents' })); nextMinute();
+    expect(parent.automaticFilters).toEqual({ category: ['GLI', 'HELI'] });
+    expect(searchOf(await two.request({ kind: 'edited', question: undefined, from: parent.id, filters: { category: ['HELI'] } })).freeUndo).toBe(false);
+  });
+  it('a failed check keeps the suggestion, applies nothing and still finishes the search', async () => {
+    const h = withFields({ evidenceScope: { output: scope }, evidenceAttribution: { fail: 'timeout' } });
+    const page = searchOf(await h.request({ question }));
+    // Only the added terms remain removable (er-t-v1 searches with them).
+    expect(page).toMatchObject({ automaticFilters: null, appliedFilters: {}, undo: 'available', query: { keywords: { kind: 'terms' } },
+      suggestion: { filters: scope.filters } });
+    expect((await stored(page.id)).data).toMatchObject({ attributionOutcome: 'timeout', autoFilterReason: 'not_applied' });
+    const lines = await db.execute(sql`SELECT stage, uncertain FROM cost_ledger WHERE stage = 'attribution'`);
+    expect(lines.rows).toEqual([{ stage: 'attribution', uncertain: true }]);
+    expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence automatic filters unavailable')).toMatchObject({ stage: 'attribution', failure: 'timeout' });
+    expect(h.logs.join('')).not.toContain(question);
+  });
+  it('the database lets only automatic keys change a running search\'s filters', async () => {
+    let entered!: () => void, release!: () => void;
+    const reached = new Promise<void>(r => { entered = r; });
+    const held = new Promise<void>(r => { release = r; });
+    const h = withFields({ evidenceScope: async () => { entered(); await held; return { output: scope }; } });
+    const req = h.request({ question }); await reached;
+    try {
+      const finalize = (automatic: object) => db.execute(sql`UPDATE evidence_searches SET status = 'results',
+        data = data || jsonb_build_object('automaticFilters', ${JSON.stringify(automatic)}::jsonb, 'appliedFilters', ${JSON.stringify(automatic)}::jsonb)
+        WHERE status = 'running'`).then(() => null, e => e);
+      expect((await finalize({ phase: ['takeoff'] }))?.cause).toMatchObject({ code: '55000', message: 'only automatic filters may change evidence filters' });
+      expect((await finalize({ yearFrom: 2008, phase: ['takeoff'] }))?.cause).toMatchObject({ code: '55000', message: 'only automatic filters may change evidence filters' });
+    } finally { release(); }
+    expect(searchOf(await req).automaticFilters).toEqual({ yearFrom: 2008, yearTo: 2008, category: ['HELI'] });
+  });
+});
+
 describe('v2 evidence retries across the v3 upgrade', () => {
   async function legacy(h: ReturnType<typeof harness>, kind: 'question' | 'edited', status: 'results' | 'running' | 'failed') {
     const key = randomUUID();
@@ -1340,7 +1407,7 @@ describe('v2 evidence retries across the v3 upgrade', () => {
     const saved = await migrator.execute(sql`INSERT INTO evidence_searches
       (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
       SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
-        ${status}, (data - 'addedTerms' - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'freeUndo') ||
+        ${status}, (data - 'addedTerms' - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'autoFilterFields' - 'attributionOutcome' - 'freeUndo') ||
           jsonb_build_object('version', 'evidence.v2', 'query', CASE WHEN data->'query'->>'source' = 'question'
             THEN jsonb_build_object('source', 'question') ELSE data->'query' END), created_at, expires_at
       FROM evidence_searches WHERE id = ${source.id} RETURNING id`);

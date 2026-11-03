@@ -55,7 +55,7 @@ function parents(): Parent[] {
   const base = { version: 'evidence.v3' as const, freeUndo: false, claimed: false, expired: false };
   for (const query of [QUESTION, PLUS_TERMS, TERMS]) {
     for (const automaticFilters of [null, { state: ['TX'] }, { state: ['CA', 'NV'] }] as (EvidenceAutomaticFilters | null)[]) {
-      const original: Parent = { name: `original ${JSON.stringify(query)} ${JSON.stringify(automaticFilters)}`, edited: false, query, automaticFilters, appliedFilters: automaticFilters ? { state: [...automaticFilters.state] } : {}, ...base };
+      const original: Parent = { name: `original ${JSON.stringify(query)} ${JSON.stringify(automaticFilters)}`, edited: false, query, automaticFilters, appliedFilters: automaticFilters?.state ? { state: [...automaticFilters.state] } : {}, ...base };
       out.push(original, { ...original, name: `${original.name}, claimed`, claimed: true }, { ...original, name: `${original.name}, expired`, expired: true });
     }
     // Edits that kept the question: one with filters of the reader's, one with none left (it looks like an original), and an undo.

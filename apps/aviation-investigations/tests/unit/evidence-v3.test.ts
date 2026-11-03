@@ -36,20 +36,22 @@ const edit = (changes: Record<string, unknown> = {}) => CreateEvidenceRequestSch
   filters: { yearFrom: 2019 }, idempotencyKey: 'undo-12345678', ...changes }) as Extract<CreateEvidenceRequest, { kind: 'edited' }>;
 
 describe('independent automatic state policy', () => {
-  it.each(['dev', 'live'] as const)('%s defaults to none, accepts both cleared policies and rejects unknown values', APP_ENV => {
+  it.each(['dev', 'live'] as const)('%s defaults to none, accepts its cleared policies and rejects unknown values', APP_ENV => {
     expect(loadConfig({ files: [], env: { APP_ENV } }).ai.evidenceAutoFilters).toBe('none');
     expect(loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: '' } }).ai.evidenceAutoFilters).toBe('none');
-    for (const policy of ['none', 'state-explicit.v1.3']) {
+    // v1.3 failed the 2026-10-25 security re-check: dev only.
+    for (const policy of APP_ENV === 'dev' ? ['none', 'state-explicit.v1.3', 'attributed.v1'] : ['none', 'attributed.v1']) {
       expect(loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } }).ai.evidenceAutoFilters).toBe(policy);
     }
-    for (const policy of ['state-explicit.v1', 'state-explicit.v1.1', 'state-explicit.v1.2', 'unknown']) {
+    if (APP_ENV === 'live') expect(() => loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.3' } })).toThrow('not cleared for live');
+    for (const policy of ['state-explicit.v1', 'state-explicit.v1.1', 'state-explicit.v1.2', 'attributed.v0', 'unknown']) {
       expect(() => loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } })).toThrow('AVIATION_EVIDENCE_AUTO_FILTERS');
     }
   });
-  it('enabling automatic state on live still permits only the live ranking allowlist', () => {
+  it('enabling automatic filters on live still permits only the live ranking allowlist', () => {
     for (const version of EVIDENCE_RANKING_VERSIONS) {
       const live = () => loadConfig({ files: [], env: { APP_ENV: 'live',
-        AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.3', AVIATION_EVIDENCE_RANKING: version } });
+        AVIATION_EVIDENCE_AUTO_FILTERS: 'attributed.v1', AVIATION_EVIDENCE_RANKING: version } });
       if (LIVE_EVIDENCE_RANKINGS.includes(version)) expect(live().ai.evidenceRanking).toBe(version);
       else expect(live).toThrow('AVIATION_EVIDENCE_RANKING is not cleared for live');
     }
@@ -242,5 +244,66 @@ describe('one-use free undo predicate', () => {
   it('keywords and terms cannot be combined or given null', () => {
     expect(() => edit({ keywords: 'question', terms: 'power' })).toThrow();
     expect(() => edit({ terms: null })).toThrow();
+  });
+});
+
+describe('one-use free undo of automatic years and category (attributed.v1)', () => {
+  // The parent applied state, a one-year range and a category on its own, plus its own phase filter.
+  const parent = (automaticFilters: EvidenceRow['data']['automaticFilters'] = { state: ['CA'], yearFrom: 2019, yearTo: 2019, category: ['HELI'] },
+    appliedFilters: EvidenceRow['data']['appliedFilters'] = { state: ['CA'], yearFrom: 2019, yearTo: 2019, category: ['HELI'], phase: ['takeoff'] }) => {
+    const saved = row(); saved.data.automaticFilters = automaticFilters; saved.data.appliedFilters = appliedFilters;
+    saved.data.query = { source: 'question', keywords: { kind: 'question' } };
+    return saved;
+  };
+  const undo = (filters: Record<string, unknown>, changes: Record<string, unknown> = {}) => edit({ filters, ...changes });
+  it.each<[Record<string, unknown>, string]>([
+    [{ yearFrom: 2019, yearTo: 2019, category: ['HELI'], phase: ['takeoff'] }, 'the state'],
+    [{ state: ['CA'], category: ['HELI'], phase: ['takeoff'] }, 'the years (both bounds)'],
+    [{ state: ['CA'], yearFrom: 2019, yearTo: 2019, phase: ['takeoff'] }, 'the category'],
+    [{ category: ['HELI'], phase: ['takeoff'] }, 'state and years'],
+    [{ yearFrom: 2019, yearTo: 2019, phase: ['takeoff'] }, 'state and category'],
+    [{ state: ['CA'], phase: ['takeoff'] }, 'years and category'],
+    [{ phase: ['takeoff'] }, 'every automatic facet'],
+    [{ phase: ['takeoff'], category: [] }, 'every automatic facet, an emptied list as none'],
+  ])('removes %j: %s', filters => expect(canUndo(parent(), undo(filters), now)).toBe(true));
+  it.each<[Record<string, unknown>, string]>([
+    [{ state: ['CA'], yearFrom: 2019, yearTo: 2019, category: ['HELI'], phase: ['takeoff'] }, 'nothing removed'],
+    [{ state: ['CA'], yearTo: 2019, category: ['HELI'], phase: ['takeoff'] }, 'one of two year bounds'],
+    [{ state: ['CA'], yearFrom: 2018, yearTo: 2019, category: ['HELI'], phase: ['takeoff'] }, 'an endpoint changed'],
+    [{ state: ['CA'], yearFrom: 2019, yearTo: 2019, category: ['HELI'] }, 'the reader’s own filter removed'],
+    [{ state: ['CA'], category: ['HELI'] }, 'the years and the reader’s own filter'],
+    [{ state: ['CA'], yearFrom: 2019, yearTo: 2019, category: ['GLI'], phase: ['takeoff'] }, 'the category changed'],
+    [{ phase: ['takeoff'], injury: ['FATL'] }, 'a filter added'],
+  ])('refuses %j: %s', filters => expect(canUndo(parent(), undo(filters), now)).toBe(false));
+  it('combines with removing the added terms, and refuses the reader’s own words', () => {
+    const saved = parent(); saved.data.query = { source: 'question', keywords: { kind: 'terms', terms: 'power loss' } };
+    expect(canUndo(saved, undo({ phase: ['takeoff'] }, { keywords: 'question' }), now)).toBe(true);
+    expect(canUndo(saved, undo({ state: ['CA'], yearFrom: 2019, yearTo: 2019, category: ['HELI'], phase: ['takeoff'] }, { keywords: 'question' }), now)).toBe(true);
+    expect(canUndo(saved, undo({ phase: ['takeoff'] }, { terms: 'power loss' }), now)).toBe(false);
+  });
+  it('removing one value of a multi-value automatic category is a narrower search', () => {
+    const saved = parent({ category: ['HELI', 'GYRO'] }, { category: ['HELI', 'GYRO'] });
+    expect(canUndo(saved, undo({ category: ['GYRO'] }), now)).toBe(false);
+    expect(canUndo(saved, undo({}), now)).toBe(true);
+  });
+  it('a one-sided automatic range is one facet: removing its bound qualifies, changing it does not', () => {
+    const saved = parent({ yearFrom: 2016 }, { yearFrom: 2016 });
+    expect(canUndo(saved, undo({}), now)).toBe(true);
+    expect(canUndo(saved, undo({ yearFrom: 2017 }), now)).toBe(false);
+    expect(canUndo(saved, undo({ yearFrom: 2016, yearTo: 2020 }), now)).toBe(false);
+  });
+  it('a facet counts only while the applied value is exactly the automatic one, never from client metadata', () => {
+    expect(canUndo(parent({ yearFrom: 2019, yearTo: 2019 }, { yearFrom: 2019, yearTo: 2020 }), undo({}), now)).toBe(false);
+    expect(canUndo(parent({ category: ['HELI'] }, { category: ['HELI', 'GLI'] }), undo({}), now)).toBe(false);
+    expect(canUndo(parent(null, { state: ['CA'], yearFrom: 2019, yearTo: 2019 }), undo({ state: ['CA'] }), now)).toBe(false);
+  });
+  it('the page offers it for any automatic facet, and an edit or a used claim ends it', () => {
+    for (const automaticFilters of [{ yearFrom: 2016 }, { category: ['HELI'] }, { state: ['CA'], yearTo: 1999 }] as NonNullable<EvidenceRow['data']['automaticFilters']>[]) {
+      const saved = parent(automaticFilters, { ...automaticFilters });
+      expect(pageOf(saved, 1, now)).toMatchObject({ undo: 'available', automaticFilters });
+      saved.freeUndoReservationId = 9; expect(pageOf(saved, 1, now)?.undo).toBe('used');
+      expect(canUndo(saved, undo({}), now)).toBe(false);
+    }
+    const child = parent(); child.data.edited = true; expect(canUndo(child, undo({ phase: ['takeoff'] }), now)).toBe(false);
   });
 });
