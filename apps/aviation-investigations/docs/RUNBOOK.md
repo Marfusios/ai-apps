@@ -981,14 +981,17 @@ A successful check clears resolved causes. Suppressed work still records daily c
 re-certification cannot hide an unfixed candidate. A delay’s Since date is the first
 unresolved temporary failure. A fix uses the first unresolved date for the same reason
 and origin; daily retries do not move it. Unreadable status labels each fact unknown; it does not
-mean the history disappeared. Costs appear only on published rows.
+mean the history disappeared. Costs appear only on published rows. Quiet daily dev checks
+refresh the serving-data canary when needed; they count as Last check and Recent runs and
+say "No new file." when they pass. Only a passing explicit `recertify` command is hidden
+from those two places; failed checks and live skips held back by dev remain visible.
 
 | Cause | Operator action and automatic next step |
 | --- | --- |
 | NTSB/app unavailable, download changed, interrupted/timeout, cache unavailable, busy/backup/lock loss, baseline changed | The system retries daily and adopts a changed serving baseline on the next run. After persistent failures, inspect the service, connectivity, cache and maintenance schedule. |
 | Monthly budget | The import continues on the first of next month; no new allowance is created for that file. |
 | Schema, integrity, verification, mapping, probe/site check, shrunk, unclassified during file processing | Diagnose using private reports. Release changed code/image or wait for new source bytes; identical work is suppressed. A deliberately smaller corpus needs a code change. |
-| Preflight or serving-data re-certification failure | Fix the server. The system tries again every day. These incidents never suppress an untried file. Release-check failures refer to the data already serving. |
+| Preflight or serving-data re-certification failure | Preflight and serving-data re-certification failures never suppress an untouched waiting file. Only probe, site-check, verification, mapping, integrity or schema failures say "The data on the site failed the release checks." Other causes keep their own words and next steps: unavailable services retry daily; settings need a server fix. |
 | Changed NTSB listing | This needs a code change. The system still checks every day, and this alert goes away after the first good import. |
 | Import cap | The file reached its $2 limit; no bypass/reset. Diagnose the input and embedding plan in code. |
 | Storage, cleanup, configuration during suppressed file processing | Fix the server, then release. The file is tried again after the release or when NTSB posts a newer file. Repairing settings alone does not retry a suppressed tuple. |

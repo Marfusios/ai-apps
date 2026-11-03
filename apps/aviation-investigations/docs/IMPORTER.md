@@ -53,7 +53,7 @@ attempts. New processing never resets reservations, first-reservation time or co
 
 A failure that needs a fix **while processing a file** suppresses the same **environment +
 archive digest + code commit + image digest**. Preflight and serving-data re-certification
-failures are per-run incidents; they never suppress an untouched waiting file. Daily
+failures never suppress an untouched waiting file. Daily
 discovery still runs; identical suppressed work records a waiting
 run and retains the original alert. Different bytes, code or image permit a retry.
 Successful work resolves its issue; a suppressed check or serving-data re-certification
