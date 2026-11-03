@@ -1,5 +1,8 @@
 /** Evaluator records; ranking itself belongs exclusively to server/evidence/pipeline.ts. */
 import type { SpendLine } from '../../server/quota/settle.js';
+import type { ExecutedTexts, LexicalSource } from '../../server/evidence/pipeline.js';
+import type { BriefFilters } from '../../shared/contracts/briefs.js';
+import type { EvidenceScopeSuggestion } from '../../shared/contracts/evidence.js';
 export const ARM_IDS = {
   Q0: 'er-q-v1', T0: 'er-t-v1', QT0: 'er-qt-v1',
   QH50: 'er-q-h50-v1', TH50: 'er-t-h50-v1', QTH50: 'er-qt-h50-v1',
@@ -20,8 +23,19 @@ export interface SearchObservation extends ScheduledSearch {
   usage: SpendLine[]; actualUsd: number; reservationUsd: number; reservationIds: string[];
   timing: Record<TimingStage, StageTiming>; totalMs: number;
   embeddingCacheHit: boolean; failure: string | null; safetyFaults: string[];
+  /** Task 29: the filters the search ran with, the suggestion it made, and whether it was an edit. */
+  appliedFilters?: BriefFilters; suggestion?: EvidenceScopeSuggestion | null; addedTerms?: string | null; edited?: boolean;
+}
+/**
+ * What a search runs with besides its question. The default is Task 24's: no filters.
+ * An edit is the site's "Apply these filters": the parent's texts, no scope stage (Task 29).
+ */
+export interface SearchRequest {
+  filters: BriefFilters;
+  edited?: { executed: ExecutedTexts; lexicalSource: LexicalSource; addedTerms: string | null };
+  skipScope?: boolean;
 }
 export interface RankingPort {
   /** Actual shared server pipeline with injected providers and the Task 24 production gate. */
-  run(attempt: ScheduledSearch, question: RankingQuestion): Promise<SearchObservation>;
+  run(attempt: ScheduledSearch, question: RankingQuestion, request?: SearchRequest): Promise<SearchObservation>;
 }

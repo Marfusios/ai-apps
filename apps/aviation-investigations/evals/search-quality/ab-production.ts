@@ -14,8 +14,11 @@ import { createEvidenceRetriever, type EvidenceRetriever } from '../../server/ev
 import { evaluationRankingSpendGate } from '../../server/evidence/spend.js';
 import { ceilUsd, type SpendReservation } from '../../worker/index/spend-gate.js';
 import { appendDurable, EvaluationError, TaskAllocation } from './money.js';
-import { ARM_IDS, type ArmIdentity, type Arm, type RankingPort, type SearchObservation, type StageTiming } from './ab-types.js';
+import { ARM_IDS, type ArmIdentity, type Arm, type RankingPort, type SearchObservation, type SearchRequest, type StageTiming } from './ab-types.js';
 import type { EvaluationSettings } from './config.js';
+
+/** Key-order-independent identity of a filter object, for comparing what reached retrieval. */
+export const filterIdentity = (filters: object): string => JSON.stringify(Object.entries(filters).sort(([a], [b]) => a.localeCompare(b)));
 
 export function productionPort(settings: EvaluationSettings, db: Db, es: Client, pinned: PinnedDataset,
   allocation: Pick<TaskAllocation, 'gate'>, phase: 'selection' | 'confirmation', hash: string, directory: string,
@@ -23,7 +26,7 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
   const baseLlm = createAnthropicProvider({ apiKey: settings.config.ai.anthropic.apiKey!, models: {
     scope: 'claude-haiku-5-5', answer: 'claude-haiku-5-5', check: 'claude-haiku-5-5' } });
   const baseEmbed = createOpenAIQueryEmbedder({ apiKey: settings.config.ai.openai.apiKey!, model: 'text-embedding-3-small', dims: 1536 });
-  return { async run(attempt, question) {
+  return { async run(attempt, question, request: SearchRequest = { filters: {} }) {
     const c = evidenceRankingConfig(ARM_IDS[attempt.arm]), identity = evidenceRankingIdentity(c), expected = identities[attempt.arm];
     if (identity.sha256 !== expected.sha256 || identity.version !== expected.version) throw new EvaluationError('Configuration identity changed before dispatch');
     const active = await getActiveManifest(db);
@@ -54,7 +57,8 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
     };
     const baseRetriever = createEvidenceRetriever(db, es, embedder);
     const retriever: EvidenceRetriever = { ...baseRetriever, search: (...args) => timed('retrieve', async () => {
-      if (Object.keys(args[1].filters).length) throw new EvaluationError('Gold filters reached execution');
+      // Only the request's own filters may reach Elasticsearch: none for Task 24, the AI's suggestion for a Task 29 edit.
+      if (filterIdentity(args[1].filters) !== filterIdentity(request.filters)) throw new EvaluationError('Unexpected filters reached execution');
       const report = args[3];
       const found = await baseRetriever.search(args[0], args[1], args[2], u => { embedReported = true; report(u); }, args[4]);
       fused = found.ranking.map(r => r.ntsbNo);
@@ -81,7 +85,9 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
     const finishStage = () => { if (currentStage) timing[currentStage].ms = performance.now() - stageStarted; };
     let result, failure: string | null = null, usage: SearchObservation['usage'] = [];
     try {
-      result = await rankEvidence(c, { question: question.question, filters: {}, autoFilters: autoFilterPolicy('none'), dataset: pinned, signal: AbortSignal.timeout(c.deadlineMs) },
+      result = await rankEvidence(c, { question: question.question, filters: request.filters,
+        ...(request.edited ? { edited: request.edited } : {}), ...(request.skipScope ? { skipScope: true } : {}),
+        autoFilters: autoFilterPolicy('none'), dataset: pinned, signal: AbortSignal.timeout(c.deadlineMs) },
         { llm, retriever, embeddingModel: 'text-embedding-3-small' }, spend, undefined, {
           onStage: stage => {
             finishStage(); currentStage = stage === 'retrieval' ? 'retrieve' : stage;
@@ -111,7 +117,8 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
       rerankOutcome: result?.rerankOutcome ?? 'not_run', executed: result?.executed ?? null,
       usage, actualUsd, reservationUsd: expected.reservationUsd, reservationIds, timing, totalMs,
       embeddingCacheHit: timing.retrieve.attempted && !timing.embed.attempted && !embedReported,
-      failure, safetyFaults };
+      failure, safetyFaults, appliedFilters: result?.appliedFilters ?? request.filters, suggestion: result?.suggestion ?? null,
+      addedTerms: result?.addedTerms ?? null, edited: Boolean(request.edited) };
     return observation;
   } };
 }
