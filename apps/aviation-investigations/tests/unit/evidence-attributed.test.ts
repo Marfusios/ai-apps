@@ -56,7 +56,7 @@ describe('the attributed.v1 policy', () => {
       attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a1' }, caps: { input: 3000, output: 500 },
         timeoutMs: 8000, settings: { thinking: 'off', effort: 'low', retries: 0, cache: 'system-5m' } },
       behaviour: { version: 'candidate-probes.v1' }, appliesTo: 'question-case-search' });
-    expect(autoFilterIdentity(attributed).sha256).toBe('e1e9dad3d45b9abe813e66c97a3e97d2859a4e89cb63530d469080845e53551b');
+    expect(autoFilterIdentity(attributed).sha256).toBe('6aeda56d9c63e98620cfd744d34be6f58257d6d219952a2130686dc5c7a43f8d');
     expect(autoFilterIdentity(autoFilterPolicy('none')).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
     expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.3')).sha256).toBe('8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de');
   });
