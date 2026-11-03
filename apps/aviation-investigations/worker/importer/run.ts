@@ -13,7 +13,13 @@ import {
   processingFile,
 } from './automatic.js';
 import { reconcileAlias } from '../index/publications.js';
-import { ImportFailure, safeLog, sameManifest } from './contracts.js';
+import {
+  ImportFailure,
+  safeLog,
+  sameManifest,
+  IMPORT_REASONS,
+  type ImportReason,
+} from './contracts.js';
 import { environmentConfig, type ImporterConfig } from './config.js';
 import { ManagedSpace } from './files.js';
 import { AvallSource, refreshOwed, sameObservation } from './source.js';
@@ -174,13 +180,26 @@ async function dispatch(context: ImportContext): Promise<RunReport> {
     context.artifact &&
     ['switching', 'published', 'rolling_back'].includes(context.artifact.phase)
   ) {
+    const a = context.artifact;
+    context.recoveryReason = a.reason ?? 'site_check';
+    // Set the recovery step before any fallible read or file work. Even a
+    // failed read-back must not first write a file suppression at `check`.
+    await steps.stage(context, 'canary');
     context.fileWork = true;
-    const a = context.artifact,
-      current = await manifest(context.db);
+    const current = await manifest(context.db);
     if (a.rollback || a.phase === 'rolling_back') {
+      const prior = (
+        await context.db.execute(sql`select original_reason from import_issues
+        where artifact_id=${a.id}::uuid and fixed and not post_success order by created_at desc limit 1`)
+      ).rows[0]?.original_reason;
+      context.recoveryReason =
+        typeof prior === 'string' && IMPORT_REASONS.includes(prior as ImportReason)
+          ? (prior as ImportReason)
+          : (a.reason ?? 'site_check');
       await switchBack(context);
       await incident(context, new ImportFailure('site_check'), {
         siteState: 'restored',
+        originalReason: context.recoveryReason,
       });
       await updateRun(context.db, context.session!, context.runId, {
         step: 'canary',
@@ -215,6 +234,9 @@ async function dispatch(context: ImportContext): Promise<RunReport> {
       );
     }
     context.artifact = await artifact(context.db, a.id);
+    context.fileWork = false;
+    context.recoveryReason = undefined;
+    await steps.stage(context, 'check');
   }
   await steps.preflight(context);
   const decision = await steps.detect(context);
@@ -283,6 +305,7 @@ export async function runWithResources(
     sourceChecked: false,
     recertifying: false,
     fileWork: false,
+    preflightActive: false,
   };
   try {
     return await withImportSession(resources.db, async (session) => {
@@ -306,7 +329,7 @@ export async function runWithResources(
     });
   } catch (error) {
     let failure = classify(error);
-    const originalReason = failure.reason;
+    const originalReason = context.recoveryReason ?? failure.reason;
     let succeeded: Awaited<ReturnType<typeof committedSuccess>> = null;
     let completed = false;
     await withImportSession(resources.db, async (session) => {
@@ -394,6 +417,7 @@ export async function runWithResources(
           source: context.pending?.observation ?? context.observation ?? null,
           postSuccess: completed,
           suppressFile: processingFile(context),
+          preflight: context.preflightActive,
         },
       ).catch(() => undefined);
     });

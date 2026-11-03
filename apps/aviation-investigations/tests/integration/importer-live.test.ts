@@ -13,6 +13,8 @@ import { recordSkippedLiveWith } from '../../worker/importer/recovery.js';
 import { readImportStatus } from '../../server/db/import-status.js';
 import { ImportFailure } from '../../worker/importer/contracts.js';
 import { recordHostCleanup } from '../../worker/importer/host-status.js';
+import { waitingWords } from '../../web/src/features/admin/imports.js';
+import { digest } from '../../worker/importer/provenance.js';
 import { readFile } from 'node:fs/promises';
 import { reserveSpend, settleSpend } from '../../server/quota/index.js';
 import { editTable } from '../support/extract-dir.js';
@@ -134,6 +136,34 @@ it('a failed dev run holds live back with that run’s own cause, ignoring newer
         .rows[0]!.n,
     ).toBe(0);
     expect(live.acquire).not.toHaveBeenCalled();
+    for (let i = 0; i < 2; i++) {
+      expect((await dev.run()).result).toBe('waiting');
+      const again = await readDevOutcomeWith(dev.resources.db, dev.config);
+      expect(again.runId).not.toBe(skip.runId);
+      expect(again).toMatchObject({
+        reason: 'probe',
+        suppressFile: true,
+        archive: skip.archive,
+      });
+      await recordSkippedLiveWith(
+        live.resources.db,
+        live.resources.space,
+        live.config,
+        again,
+      );
+    }
+    expect(
+      (
+        await live.owner.execute(
+          sql`select key,suppresses_file from import_issues where fixed and resolved_at is null`,
+        )
+      ).rows,
+    ).toEqual([expect.objectContaining({ suppresses_file: true })]);
+    // An unavailable dev proof still refuses direct live runs. The shared
+    // baseline is now attested, so explicitly model that unavailable proof.
+    live.resources.hostFacts.canary = async () => {
+      throw new ImportFailure('dev_failed');
+    };
     for (let i = 0; i < 5; i++)
       await expect(live.run()).rejects.toMatchObject({
         reason: 'dev_failed',
@@ -182,7 +212,12 @@ it('live refuses a shrunk file after dev advanced and identifies the split deplo
 
 it('an adopted baseline with no source attestation waits for dev instead of raising configuration', async () =>
   importerPair(async (dev, live) => {
-    await dev.owner.execute(sql`update import_control set accepted=null`);
+    expect((await live.run()).result).toBe('unchanged');
+    expect((await dev.run()).result).toBe('published');
+    const accepted = (await control(dev.resources.db)).accepted!;
+    await dev.owner.execute(
+      sql`update import_control set accepted=${JSON.stringify({ ...accepted, observation: null })}::jsonb`,
+    );
     for (let i = 0; i < 5; i++)
       await expect(live.run()).rejects.toMatchObject({
         reason: 'dev_failed',
@@ -194,7 +229,9 @@ it('an adopted baseline with no source attestation waits for dev instead of rais
     ).toBe(0);
     expect((await readImportStatus(live.app, schedule)).alert).toBeNull();
     expect(live.acquire).not.toHaveBeenCalled();
-    expect((await dev.run()).result).toBe('published');
+    await dev.owner.execute(
+      sql`update import_control set accepted=${JSON.stringify(accepted)}::jsonb`,
+    );
     expect((await live.run()).result).toBe('published');
   }));
 
@@ -202,6 +239,54 @@ it('a real 0028 cohort_bounds stop migrates unchanged, resumes its counters and 
   importerPair(async (dev, live) => {
     // Reconstruct 3c903fc steps.acquire/extract/register + run catch using its 0028 SQL.
     // Comparison stopped at extract before startAttempt: artifact attempts=0, pending attempts=1.
+    let completedId = '';
+    await withImportSession(dev.resources.db, (s) =>
+      fenced(dev.owner, s, async (tx) => {
+        completedId = String(
+          (
+            await tx.execute(sql`insert into import_artifacts(environment,archive_sha256,content_sha256,baseline)
+        values('dev',${dev.original.archive},${dev.original.facts.digest},${JSON.stringify(dev.baseline.manifest)}::jsonb) returning id`)
+          ).rows[0]!.id,
+        );
+        const b = dev.baseline;
+        const cert = {
+          version: 'import-certificate.v1',
+          artifactId: completedId,
+          archive: b.archive,
+          content: b.content,
+          environment: 'dev',
+          baseline: b.manifest,
+          candidate: {
+            ...b.manifest,
+            casesBuildId: 'old-cases',
+            passagesBuildId: 'old-passages',
+          },
+          code: dev.config.code,
+          deployedCode: dev.config.dev.image,
+          policy: 'snapshot-monthly.v1',
+          genericReport: 'a'.repeat(64),
+          comparison: 'b'.repeat(64),
+          probes: 'c'.repeat(64),
+          dev: null,
+        };
+        const canary = {
+          publication: b.manifest,
+          archive: b.archive,
+          content: b.content,
+          code: dev.config.code,
+          deployedCode: dev.config.dev.image,
+          probes: cert.probes,
+          checkedAt: new Date().toISOString(),
+        };
+        await tx.execute(sql`update import_artifacts set generation_id=${b.manifest.generationId},certificate=${JSON.stringify(cert)}::jsonb,
+        publication=${JSON.stringify(b.manifest)}::jsonb,canary=${JSON.stringify(canary)}::jsonb where id=${completedId}::uuid`);
+      }),
+    );
+    const completedBefore = (
+      await dev.owner.execute(
+        sql`select * from import_artifacts where id=${completedId}::uuid`,
+      )
+    ).rows[0];
     let runId = '',
       artifactId = '';
     await withImportSession(dev.resources.db, (s) =>
@@ -288,6 +373,24 @@ it('a real 0028 cohort_bounds stop migrates unchanged, resumes its counters and 
       phase: 'building',
       generation_id: null,
     });
+    expect(await artifact(dev.resources.db, completedId)).toMatchObject({
+      phase: 'complete',
+      code: dev.config.code,
+      image: dev.config.dev.image,
+    });
+    const completedProcessing = (
+      await dev.owner.execute(
+        sql`select * from import_processing where artifact_id=${completedId}::uuid`,
+      )
+    ).rows;
+    const dayOne = await readImportStatus(dev.app, schedule);
+    expect(dayOne).toMatchObject({
+      readable: true,
+      status: 'working',
+      alert: null,
+      waiting: { source: { advertisedAtLocal: '2026-11-01T07:30:00' }, reason: null },
+    });
+    expect(waitingWords(dayOne.waiting!.reason)).toBe('Not imported yet');
     let resumedAttempts = 0;
     expect(
       (
@@ -320,6 +423,20 @@ it('a real 0028 cohort_bounds stop migrates unchanged, resumes its counters and 
     expect((await control(live.resources.db)).accepted!.archive).toBe(
       dev.candidate.archive,
     );
+    expect(
+      (
+        await dev.owner.execute(
+          sql`select * from import_artifacts where id=${completedId}::uuid`,
+        )
+      ).rows[0],
+    ).toEqual(completedBefore);
+    expect(
+      (
+        await dev.owner.execute(
+          sql`select * from import_processing where artifact_id=${completedId}::uuid`,
+        )
+      ).rows,
+    ).toEqual(completedProcessing);
   }, true));
 
 it('a repackaged unresolved live file keeps its original monetary identity and history', async () =>

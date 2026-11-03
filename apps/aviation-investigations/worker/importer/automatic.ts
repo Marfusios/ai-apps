@@ -166,7 +166,7 @@ export async function suppressed(
   );
 }
 export function processingFile(c: ImportContext): boolean {
-  return c.fileWork && !c.recertifying && !c.options.recertify;
+  return c.fileWork && !c.preflightActive && !c.recertifying && !c.options.recertify;
 }
 export async function incident(
   c: ImportContext,
@@ -184,15 +184,15 @@ export async function incident(
   const archive = c.pending?.archive ?? c.artifact?.archive_sha256 ?? null;
   const source = c.pending?.observation ?? c.observation ?? null;
   const image = c.config[c.options.environment]!.image;
-  const key =
-    fixed && !post && processingFile(c)
-      ? suppressionKey(c.options.environment, archive, source, c.config.code, image)
-      : digest([c.runId, post, failure.reason]);
+  const suppressFile = fixed && !post && processingFile(c);
+  const key = suppressFile
+    ? suppressionKey(c.options.environment, archive, source, c.config.code, image)
+    : digest([c.runId, post, failure.reason]);
   const day = localClock(c.effects.now(), c.config.schedule.timeZone).day;
   await fenced(c.db, c.session, async (tx) => {
-    await tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,source,reason,original_reason,step,origin,fixed,site_state,post_success,failure_day)
+    await tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,source,reason,original_reason,step,origin,fixed,site_state,post_success,failure_day,preflight,suppresses_file)
       values(${key},${c.runId || null}::uuid,${c.artifact?.id ?? null}::uuid,${c.config.code},${image},${archive},${source ? JSON.stringify(source) : null}::jsonb,
-        ${failure.reason},${opts.originalReason ?? failure.reason},${c.step},${opts.origin ?? c.options.environment},${fixed},${opts.siteState ?? 'unchanged'},${post},${day})
+        ${failure.reason},${opts.originalReason ?? failure.reason},${c.step},${opts.origin ?? c.options.environment},${fixed},${opts.siteState ?? 'unchanged'},${post},${day},${c.preflightActive},${suppressFile})
       on conflict(key) do update set last_at=clock_timestamp(),resolved_at=null,site_state=excluded.site_state`);
   });
 }

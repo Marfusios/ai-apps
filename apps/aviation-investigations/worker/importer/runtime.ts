@@ -34,6 +34,7 @@ import type { Comparison } from './compare.js';
 import {
   ImportFailure,
   type ImportStep,
+  type ImportReason,
   type ManifestIdentity,
   type SourceObservation,
 } from './contracts.js';
@@ -130,6 +131,9 @@ export interface ImportContext extends ImportResources {
   recertifying: boolean;
   /** True only after this run touches the candidate, never during serving-data checks. */
   fileWork: boolean;
+  /** Only the two preflight effects can set this marker. */
+  preflightActive: boolean;
+  recoveryReason?: ImportReason;
   artifact: Artifact | null;
   pending: PendingFetch | null;
   accepted?: AcceptedSnapshot;

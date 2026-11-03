@@ -13,6 +13,7 @@ export async function readDevOutcomeWith(db: Db, config: ImporterConfig): Promis
     source: null,
     archive: null,
     fixed: false,
+    suppressFile: false,
     code: config.code,
     image: config.dev.image,
   };
@@ -24,7 +25,7 @@ export async function readDevOutcomeWith(db: Db, config: ImporterConfig): Promis
   // A host cleanup incident can be newer than the child's failure. It did not
   // cause this child to stop. A suppressed check instead refers to its file issue.
   const issue = (
-    await db.execute(sql`select reason,step,source,archive_sha256 as archive,fixed,code,image
+    await db.execute(sql`select reason,step,source,archive_sha256 as archive,fixed,suppresses_file as "suppressFile",code,image
     from import_issues where resolved_at is null and origin<>'host'
       and (run_id=${String(run.id)}::uuid or
         (${run.reason === null} and archive_sha256=${run.observed_sha256 ?? null}
@@ -68,6 +69,7 @@ export async function readDevOutcome(config: ImporterConfig): Promise<Skip> {
       source: null,
       archive: null,
       fixed: false,
+      suppressFile: false,
       code: config.code,
       image: config.dev.image,
     };

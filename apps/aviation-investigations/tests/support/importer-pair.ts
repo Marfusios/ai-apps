@@ -1,6 +1,13 @@
+import { sql } from 'drizzle-orm';
+import { digest } from '../../worker/importer/provenance.js';
 /** The production fact readers, across two disposable databases and distinct ES prefixes. */
 import { readServingFacts, retainedArchives } from '../../worker/importer/facts.js';
-import { latestCanary, manifest } from '../../worker/importer/store.js';
+import {
+  latestCanary,
+  manifest,
+  withImportSession,
+  fenced,
+} from '../../worker/importer/store.js';
 import { importerFixture, type ImportFixture } from './importer.js';
 
 export function connectImporters(dev: ImportFixture, live: ImportFixture): void {
@@ -31,6 +38,21 @@ export async function importerPair(
       importerFixture(
         async (live) => {
           connectImporters(dev, live);
+          const canary = {
+            publication: dev.baseline.manifest,
+            archive: dev.baseline.archive,
+            content: dev.baseline.content,
+            code: dev.config.code,
+            deployedCode: dev.config.dev.image,
+            probes: 'a'.repeat(64),
+            checkedAt: new Date().toISOString(),
+          };
+          await withImportSession(dev.resources.db, (s) =>
+            fenced(dev.resources.db, s, (tx) =>
+              tx.execute(sql`select import_record_attestation(${s.fence}::uuid,null::uuid,null::uuid,'legacy',
+              ${JSON.stringify(dev.baseline.manifest)}::jsonb,${JSON.stringify(dev.baseline)}::jsonb,${JSON.stringify(canary)}::jsonb,${digest(canary)})`),
+            ),
+          );
           await body(dev, live);
         },
         { environment: 'live' },

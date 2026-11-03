@@ -34,6 +34,7 @@ const Meta = z.object({
   source: SourceSchema.nullable(),
   postSuccess: z.boolean().default(false),
   suppressFile: z.boolean().default(false),
+  preflight: z.boolean().default(false),
   origin: z.enum(['dev', 'live', 'host']).optional(),
   originRunId: z.uuid().nullable().optional(),
 });
@@ -114,13 +115,15 @@ export async function replayOutage(
       post = !!success || m.postSuccess,
       fix = post ? r.reason === 'storage' : new ImportFailure(r.reason).fix;
     const key =
-      fix && !post && m.suppressFile
-        ? suppressionKey(environment, m.archive, m.source, m.code, m.image)
-        : digest([id, post, r.reason]);
+      m.origin === 'dev' && environment === 'live' && fix
+        ? skippedIssueKey({ ...m, reason: r.reason })
+        : fix && !post && m.suppressFile
+          ? suppressionKey(environment, m.archive, m.source, m.code, m.image)
+          : digest([id, post, r.reason]);
     await fenced(db, s, (tx) =>
-      tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,source,reason,step,origin,origin_run_id,fixed,post_success,failure_day,created_at,last_at)
+      tx.execute(sql`insert into import_issues(key,run_id,artifact_id,code,image,archive_sha256,source,reason,step,origin,origin_run_id,fixed,post_success,failure_day,created_at,last_at,preflight,suppresses_file)
      values(${key},${id}::uuid,${r.artifactId}::uuid,${m.code},${m.image},${m.archive},${m.source ? JSON.stringify(m.source) : null}::jsonb,
-       ${r.reason},${r.step},${m.origin ?? environment},${m.originRunId ?? null}::uuid,${fix},${post},${localClock(new Date(r.recordedAt), zone).day},${r.recordedAt}::timestamptz,${r.recordedAt}::timestamptz)
+       ${r.reason},${r.step},${m.origin ?? environment},${m.originRunId ?? null}::uuid,${fix},${post},${localClock(new Date(r.recordedAt), zone).day},${r.recordedAt}::timestamptz,${r.recordedAt}::timestamptz,${m.preflight},${fix && !post && m.suppressFile})
      on conflict(key) do nothing`),
     );
   }
@@ -139,10 +142,26 @@ export const SkipSchema = z.strictObject({
   source: SourceSchema.nullable(),
   archive: Sha256.nullable(),
   fixed: z.boolean(),
+  suppressFile: z.boolean().default(false),
   code: z.string().regex(/^[0-9a-f]{40}$/),
   image: z.string().regex(/^sha256:[0-9a-f]{64}$/),
 });
 export type Skip = z.infer<typeof SkipSchema>;
+function skippedIssueKey(
+  s: Pick<Skip, 'archive' | 'code' | 'image' | 'source' | 'reason' | 'suppressFile'>,
+): string {
+  // Stable across run IDs. Cause/scope are immutable issue metadata: a repaired
+  // preflight followed by a file failure must not keep showing the old cause.
+  // The finite reason/scope vocabulary bounds rows per dev file tuple.
+  return digest([
+    'dev-skip',
+    s.archive ?? s.source ?? 'source',
+    s.code,
+    s.image,
+    s.reason,
+    s.suppressFile,
+  ]);
+}
 export async function recordSkippedLiveWith(
   db: Db,
   space: ManagedSpace,
@@ -161,14 +180,14 @@ export async function recordSkippedLiveWith(
         observedSha256: skip.archive ?? undefined,
         sourceCheckSucceeded: false,
       });
-      const key = digest([id, 'dev', skip.reason]);
+      const key = skip.fixed ? skippedIssueKey(skip) : digest([id, 'dev', skip.reason]);
       await fenced(db, s, async (tx) => {
         await tx.execute(
           sql`update import_runs set code=${skip.code},image=${skip.image},origin='dev' where id=${id}::uuid`,
         );
-        await tx.execute(sql`insert into import_issues(key,run_id,code,image,archive_sha256,source,reason,step,origin,origin_run_id,fixed,failure_day)
+        await tx.execute(sql`insert into import_issues(key,run_id,code,image,archive_sha256,source,reason,step,origin,origin_run_id,fixed,failure_day,suppresses_file)
        values(${key},${id}::uuid,${skip.code},${skip.image},${skip.archive},${skip.source ? JSON.stringify(skip.source) : null}::jsonb,
-       ${skip.reason},${skip.step},'dev',${skip.runId}::uuid,${skip.fixed},${localClock(new Date(), config.schedule.timeZone).day})
+       ${skip.reason},${skip.step},'dev',${skip.runId}::uuid,${skip.fixed},${localClock(new Date(), config.schedule.timeZone).day},${skip.suppressFile})
        on conflict(key) do update set last_at=clock_timestamp(),resolved_at=null`);
       });
     });
@@ -187,6 +206,7 @@ export async function recordSkippedLiveWith(
         source: skip.source,
         origin: 'dev',
         originRunId: skip.runId,
+        suppressFile: skip.suppressFile,
       },
     );
   }

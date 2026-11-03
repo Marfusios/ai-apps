@@ -125,6 +125,7 @@ export type AdminImportRun = z.infer<typeof AdminImportRunSchema>;
 
 export const ImportAlertSchema = z.strictObject({
   level: z.enum(['delayed', 'fix']),
+  holds: z.array(z.enum(['restore_hold', 'alias_unknown', 'rollback_failed'])).max(2),
   cause: z.enum([...IMPORT_REASONS, 'overdue', 'status_unavailable']),
   since: Iso.nullable(),
   failedDays: Count,
@@ -139,6 +140,7 @@ export const ImportAlertSchema = z.strictObject({
 });
 export const AdminImportsSchema = z.strictObject({
   enabled: z.boolean(),
+  readable: z.boolean(),
   status: z.enum(['off', 'working', 'delayed', 'fix']),
   schedule: z
     .strictObject({

@@ -106,14 +106,17 @@ export async function initialize(context: ImportContext): Promise<void> {
 }
 export async function preflight(context: ImportContext): Promise<void> {
   if (context.options.noChange) return;
+  context.preflightActive = true;
   await context.effects.deployedImage(context.config[context.options.environment]!);
   await context.effects.applicationAvailable(
     context.config[context.options.environment]!,
   );
+  context.preflightActive = false;
   await fenced(context.db, context.session!, (tx) =>
     tx.execute(sql`update import_issues
     set resolved_at=clock_timestamp() where resolved_at is null and not post_success
-    and step='check' and origin=${context.options.environment}`),
+    and fixed and preflight and not suppresses_file
+    and origin=${context.options.environment}`),
   );
 }
 export async function establishBaseline(context: ImportContext): Promise<void> {

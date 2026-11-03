@@ -155,6 +155,8 @@ export const importIssues = pgTable('import_issues', {
   origin: text('origin').notNull(), originRunId: uuid('origin_run_id'), fixed: boolean('fixed').notNull(),
   siteState: text('site_state').notNull().default('unchanged'),
   postSuccess: boolean('post_success').notNull().default(false),
+  preflight: boolean('preflight').notNull().default(false),
+  suppressesFile: boolean('suppresses_file').notNull().default(false),
   failureDay: text('failure_day').notNull(), createdAt: ts('created_at').notNull().defaultNow(),
   lastAt: ts('last_at').notNull().defaultNow(), resolvedAt: ts('resolved_at'),
 });

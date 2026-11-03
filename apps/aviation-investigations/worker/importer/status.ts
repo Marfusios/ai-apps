@@ -86,6 +86,8 @@ export interface ImportHealth {
   automaticSince: string;
   restoreHeld: boolean;
   switchHeld: boolean;
+  switchHoldReason: 'rollback_failed' | 'alias_unknown';
+  fixSince: string | null;
   temporaryDays: number;
   delayedSince: string | null;
   serving: AdminImports['serving'];
@@ -98,6 +100,7 @@ export interface ImportHealth {
     origin: 'dev' | 'live' | 'host';
     siteState: 'unchanged' | 'restored' | 'restore_unverified' | 'uncertain';
     postSuccess: boolean;
+    suppressesFile: boolean;
     details: AdminImportRun | null;
     originRunId: string | null;
   } | null;
@@ -107,7 +110,7 @@ function retryPolicy(
   issue: ImportHealth['issue'],
 ): NonNullable<AdminImports['waiting']>['retry'] {
   if (issue?.siteState === 'uncertain') return 'release';
-  if (issue?.fixed && !issue.postSuccess) return 'new_file_or_release';
+  if (issue?.suppressesFile && !issue.postSuccess) return 'new_file_or_release';
   return 'daily';
 }
 
@@ -136,6 +139,9 @@ export function projectImports(
   const issue = known?.issue ?? null;
   const days = known?.temporaryDays ?? 0;
   const retry = retryPolicy(issue);
+  const holds: NonNullable<AdminImports['alert']>['holds'] = [];
+  if (known?.restoreHeld) holds.push('restore_hold');
+  if (known?.switchHeld) holds.push(known.switchHoldReason);
   let cause: NonNullable<AdminImports['alert']>['cause'] | null = null;
   // A stopped schedule takes precedence over a file's earlier failure. Preserve that
   // failure in the waiting fact and details, but never imply that checks still run.
@@ -143,8 +149,7 @@ export function projectImports(
     if (unknown) cause = 'status_unavailable';
     else if (overdue) cause = 'overdue';
     else if (known?.restoreHeld) cause = 'restore_hold';
-    else if (known?.switchHeld)
-      cause = issue?.reason === 'rollback_failed' ? 'rollback_failed' : 'alias_unknown';
+    else if (known?.switchHeld) cause = known.switchHoldReason;
     else if (issue?.fixed || days >= 3) cause = issue?.reason ?? 'interrupted';
   }
   let alert: AdminImports['alert'] = null;
@@ -157,7 +162,8 @@ export function projectImports(
       unavailable ||
       overdue ||
       days >= 7;
-    let since: string | null = issue?.since ?? null;
+    let since: string | null =
+      (issue?.fixed ? known?.fixSince : null) ?? issue?.since ?? null;
     if (unavailable)
       since = null; // unreadable, not a new incident on every poll
     else if (overdue) since = startSince;
@@ -172,6 +178,7 @@ export function projectImports(
     alert = {
       level: fixed ? 'fix' : 'delayed',
       cause,
+      holds,
       since,
       failedDays: days,
       origin: issue?.origin ?? 'host',
@@ -197,6 +204,7 @@ export function projectImports(
   if (enabled) status = alert?.level ?? 'working';
   return AdminImportsSchema.parse({
     enabled,
+    readable: !unknown,
     status,
     schedule: schedule
       ? {

@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS import_issues (
 );
 --> statement-breakpoint
 ALTER TABLE import_issues ADD COLUMN IF NOT EXISTS original_reason text;
+ALTER TABLE import_issues ADD COLUMN IF NOT EXISTS preflight boolean NOT NULL DEFAULT false;
+ALTER TABLE import_issues ADD COLUMN IF NOT EXISTS suppresses_file boolean NOT NULL DEFAULT false;
 ALTER TABLE import_issues DROP CONSTRAINT IF EXISTS import_issues_site_state_check;
 ALTER TABLE import_issues ADD CONSTRAINT import_issues_site_state_check
  CHECK(site_state IN ('unchanged','restored','restore_unverified','uncertain'));
@@ -261,7 +263,7 @@ GRANT SELECT ON import_processing,import_issues TO aviation_ingest;
 GRANT INSERT(artifact_id,code,image,archive_sha256,content_sha256,baseline) ON import_processing TO aviation_ingest;
 GRANT UPDATE(active,phase,reason,generation_id,baseline,certificate,publication,canary,rollback) ON import_processing TO aviation_ingest;
 GRANT INSERT(key,run_id,artifact_id,code,image,archive_sha256,source,reason,original_reason,step,origin,origin_run_id,fixed,
- site_state,post_success,failure_day,created_at,last_at) ON import_issues TO aviation_ingest;
+ site_state,post_success,failure_day,created_at,last_at,preflight,suppresses_file) ON import_issues TO aviation_ingest;
 GRANT UPDATE(last_at,resolved_at,site_state) ON import_issues TO aviation_ingest;
 REVOKE UPDATE(approved) ON import_artifacts FROM aviation_ingest;
 GRANT UPDATE(code,image,origin,changes,restoration,good_check,suppressed) ON import_runs TO aviation_ingest;
@@ -326,13 +328,15 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
    'restoreHeld',c.restore_required OR coalesce((SELECT held_at IS NOT NULL FROM paid_operations_hold WHERE id=1),true),
    'switchHeld',c.switch_hold IS NOT NULL OR EXISTS(SELECT 1 FROM import_index_refs r JOIN index_switch_attempts a ON a.index_name=r.index_name
       WHERE r.released_at IS NULL AND a.outcome='unknown' AND a.declared_abandoned_at IS NULL),
+   'switchHoldReason',CASE WHEN c.switch_hold->>'reason'='rollback_failed' THEN 'rollback_failed' ELSE 'alias_unknown' END,
+   'fixSince',(SELECT import_status_time(min(i.created_at)) FROM import_issues i JOIN latest l ON i.reason=l.reason AND i.origin=l.origin WHERE i.resolved_at IS NULL AND i.fixed),
    'temporaryDays',least(7,(SELECT count(distinct failure_day)::int FROM import_issues WHERE resolved_at IS NULL AND NOT fixed)),
    'delayedSince',(SELECT import_status_time(min(created_at)) FROM import_issues WHERE resolved_at IS NULL AND NOT fixed),
    'lastGood',(SELECT import_public_run(id) FROM import_runs WHERE good_check ORDER BY checked_at DESC LIMIT 1),
    'serving',(SELECT jsonb_build_object('generationId',generation_id,'sourceDate',source_date,'importedAt',import_status_time(published_at),'restoredAt',restored_at) FROM serving),
    'waiting',CASE WHEN c.pending IS NULL THEN NULL ELSE jsonb_build_object('source',c.pending->'observation','since',c.pending->>'fetchedAt') END,
    'issue',(SELECT jsonb_build_object('reason',reason,'fixed',fixed,'since',import_status_time(created_at),'origin',origin,'originRunId',origin_run_id,
-      'siteState',site_state,'postSuccess',post_success,'details',CASE WHEN run_id IS NULL THEN NULL ELSE import_public_run(run_id)||jsonb_build_object(
+      'siteState',site_state,'postSuccess',post_success,'suppressesFile',suppresses_file,'details',CASE WHEN run_id IS NULL THEN NULL ELSE import_public_run(run_id)||jsonb_build_object(
         'code',code,'image',image,'origin',origin,'source',source,'reason',reason,'step',step) END) FROM latest)
  ) FROM import_control c WHERE c.id=1
 $$;

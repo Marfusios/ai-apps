@@ -36,19 +36,8 @@ export function sourceReminder(now: Date): string | null {
 }
 export const REMOTE_REFRESH_MS = 7 * 24 * 60 * 60_000;
 
-export const TEMPORARY_REASONS = new Set<ImportReason>([
-  'source_unavailable',
-  'source_changed_during_download',
-  'post_success',
-  'cache_miss',
-  'monthly_budget',
-  'busy',
-  'backup_window',
-  'lock_lost',
-  'timeout',
-  'interrupted',
-  'dev_failed',
-]);
+import { TEMPORARY_REASONS } from '../../shared/import-policy.js';
+export { TEMPORARY_REASONS } from '../../shared/import-policy.js';
 
 /** Error messages and causes deliberately cannot carry upstream data. */
 export class ImportFailure extends Error {

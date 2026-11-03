@@ -29,6 +29,8 @@ function health(n = 0): ImportHealth {
     automaticSince: '2026-11-01T12:00:00Z',
     restoreHeld: false,
     switchHeld: false,
+    switchHoldReason: 'alias_unknown',
+    fixSince: null,
     temporaryDays: n,
     delayedSince: '2026-11-01T04:30:00Z',
     serving: null,
@@ -41,6 +43,7 @@ function health(n = 0): ImportHealth {
       origin: 'dev',
       siteState: 'unchanged',
       postSuccess: false,
+      suppressesFile: false,
       details: row.public,
       originRunId: null,
     },
@@ -94,7 +97,7 @@ it.each([3, 7])(
 );
 it('a fixed incident outlives suppressed rows and recertification without changing its original cause', () => {
   const h = health();
-  h.issue = { ...h.issue!, fixed: true, reason: 'schema' };
+  h.issue = { ...h.issue!, fixed: true, suppressesFile: true, reason: 'schema' };
   const rows = Array.from({ length: 25 }, (_, i) => ({
     ...row,
     recertification: i === 0,
@@ -200,4 +203,18 @@ it('a delay starts with the earliest unresolved temporary failure, not its lates
   const h = health(3);
   h.issue!.since = row.public.checkedAt;
   expect(projectImports([row], schedule, now, h).alert?.since).toBe(h.delayedSince);
+});
+
+it('fixed Since uses the earliest same-cause date, and a hold reason beats an unrelated newest issue', () => {
+  const h = health();
+  h.fixSince = '2026-10-20T04:30:00Z';
+  h.issue = { ...h.issue!, fixed: true, reason: 'storage' };
+  expect(projectImports([row], schedule, now, h).alert?.since).toBe(h.fixSince);
+  h.switchHeld = true;
+  h.switchHoldReason = 'rollback_failed';
+  expect(projectImports([row], schedule, now, h).alert).toMatchObject({
+    cause: 'rollback_failed',
+    holds: ['rollback_failed'],
+    details: row.public,
+  });
 });

@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { readFile } from 'node:fs/promises';
 import {
   importerFixture,
@@ -146,7 +147,7 @@ it('a rollback that never commits holds switches and keeps both generations and 
     expect((await latestArtifact(f)).phase).toBe('restored');
   }));
 
-it.each(['before_commit', 'after_commit'] as const)(
+it.each(['before_commit', 'after_commit', 'failed_read_back'] as const)(
   'recovers a worker killed during rollback %s',
   async (point) =>
     importerFixture(async (f) => {
@@ -180,9 +181,49 @@ it.each(['before_commit', 'after_commit'] as const)(
       });
       expect((await latestArtifact(f)).phase).toBe('rolling_back');
       const check = vi.fn(f.effects.runCanary!);
-      expect((await f.run({ runCanary: check })).result).toBe('waiting');
+      if (point === 'failed_read_back') {
+        const execute = f.resources.db.execute.bind(f.resources.db);
+        const dialect = new PgDialect();
+        let injected = false;
+        const spy = vi.spyOn(f.resources.db, 'execute').mockImplementation((query) => {
+          const text =
+            typeof query === 'string' ? query : dialect.sqlToQuery(query.getSQL()).sql;
+          if (!injected && text.includes('select original_reason')) {
+            injected = true;
+            throw new ImportFailure('integrity');
+          }
+          return execute(query);
+        });
+        try {
+          await expect(f.run({ runCanary: check })).rejects.toMatchObject({
+            reason: 'site_check',
+          });
+        } finally {
+          spy.mockRestore();
+        }
+        expect(injected).toBe(true);
+      } else expect((await f.run({ runCanary: check })).result).toBe('waiting');
       expect(check).toHaveBeenCalled();
       expect((await latestArtifact(f)).phase).toBe('restored');
+      const acquired = f.acquire.mock.calls.length;
+      const extract = vi.fn();
+      expect((await f.run({ extractSnapshot: extract })).result).toBe('waiting');
+      expect(f.acquire).toHaveBeenCalledTimes(acquired);
+      expect(extract).not.toHaveBeenCalled();
+      expect((await latestArtifact(f)).phase).toBe('restored');
+      expect(
+        (
+          await f.owner.execute(
+            sql`select step,preflight,suppresses_file from import_issues where resolved_at is null`,
+          )
+        ).rows,
+      ).toEqual([
+        expect.objectContaining({
+          step: 'canary',
+          preflight: false,
+          suppresses_file: true,
+        }),
+      ]);
       expect((await manifest(f.resources.db))!.generationId).toBe(
         f.baseline.manifest.generationId,
       );

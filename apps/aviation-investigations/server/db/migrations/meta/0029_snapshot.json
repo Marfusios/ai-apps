@@ -5276,6 +5276,20 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "preflight": {
+          "name": "preflight",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "suppresses_file": {
+          "name": "suppresses_file",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {},
