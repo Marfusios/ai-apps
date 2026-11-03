@@ -2512,8 +2512,8 @@ claim, `used` after its claim is consumed, and `none` for edits, v2 rows or ques
 without additions; expired searches return 404. Automatic filtering is
 independent of ranking: `AVIATION_EVIDENCE_AUTO_FILTERS=none` is the default;
 `attributed.v1` (dev and live, needs migration 0030) applies a state, years and an aircraft
-category the question names explicitly, each approved by one Haiku attribution check
-(`attr.a1`); `state-explicit.v1.3` (state only) is a dev-only opt-in, not cleared for live. No
+category the question names explicitly, each value approved by one Haiku attribution check
+(`attr.a2`); `state-explicit.v1.3` (state only) is a dev-only opt-in, not cleared for live. No
 other scope field is applied automatically. See
 [the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migrations
 0025 and 0030, the matching client, rollback and accounting. Existing v2 records upgrade on
@@ -2551,7 +2551,7 @@ counted as neither known failures nor free undos.
 
 Before enabling tracing for a release, mirror the frozen prompt templates with
 `pnpm -s worker langfuse-prompts --sync` using that environment's project credentials.
-The command creates version 1 of `aircase-scope.e3`, `aircase-rerank.r1` and `aircase-attr.a1`, or verifies
+The command creates version 1 of `aircase-scope.e3`, `aircase-rerank.r1` and `aircase-attr.a2`, or verifies
 the existing content hash. A mismatch stops it; prompts are never fetched by searches.
 Generation spans link these versions and export model names. Export failures remain
 non-blocking, produce at most one sanitized warning every five minutes, and appear
