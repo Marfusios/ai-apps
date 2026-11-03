@@ -112,7 +112,7 @@ test('an admin signs in, sees Admin in the header and reads the overview the ser
   await expect(fact('NTSB snapshot')).toHaveText(formatDate(dataset?.snapshotDate ?? null));
   await expect(fact('Ranking')).toHaveText('The question as asked; AI reranks the top 50er-q-h50-v1');
   await expect(fact('Automatic filters')).toHaveText('None: every filter AI suggests stays a suggestionnone');
-  await expect(fact('Next check')).toHaveText('Automatic import is turned off.');
+  await expect(fact('Next check')).toHaveText('None');
   // Off never alerts, including when old runs or a restore hold remain in the test database.
   await expect(system.locator('[data-imports]')).toContainText('Automatic import is turned off.');
   await expect(page.locator('[data-import-alert]')).toHaveCount(overview.system.imports.alert ? 1 : 0);

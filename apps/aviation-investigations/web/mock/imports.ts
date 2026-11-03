@@ -1,11 +1,17 @@
 /** Synthetic automatic-import health. No worker, database or provider runs in mock mode. */
 import {
   AdminImportRunSchema,
-  AdminImportsSchema,
   type AdminImportRun,
   type AdminImports,
   type AdminOverview,
 } from '../../shared/contracts/admin.js';
+import {
+  projectImports,
+  type ImportHealth,
+  type StatusRow,
+  type ImportSchedule,
+} from '../../worker/importer/status.js';
+import { TEMPORARY_REASONS } from '../../shared/import-policy.js';
 import config from './config.json' with { type: 'json' };
 
 export const MOCK_IMPORT_STATES = [
@@ -17,6 +23,7 @@ export const MOCK_IMPORT_STATES = [
   'disabled',
   'overdue',
   'unreadable',
+  'disabled_unreadable',
   'schema',
   'shrunk',
   'source_unavailable',
@@ -108,12 +115,6 @@ function checksBefore(now: number, count: number): number[] {
   return Array.from({ length: count }, (_, k) => checkOnDay(latest, -k));
 }
 
-/** The next scheduled check after `now`. */
-function nextCheck(now: number): number {
-  const today = checkOnDay(now, 0);
-  return today > now ? today : checkOnDay(now, 1);
-}
-
 const iso = (t: number): string => new Date(t).toISOString();
 
 /** A made-up SHA-256 digest from a seed (64 hex characters): every character of the seed counts (FNV-1a, salted per group). */
@@ -143,17 +144,6 @@ function newerFile(at: number, bytes: number): Source {
 }
 
 const CURRENT_ARCHIVE = digest(CURRENT_FILE.advertisedAtLocal);
-const TEMPORARY = new Set<string>([
-  'source_unavailable',
-  'source_changed_during_download',
-  'monthly_budget',
-  'cache_miss',
-  'busy',
-  'backup_window',
-  'lock_lost',
-  'timeout',
-  'interrupted',
-]);
 function run(at: number, overrides: Partial<AdminImportRun> = {}): AdminImportRun {
   return AdminImportRunSchema.parse({
     runId: `00000000-0000-4000-8000-${Math.floor(at / 1000)
@@ -179,9 +169,17 @@ export interface MockImports {
   imports: AdminImports;
   dataset?: Partial<NonNullable<AdminOverview['system']['dataset']>>;
 }
-export function mockImports(state: MockImportState, now: Date): MockImports {
-  const checks = checksBefore(now.getTime(), 14);
-  const latest = checks[0]!;
+/** Inputs to the production projector, also exposed for the fixture-contract test. */
+export function mockImportInputs(
+  state: MockImportState,
+  now: Date,
+): {
+  rows: StatusRow[];
+  schedule: ImportSchedule;
+  health: ImportHealth | true;
+} {
+  const checks = checksBefore(now.getTime(), 14),
+    latest = checks[0]!;
   const previous = run(checks[10]!, {
     result: 'published',
     reason: null,
@@ -189,35 +187,35 @@ export function mockImports(state: MockImportState, now: Date): MockImports {
     costUsd: 0.2114,
     changes: { new: 123, updated: 404, removed: 2 },
   });
-  const base: AdminImports = AdminImportsSchema.parse({
-    enabled: true,
-    status: 'working',
-    schedule: {
-      localTime: LOCAL_TIME,
-      timeZone: TIME_ZONE,
-      nextCheckAt: iso(nextCheck(now.getTime())),
-    },
+  let runs = [...checks.slice(0, 10).map((at) => run(at)), previous];
+  const schedule = {
+    enabled: state !== 'disabled' && state !== 'disabled_unreadable',
+    localTime: LOCAL_TIME,
+    timeZone: TIME_ZONE,
+  };
+  const health: ImportHealth = {
+    automaticSince: iso(latest),
+    restoreHeld: false,
+    switchHeld: false,
+    switchHoldReason: 'alias_unknown',
+    temporaryDays: 0,
+    delayedSince: null,
+    fixSince: null,
     serving: {
       generationId: 7,
       sourceDate: config.snapshotDate,
       importedAt: previous.finishedAt,
       restoredAt: null,
     },
-    lastStartedAt: iso(latest),
-    lastCheck: run(latest),
-    lastGoodCheck: run(latest),
+    lastGood: run(latest),
     waiting: null,
-    alert: null,
-    recentRuns: [...checks.slice(0, 10).map((at) => run(at)), previous],
-  });
+    issue: null,
+  };
+  if (state === 'unreadable' || state === 'disabled_unreadable')
+    return { rows: [], schedule, health: true };
   if (state === 'disabled' || state === 'never_run') {
-    base.enabled = state !== 'disabled';
-    base.status = base.enabled ? 'working' : 'off';
-    if (!base.enabled) base.schedule!.nextCheckAt = null;
-    base.lastStartedAt = null;
-    base.lastCheck = null;
-    base.lastGoodCheck = null;
-    base.recentRuns = [];
+    runs = [];
+    health.lastGood = null;
   } else if (state === 'published') {
     const published = run(latest, {
       result: 'published',
@@ -227,57 +225,28 @@ export function mockImports(state: MockImportState, now: Date): MockImports {
       costUsd: 0.1873,
       changes: { new: 152, updated: 501, removed: 2 },
     });
-    base.lastCheck = base.lastGoodCheck = published;
-    base.recentRuns[0] = published;
-    base.serving = {
+    runs[0] = published;
+    health.lastGood = published;
+    health.serving = {
       generationId: 8,
       sourceDate: published.source!.advertisedAtLocal.slice(0, 10),
       importedAt: published.finishedAt,
       restoredAt: null,
     };
   } else if (state === 'legacy') {
-    const old = run(latest, {
+    runs[0] = run(latest, {
       result: 'needs_review',
       reason: 'cohort_bounds',
       step: 'extract',
-      source: newerFile(latest, 105120448),
+      source: { advertisedAtLocal: '2026-11-01T07:30:00', bytes: 105120448 },
     });
-    base.lastCheck = old;
-    base.recentRuns[0] = old;
-    base.waiting = {
-      source: old.source,
-      since: old.checkedAt,
-      reason: null,
-      retry: 'daily',
-    };
-    base.lastGoodCheck = previous;
-  } else if (state === 'overdue' || state === 'unreadable') {
-    base.status = 'fix';
-    base.alert = {
-      level: 'fix',
-      cause: state === 'overdue' ? 'overdue' : 'status_unavailable',
-      since: null,
-      failedDays: 0,
-      origin: 'host',
-      siteState: 'unchanged',
-      nextAction: 'release',
-      retryAt: null,
-      postSuccess: false,
-      devAdvanced: false,
-      details: null,
-      originRunId: null,
-    };
-    if (state === 'overdue') {
-      base.recentRuns = base.recentRuns.slice(2);
-      base.lastCheck = base.lastGoodCheck = base.recentRuns[0]!;
-      base.lastStartedAt = base.lastCheck.checkedAt;
-      base.alert.since = base.lastStartedAt;
-    } else {
-      base.recentRuns = [];
-      base.lastCheck = base.lastGoodCheck = null;
-      base.lastStartedAt = null;
-      base.serving = null;
-    }
+    health.waiting = { source: runs[0]!.source, since: runs[0]!.checkedAt };
+    health.lastGood = previous;
+  } else if (state === 'overdue' || state === 'restore_hold') {
+    // import_claim refuses a held restore before creating a run or an issue.
+    runs = runs.slice(2);
+    health.lastGood = runs[0]!;
+    health.restoreHeld = state === 'restore_hold';
   } else if (state !== 'healthy') {
     const causes: Partial<Record<MockImportState, AdminImportRun['reason']>> = {
       delayed: 'source_unavailable',
@@ -291,141 +260,194 @@ export function mockImports(state: MockImportState, now: Date): MockImports {
       post_success_storage: 'storage',
     };
     const cause = causes[state] ?? (state as NonNullable<AdminImportRun['reason']>);
-    const temporary =
-      TEMPORARY.has(cause) || state === 'post_success' || state === 'dev_temporary';
     const postSuccess = state.startsWith('post_success');
+    const temporary = TEMPORARY_REASONS.has(cause) || state === 'post_success';
     const inherited = state === 'dev_failed' || state === 'dev_temporary';
-    let origin: NonNullable<AdminImportRun['origin']> = 'dev';
-    if (state === 'dev_shrunk') origin = 'live';
-    if (postSuccess) origin = 'host';
-    const at = checks[2]!;
-    const fileTouched =
-      ![
-        'source_unavailable',
-        'busy',
-        'backup_window',
-        'restore_hold',
-        'configuration',
-        'source_retired',
-        'source_listing_changed',
-        'dev_failed',
-      ].includes(cause) && !inherited;
-    const source =
-      fileTouched || postSuccess || state === 'dev_failed'
-        ? newerFile(at, 105120448)
-        : null;
-    const cost = fileTouched || postSuccess ? 0.1873 : 0;
-    let result: AdminImportRun['result'] = 'failed';
-    if (temporary) result = 'deferred';
-    if (inherited) result = 'skipped_dev_failed';
-    if (postSuccess) result = 'published';
     const restored = state === 'restored' || state === 'manual_rollback';
     const unverified = state === 'restore_unverified';
-    const stopped = run(at, {
+    const manual = state === 'manual_rollback';
+    let origin: NonNullable<AdminImportRun['origin']> = 'dev';
+    if (postSuccess) origin = 'host';
+    else if (state === 'dev_shrunk') origin = 'live';
+    const first = manual ? latest : checks[2]!;
+    const stepByCause: Partial<
+      Record<NonNullable<AdminImportRun['reason']>, AdminImportRun['step']>
+    > = {
+      source_unavailable: 'check',
+      busy: 'check',
+      backup_window: 'check',
+      configuration: 'check',
+      source_retired: 'check',
+      source_listing_changed: 'check',
+      dev_failed: 'check',
+      source_changed_during_download: 'acquire',
+      cache_miss: 'plan',
+      monthly_budget: 'plan',
+      lock_lost: 'index_cases',
+      timeout: 'index_cases',
+      interrupted: 'index_cases',
+      probe: 'validate',
+      site_check: 'canary',
+      rollback_failed: 'canary',
+      alias_unknown: 'check',
+      manual_rollback: 'canary',
+      baseline_changed: 'publish',
+    };
+    const step = stepByCause[cause] ?? 'extract';
+    const fileTouched = step !== 'check' && step !== 'acquire' && !manual;
+    const source =
+      fileTouched || postSuccess || state === 'dev_failed' || step === 'acquire'
+        ? newerFile(first, 105120448)
+        : null;
+    const cost =
+      (fileTouched &&
+        !['cache_miss', 'monthly_budget', 'lock_lost', 'timeout', 'interrupted'].includes(
+          cause,
+        )) ||
+      postSuccess ||
+      manual
+        ? 0.1873
+        : 0;
+    const suppressesFile =
+      !temporary && !postSuccess && (fileTouched || manual || state === 'dev_failed');
+    let result: AdminImportRun['result'] = 'failed';
+    if (postSuccess) result = 'published';
+    else if (manual) result = 'rolled_back';
+    else if (inherited) result = 'skipped_dev_failed';
+    else if (temporary) result = 'deferred';
+    let archiveSha256: string | null = null;
+    if (manual) archiveSha256 = digest(newerFile(first, 105120448).advertisedAtLocal);
+    else if (source && step !== 'acquire')
+      archiveSha256 = digest(source.advertisedAtLocal);
+    const stopped = run(first, {
       result,
       reason: postSuccess ? null : cause,
-      step: fileTouched ? 'extract' : 'check',
+      step: postSuccess || manual ? 'complete' : step,
       origin,
       source,
-      archiveSha256: source ? digest(source.advertisedAtLocal) : null,
+      archiveSha256,
       costUsd: cost,
-      generationId: postSuccess ? 8 : null,
+      generationId:
+        postSuccess ||
+        manual ||
+        [
+          'verify',
+          'plan',
+          'index_cases',
+          'index_passages',
+          'validate',
+          'publish',
+          'canary',
+        ].includes(step)
+          ? 8
+          : null,
       restoration:
         restored || unverified
           ? {
               sourceDate: config.snapshotDate,
-              restoredAt: restored ? iso(at + 2 * MINUTE) : null,
+              restoredAt: restored ? iso(first + 2 * MINUTE) : null,
             }
           : null,
     });
-    const laterRuns = checks.slice(0, 2).map((time) => {
-      if (postSuccess)
-        return run(time, {
-          source,
-          archiveSha256: stopped.archiveSha256,
-          generationId: 8,
-          origin,
-        });
-      if (temporary || inherited || !fileTouched)
-        return run(time, {
-          ...stopped,
-          runId: run(time).runId,
-          checkedAt: iso(time),
-          finishedAt: iso(time + MINUTE),
-        });
-      return run(time, {
-        source,
-        archiveSha256: stopped.archiveSha256,
-        result: 'waiting',
-        reason: cause,
-        step: 'check',
-        suppressed: true,
-        costUsd: cost,
-        origin,
-      });
-    });
-    base.status = temporary ? 'delayed' : 'fix';
-    base.lastGoodCheck = run(checks[3]!);
-    base.recentRuns = [...laterRuns, stopped, ...base.recentRuns.slice(3)];
-    base.lastCheck = base.recentRuns[0]!;
-    base.lastStartedAt = base.lastCheck.checkedAt;
-    let nextAction: NonNullable<AdminImports['alert']>['nextAction'] =
-      'new_file_or_release';
-    if (temporary || postSuccess || unverified) nextAction = 'daily';
-    if (['alias_unknown', 'rollback_failed', 'restore_hold'].includes(cause))
-      nextAction = 'release';
-    let siteState: NonNullable<AdminImports['alert']>['siteState'] = 'unchanged';
-    if (restored) siteState = 'restored';
-    if (unverified) siteState = 'restore_unverified';
-    if (['alias_unknown', 'rollback_failed'].includes(cause)) siteState = 'uncertain';
-    base.waiting =
-      fileTouched && !postSuccess
-        ? {
+    const later = manual
+      ? []
+      : checks.slice(0, 2).map((time) => {
+          if (postSuccess)
+            return run(time, {
+              source,
+              archiveSha256: stopped.archiveSha256,
+              generationId: 8,
+              origin,
+            });
+          if (['alias_unknown', 'rollback_failed'].includes(cause))
+            return run(time, {
+              source: null,
+              archiveSha256: stopped.archiveSha256,
+              generationId: stopped.generationId,
+              result: 'waiting',
+              reason: cause,
+              step: 'check',
+              costUsd: cost,
+              origin,
+            });
+          if (temporary || inherited || !suppressesFile || unverified)
+            return run(time, {
+              ...stopped,
+              runId: run(time).runId,
+              checkedAt: iso(time),
+              finishedAt: iso(time + MINUTE),
+            });
+          return run(time, {
             source,
-            since: iso(at),
+            archiveSha256: stopped.archiveSha256,
+            result: 'waiting',
             reason: cause,
-            retry: temporary ? 'daily' : 'new_file_or_release',
-          }
-        : null;
-    const details =
-      temporary || postSuccess ? { ...base.lastCheck, reason: cause } : stopped;
-    if (postSuccess) details.step = 'cleanup';
-    base.alert = {
-      level: base.status,
-      cause,
-      since: iso(at),
-      failedDays: temporary ? 3 : 0,
+            step: 'check',
+            suppressed: true,
+            costUsd: cost,
+            origin,
+          });
+        });
+    runs = [...later, stopped, ...runs.slice(manual ? 1 : 3)];
+    health.lastGood = postSuccess ? runs[0]! : run(checks[3]!);
+    health.temporaryDays = temporary ? 3 : 0;
+    health.delayedSince = temporary ? iso(first) : null;
+    health.fixSince = temporary ? null : iso(first);
+    health.switchHeld = ['alias_unknown', 'rollback_failed'].includes(cause);
+    health.switchHoldReason =
+      cause === 'rollback_failed' ? 'rollback_failed' : 'alias_unknown';
+    const details = {
+      ...(temporary || postSuccess || unverified ? runs[0]! : stopped),
+      reason: cause,
+      step: postSuccess ? ('cleanup' as const) : step,
+    };
+    let siteState: NonNullable<ImportHealth['issue']>['siteState'] = 'unchanged';
+    if (restored) siteState = 'restored';
+    else if (unverified) siteState = 'restore_unverified';
+    else if (health.switchHeld) siteState = 'uncertain';
+    health.issue = {
+      reason: cause,
+      fixed: !temporary,
+      since: details.checkedAt,
       origin,
       siteState,
-      nextAction,
-      retryAt:
-        cause === 'monthly_budget'
-          ? iso(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
-          : null,
       postSuccess,
-      devAdvanced: state === 'dev_shrunk',
+      suppressesFile,
       details,
       originRunId: inherited ? '10000000-0000-4000-8000-000000000001' : null,
     };
-    if (restored) base.serving!.restoredAt = stopped.restoration!.restoredAt;
-    if (postSuccess) {
-      base.serving = {
+    if (fileTouched && !postSuccess) health.waiting = { source, since: iso(first) };
+    if (restored) health.serving!.restoredAt = stopped.restoration!.restoredAt;
+    if (postSuccess)
+      health.serving = {
         generationId: 8,
         sourceDate: source!.advertisedAtLocal.slice(0, 10),
         importedAt: stopped.finishedAt,
         restoredAt: null,
       };
-      base.lastGoodCheck = base.lastCheck;
-    }
   }
   return {
-    imports: AdminImportsSchema.parse(base),
-    dataset: base.serving
+    schedule,
+    health,
+    rows: runs.map((r) => ({
+      public: r,
+      sourceCheckSucceeded: r.result === 'published' || r.result === 'unchanged',
+      canaryPassed: r.result === 'published',
+      goodCheck: r.result === 'published' || r.result === 'unchanged',
+    })),
+  };
+}
+export function mockImports(state: MockImportState, now: Date): MockImports {
+  const input = mockImportInputs(state, now);
+  const imports = projectImports(input.rows, input.schedule, now, input.health);
+  return {
+    imports,
+    dataset: imports.serving
       ? {
-          generationId: base.serving.generationId,
-          snapshotDate: base.serving.sourceDate ?? config.snapshotDate,
-          publishedAt: base.serving.importedAt!,
-          loadedAt: base.serving.importedAt!,
+          generationId: imports.serving.generationId,
+          snapshotDate: imports.serving.sourceDate ?? config.snapshotDate,
+          publishedAt: imports.serving.importedAt!,
+          loadedAt: imports.serving.importedAt!,
         }
       : undefined,
   };

@@ -1,7 +1,8 @@
 /** Fixed words only. Alert severity and retry decisions come from the server. */
-import type { AdminImportRun, AdminImports } from '../../../../shared/contracts/admin';
-import { formatDate } from '../../../../shared/format';
-import { formatDateTime, formatDay } from './format';
+import type { AdminImportRun, AdminImports } from '../../../../shared/contracts/admin.js';
+import { TEMPORARY_REASONS } from '../../../../shared/import-policy.js';
+import { formatDate } from '../../../../shared/format.js';
+import { formatDateTime, formatDay } from './format.js';
 
 export const IMPORT_LIMITS = {
   capUsd: 2,
@@ -58,7 +59,7 @@ export function reasonWords(reason: AdminImportRun['reason']): string {
     case 'restore_hold':
       return 'Imports are stopped until the restored spending records are checked.';
     case 'accounting':
-      return 'The cost records for this file block more work. A person needs to check them.';
+      return 'The cost records for this file block more work.';
     case 'integrity':
     case 'verification':
     case 'mapping':
@@ -87,6 +88,7 @@ export function reasonWords(reason: AdminImportRun['reason']): string {
 }
 
 export function waitingWords(reason: AdminImportRun['reason']): string {
+  if (reason === null) return 'Not imported yet';
   switch (reason) {
     case 'schema':
       return 'Not imported: AirCase can’t read it';
@@ -98,7 +100,9 @@ export function waitingWords(reason: AdminImportRun['reason']): string {
     case 'monthly_budget':
       return 'Not imported: this month’s spending limit is used up';
     default:
-      return 'Not imported: it needs a fix';
+      return TEMPORARY_REASONS.has(reason)
+        ? 'Not imported yet: the system tries again every day'
+        : 'Not imported: it needs a fix';
   }
 }
 
@@ -135,6 +139,7 @@ export function alertDetails(
   return [
     r?.result,
     a.cause,
+    ...a.holds.filter((h) => h !== a.cause),
     r?.reason !== a.cause ? r?.reason : null,
     r?.step,
     at ? `${formatDateTime(at, zone)} (${zone})` : null,
@@ -156,7 +161,7 @@ export function chipLine(imports: AdminImports, zone: string): string {
   const a = imports.alert;
   if (!a) return '';
   if (a.cause === 'status_unavailable') return 'The status could not be read.';
-  if (!a.since) return '';
+  if (!a.since) return 'Start date unknown.';
   if (a.cause === 'overdue') return `No check since ${formatDateTime(a.since, zone)}.`;
   const since = `Since ${formatDay(a.since, zone)}`;
   if (a.cause === 'monthly_budget')
@@ -198,7 +203,7 @@ export function alertSentences(
       lines.push(
         `The NTSB file of ${sourceDay(a.details.source.advertisedAtLocal)} is waiting.`,
       );
-    lines.push(reasonWords(a.cause));
+    if (a.cause !== 'manual_rollback') lines.push(reasonWords(a.cause));
     if (a.failedDays >= IMPORT_LIMITS.delayedDays) {
       if (a.postSuccess)
         lines.push(`A later task failed on ${a.failedDays} different days.`);
@@ -208,11 +213,15 @@ export function alertSentences(
         );
     }
   }
+  for (const hold of a.holds) if (hold !== a.cause) lines.push(reasonWords(hold));
   if (a.devAdvanced)
     lines.push('Dev has the new file. Live still has the previous file.');
   const source = imports.serving?.sourceDate;
   if (a.siteState === 'uncertain') {
-    if (!['alias_unknown', 'rollback_failed'].includes(a.cause))
+    if (
+      !['alias_unknown', 'rollback_failed'].includes(a.cause) &&
+      !a.holds.some((h) => h === 'alias_unknown' || h === 'rollback_failed')
+    )
       lines.push('The site may show mixed data.');
   } else if (a.siteState === 'restore_unverified') {
     lines.push(
@@ -233,7 +242,7 @@ export function alertSentences(
         : 'The file date of the data on the site is not recorded.',
     );
   }
-  if (a.cause === 'overdue')
+  if (a.cause === 'overdue' && a.holds.length === 0)
     lines.push(
       'The schedule or server needs a fix. The alert goes away when checks run again.',
     );
@@ -243,11 +252,16 @@ export function alertSentences(
     );
   else if (a.cause === 'monthly_budget')
     lines.push('The import continues on the 1st of next month.');
-  else if (['storage', 'configuration', 'cleanup'].includes(a.cause))
+  else if (!a.postSuccess && ['storage', 'configuration', 'cleanup'].includes(a.cause))
     lines.push(
-      'Fix the server, then release. The file is tried again after the release or when NTSB posts a newer file.',
+      a.nextAction === 'new_file_or_release'
+        ? 'Fix the server, then release. The file is tried again after the release or when NTSB posts a newer file.'
+        : 'Fix the server. The system tries again every day.',
     );
-  else if (['restore_hold', 'accounting'].includes(a.cause))
+  else if (
+    a.holds.includes('restore_hold') ||
+    ['restore_hold', 'accounting'].includes(a.cause)
+  )
     lines.push(
       'A person must check the cost records. The alert goes away after the next good import.',
     );
@@ -255,6 +269,13 @@ export function alertSentences(
     lines.push('A new NTSB source needs a code change.');
   else if (a.siteState === 'restore_unverified')
     lines.push('The system repeats the site check every day.');
+  else if (
+    a.nextAction === 'daily' &&
+    a.level === 'fix' &&
+    ![...TEMPORARY_REASONS].some((reason) => reason === a.cause) &&
+    !a.postSuccess
+  )
+    lines.push('Fix the server. The system tries again every day.');
   else if (a.nextAction === 'daily')
     lines.push(
       a.level === 'fix'

@@ -109,7 +109,7 @@ export function ImportStatus({
 }) {
   const { status, serving, alert, schedule } = imports;
   const last = alert ? imports.lastGoodCheck : imports.lastCheck;
-  const unreadable = alert?.cause === 'status_unavailable';
+  const unreadable = !imports.readable;
   const time = (iso: string | null | undefined) =>
     iso ? `${formatDateTime(iso, timeZone)} (${timeZone})` : 'Not recorded';
   return (
@@ -203,15 +203,7 @@ export function ImportStatus({
             </time>
             <span
               className={
-                [
-                  'failed',
-                  'deferred',
-                  'needs_review',
-                  'skipped_dev_failed',
-                  'cancelled',
-                ].includes(run.result)
-                  ? 'text-magenta'
-                  : undefined
+                ['failed', 'cancelled'].includes(run.result) ? 'text-magenta' : undefined
               }
             >
               {importOutcome(run)}

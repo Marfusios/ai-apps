@@ -157,6 +157,8 @@ const IMPORT_STATES = [
   'post_success_storage',
   'overdue',
   'unreadable',
+  'disabled_unreadable',
+  'restore_hold',
   'never_run',
   'manual_rollback',
   'disabled',
@@ -181,7 +183,11 @@ for (const [width, theme] of [
       await expect(block).toBeVisible();
       const alert = page.locator('[data-import-alert]');
       await expect(alert).toHaveCount(
-        ['healthy', 'published', 'disabled', 'never_run'].includes(state) ? 0 : 1,
+        ['healthy', 'published', 'disabled', 'disabled_unreadable', 'never_run'].includes(
+          state,
+        )
+          ? 0
+          : 1,
       );
       if (await alert.count()) {
         await expect(alert.getByRole('button', { name: 'Copy details' })).toBeVisible();
@@ -193,7 +199,7 @@ for (const [width, theme] of [
       }
       if (state === 'disabled' || state === 'never_run')
         await expect(block).toContainText('No runs recorded yet.');
-      else if (state === 'unreadable')
+      else if (state === 'unreadable' || state === 'disabled_unreadable')
         await expect(block).toContainText('Unknown: the status could not be read.');
       else
         await expect(

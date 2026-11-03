@@ -305,10 +305,13 @@ describe('the exact operator copy and recovery facts', () => {
     expect(block.textContent).not.toMatch(/No runs|No check|Not recorded/);
   });
   it('manual rollback names the restored data and passed site checks', async () => {
-    serve('manual_rollback');
+    const o = serve('manual_rollback');
     const block = await open();
     expect(document.querySelector('[data-import-alert]')?.textContent).toContain(
-      'The site was returned to the previous data.',
+      `The site went back to the data from ${sourceDay(o.system.imports.serving!.sourceDate)}.`,
+    );
+    expect(document.querySelector('[data-import-alert]')?.textContent).not.toContain(
+      'The site was returned',
     );
     expect(document.querySelector('[data-import-alert]')?.textContent).toContain(
       'The site checks passed.',
@@ -338,6 +341,72 @@ describe('the exact operator copy and recovery facts', () => {
     const block = await open();
     expect(fact(block, 'Last check')).toContain(
       'An old review rule stopped it. This rule is gone.',
+    );
+    expect(fact(block, 'Waiting')).toContain('Not imported yet');
+    expect(fact(block, 'Waiting')).not.toContain('needs a fix');
+  });
+});
+
+describe('round 2 status rendering', () => {
+  it.each(['post_success', 'post_success_storage'] as const)(
+    '%s has a daily next step',
+    async (state) => {
+      serve(state);
+      await open();
+      const text = document.querySelector('[data-import-alert]')!.textContent;
+      expect(text).toContain(
+        state === 'post_success'
+          ? 'The system tries again every day. Nothing for you to do.'
+          : 'The system still tries every day. The server or service needs a fix.',
+      );
+      expect(text).not.toContain('then release');
+    },
+  );
+  it('a temporary waiting file has no invented fix requirement', async () => {
+    serve('cache_miss');
+    const block = await open();
+    expect(fact(block, 'Waiting')).toContain(
+      'Not imported yet: the system tries again every day',
+    );
+  });
+  it('Off with unreadable status shows unknown facts and no alert', async () => {
+    serve('disabled_unreadable');
+    const block = await open();
+    expect(block.textContent).toContain('Off');
+    expect(block.textContent?.split(UNKNOWN_IMPORT_STATUS)).toHaveLength(6);
+    expect(document.querySelector('[data-import-alert]')).toBeNull();
+    expect(block.textContent).not.toMatch(/No runs|No check|Not recorded/);
+  });
+  it.each(['delayed', 'legacy', 'dev_failed', 'fix'] as const)(
+    '%s colors only failed or cancelled rows',
+    async (state) => {
+      const o = serve(state);
+      await open();
+      const runs = screen
+        .getByRole('list', { name: 'Recent import runs' })
+        .querySelectorAll('li');
+      o.system.imports.recentRuns.forEach((run, i) =>
+        expect(runs[i]!.querySelector('.text-magenta') !== null).toBe(
+          ['failed', 'cancelled'].includes(run.result),
+        ),
+      );
+    },
+  );
+  it('an overdue restore hold remains stated and copied without fictitious runs', async () => {
+    const o = serve('restore_hold');
+    await open();
+    const text = document.querySelector('[data-import-alert]')!.textContent;
+    expect(text).toContain('No import check has run since');
+    expect(text).toContain(
+      'Imports are stopped until the restored spending records are checked.',
+    );
+    expect(text).toContain(
+      'A person must check the cost records. The alert goes away after the next good import.',
+    );
+    expect(alertDetails(o.system.imports, 'UTC')).toContain('restore_hold');
+    expect(o.system.imports.alert?.details).toBeNull();
+    expect(o.system.imports.recentRuns.some((r) => r.reason === 'restore_hold')).toBe(
+      false,
     );
   });
 });
