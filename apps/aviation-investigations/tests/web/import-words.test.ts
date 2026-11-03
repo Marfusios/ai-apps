@@ -273,3 +273,40 @@ it('recertification availability failures and configuration mocks keep their own
     }),
   ).toBe('Failed: The NTSB download or the site did not answer.');
 });
+
+it.each([
+  ['dev', 'storage'],
+  ['live', 'storage'],
+  ['dev', 'source_unavailable'],
+  ['live', 'source_unavailable'],
+] as const)(
+  'a %s recertification alert for %s never calls the serving file waiting',
+  (env, reason) => {
+    const now = new Date('2026-11-03T12:00:00Z');
+    const input = mockImportInputs(reason === 'storage' ? 'storage' : 'delayed', now);
+    if (input.health === true) throw Error('readable fixture');
+    const issue = input.health.issue!;
+    issue.reason = reason;
+    issue.suppressesFile = false;
+    issue.origin = 'dev';
+    issue.originRunId = env === 'live' ? '10000000-0000-4000-8000-000000000001' : null;
+    issue.details!.workKind = 'recertification';
+    issue.details!.source = {
+      advertisedAtLocal: `${input.health.serving!.sourceDate}T07:30:00`,
+      bytes: 100,
+    };
+    if (env === 'live') issue.details!.result = 'skipped_dev_failed';
+    input.health.waiting = null;
+    input.health.temporaryDays = reason === 'source_unavailable' ? 3 : 0;
+    const status = projectImports(input.rows, input.schedule, now, input.health);
+    expect(status.waiting).toBeNull();
+    expect(status.alert).toMatchObject({ cause: reason, servingChecks: false });
+    const text = alertSentences(status, env, 'UTC').join(' ');
+    expect(text).not.toMatch(/is waiting/);
+    expect(text).toContain(
+      reason === 'storage'
+        ? 'The server cannot safely save the import files. Check its disk space and permissions.'
+        : 'The NTSB download or the site did not answer.',
+    );
+  },
+);

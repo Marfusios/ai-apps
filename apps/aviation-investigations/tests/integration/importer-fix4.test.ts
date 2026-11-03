@@ -158,3 +158,43 @@ it.each(['configuration', 'source_listing_changed'] as const)(
       }
     }),
 );
+
+it('a daily storage failure never calls the serving file waiting, on dev or its inherited live skip', async () =>
+  importerPair(async (dev, live) => {
+    expect((await dev.run()).result).toBe('published');
+    expect((await live.run()).result).toBe('published');
+    await expect(
+      dev.run({
+        now: tomorrow,
+        runCanary: async () => {
+          throw new ImportFailure('storage');
+        },
+      }),
+    ).rejects.toMatchObject({ reason: 'storage' });
+    await recordSkippedLiveWith(
+      live.resources.db,
+      live.resources.space,
+      live.config,
+      await readDevOutcomeWith(dev.resources.db, dev.config),
+    );
+    for (const [env, f] of [
+      ['dev', dev],
+      ['live', live],
+    ] as const) {
+      const status = await readImportStatus(f.app, schedule);
+      expect(status.alert).toMatchObject({
+        cause: 'storage',
+        servingChecks: false,
+        details: { workKind: 'recertification' },
+      });
+      expect(status.alert!.details!.source!.advertisedAtLocal.slice(0, 10)).toBe(
+        status.serving!.sourceDate,
+      );
+      expect(status.waiting).toBeNull();
+      const text = alertSentences(status, env, 'UTC').join(' ');
+      expect(text).not.toContain('is waiting');
+      expect(text).toContain(
+        'The server cannot safely save the import files. Check its disk space and permissions.',
+      );
+    }
+  }));

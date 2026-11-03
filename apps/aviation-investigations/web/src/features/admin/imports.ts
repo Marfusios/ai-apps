@@ -217,7 +217,12 @@ export function alertSentences(
             : 'The test copy of the site (dev) has not finished its checks. Live was not touched.',
       );
     }
-    if (!a.postSuccess && !a.servingChecks && a.details?.source)
+    if (
+      !a.postSuccess &&
+      !a.servingChecks &&
+      a.details?.source &&
+      a.details.workKind !== 'recertification'
+    )
       lines.push(
         `The NTSB file of ${sourceDay(a.details.source.advertisedAtLocal)} is waiting.`,
       );
