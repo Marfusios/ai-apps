@@ -112,7 +112,7 @@ export function pageOf(row: EvidenceRow, page: number, now: Date): EvidencePage 
   // may have consumed the undo since this result was stored. Admission still
   // rechecks the claim under its lock; this is only a snapshot for the client.
   const undo = row.data.version !== EVIDENCE_CONTRACT_VERSION || row.data.edited || query.source !== 'question' ||
-    (!row.data.automaticFilters?.state.length && query.keywords.kind === 'question')
+    (!row.data.automaticFilters && query.keywords.kind === 'question')
     ? 'none' : row.freeUndoReservationId == null ? 'available' : 'used';
   const marks = row.data.marks ?? (row.data.suggestion?.terms && (!row.data.rankingConfig || row.data.rankingConfig.version === 'er-q-v1') ? 'suggested_terms' : 'search_words');
   return EvidencePageSchema.parse({ version: EVIDENCE_CONTRACT_VERSION, id: row.id, question: row.data.question,

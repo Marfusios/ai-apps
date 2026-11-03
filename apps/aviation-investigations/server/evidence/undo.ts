@@ -32,7 +32,7 @@ export function canUndo(parent: EvidenceRow, edit: Extract<CreateEvidenceRequest
   let removedState = false;
   if (!equal(edit.filters, parent.data.appliedFilters)) {
     // Removing an OR member narrows the search; undo removes the entire automatic state constraint.
-    if (!automatic?.state.length || !equal({ state: automatic.state }, { state: parent.data.appliedFilters.state })) return false;
+    if (!automatic?.state?.length || !equal({ state: automatic.state }, { state: parent.data.appliedFilters.state })) return false;
     const { state: _state, ...rest } = parent.data.appliedFilters;
     if (!equal(edit.filters, rest)) return false;
     removedState = true;
