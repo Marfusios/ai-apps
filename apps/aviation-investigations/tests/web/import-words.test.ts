@@ -47,7 +47,9 @@ describe('the importer limits the admin page names', () => {
 
   it('the gap between NTSB’s files that needs a new baseline, and the run’s deadline', () => {
     expect(source('worker/importer/compare.ts')).toContain(`gap <= ${IMPORT_LIMITS.sourceGapDays} * 86_400_000`);
-    expect(source('worker/importer/host.ts')).toContain(`Date.now() + ${IMPORT_LIMITS.deadlineHours} * 3_600_000`);
+    const host = source('worker/importer/host.ts');
+    expect(host).toContain(`export const IMPORT_DEADLINE_MS = ${IMPORT_LIMITS.deadlineHours} * 3_600_000`);
+    expect(host).toContain('Date.now() + IMPORT_DEADLINE_MS');
   });
 
   it('the reasons a run is only postponed for are the worker’s temporary ones', () => {
