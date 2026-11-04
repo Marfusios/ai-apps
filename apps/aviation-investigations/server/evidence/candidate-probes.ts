@@ -510,6 +510,21 @@ const probes: Probe[] = [
   ['Which investigations in Florida, from 2008 through 2026, have a finding concerning microburst?', { state: ['FL'], yearFrom: 2008, yearTo: 2026 }],
   ['in Alabama, Illinois, New Mexico, or Ohio, from 2008 through 2020', { state: ['AL', 'IL', 'NM', 'OH'], yearFrom: 2008, yearTo: 2020 }],
   ['Find accidents in the U.S. state of Alaska.', AK], ['Find accidents in Washington D.C. in 2019.', { state: ['DC'], ...Y2019 }],
+  // Fix round 10 (refusals only): a supported place before a comma, St./Mt./Ft./Pt. only as a name's prefix, members before a state.
+  ...['Find accidents nationwide, Ohio included.', 'Find accidents anywhere, Ohio included.', 'Find accidents in boston, Ohio.', 'Find accidents near boston, Ohio.',
+    'Find accidents in the boston area, Ohio.', 'Find accidents in Ohio near Main St. Find fatal cases anywhere.',
+    'Find accidents in Ohio near Main St. Fatal cases anywhere are also relevant.', 'Find accidents in Ohio near 5th St. Fatal cases anywhere.',
+    'Find accidents in boston and in Ohio.', 'Find accidents in BOSTON and in Ohio.', 'Find accidents in Boston and in Ohio.', 'fatal and serious accidents in Ohio',
+    'Find accidents at night and in Ohio.', 'Find accidents in 2019 and in Ohio.', 'Find accidents in boston or Ohio.', 'Find accidents in boston & Ohio.',
+    'Find accidents in the boston area and Ohio.', 'Find accidents, Ohio included.']
+    .map(q => [q, { state: ['OH'] }] satisfies Probe),
+  ...['find', 'show', 'list', 'give', 'search', 'get', 'look', 'also', 'retrieve', 'collect', 'include', 'return', 'display', 'please', 'which', 'what',
+    'how', 'where', 'when', 'are', 'is'].map(w => [`Find accidents in Ohio near St. ${w[0]!.toUpperCase()}${w.slice(1)} cases anywhere.`, { state: ['OH'] }] satisfies Probe),
+  ['Find accidents in St. Louis, MO.', { state: ['MO'] }], ['Find St. Louis accidents in Missouri.', { state: ['MO'] }],
+  ['Find accidents near Mt. Hood in Oregon.', { state: ['OR'] }], ['accidents in Iowa and Ohio', { state: ['IA', 'OH'] }],
+  ['Find accidents in Kansas City, Missouri.', { state: ['MO'] }], ['Find accidents in Juneau, Alaska.', AK],
+  ['Find accidents within 2.5 miles of Juneau, Alaska.', AK], ['Find accidents of all kinds, Ohio included.', { state: ['OH'] }],
+  ['Find accidents not involving icing by any account in Alaska.', AK],
   // Nested punctuation.
   ['Find ((helicopter)) accidents ((in [Alaska])), during 2019.', { state: ['AK'], category: ['HELI'], ...Y2019 }],
   ['Find helicopter accidents in Alaska (or Hawaii) during 2019.', { state: ['AK', 'HI'], category: ['HELI'], ...Y2019 }],

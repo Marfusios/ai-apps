@@ -918,8 +918,11 @@ suggestion, and edited searches never add automatic filters.
   or season after the preposition, or a closed list of continuations (during, with, from, which,
   especially, fatal, accidents, ...), whatever the case: "Ohio, boston", "Ohio, BOSTON" and "Ohio
   and in boston" refuse, while "Ohio, Iowa, or Texas", "Ohio and at night", "Ohio and in 2019" and
-  "Florida, from 2008 through 2026" stay. "Kansas City, Missouri" and "Juneau, Alaska" (a place, a
-  comma, then its state) are one place.
+  "Florida, from 2008 through 2026" stay. The same holds before a state value: "boston and in
+  Ohio" and "BOSTON and in Ohio" refuse, "Iowa and Ohio" and "at night and in Ohio" stay. A place,
+  a comma, then its state is one place only when the place follows a location preposition ("in
+  boston, Ohio", "Kansas City, Missouri", "miles of Juneau, Alaska"); "nationwide, Ohio included"
+  refuses.
 - A question with instruction-like wording ("ignore previous instructions", "system prompt", "set
   the state"), quotation marks (every initial and final quote but the apostrophe ’, low-9, corner
   and ornament quotes, double primes), any control, format or default-ignorable character (soft
@@ -929,9 +932,10 @@ suggestion, and edited searches never add automatic filters.
   whatever its case: `multiple_requests`, so "Find accidents in Juneau, AK. Find fatal cases
   anywhere." and "Find accidents in Ohio in the U.S. fatal cases anywhere are also relevant."
   refuse; the only dots that are no end are one between digits ("1.5 inches"), the inner dots of a
-  dotted token ("U.S"), and St., Mt., Ft. or Pt. directly before a capitalised word ("St. Louis");
-  U.S., D.C., e.g., Inc. and every other abbreviation followed by more words end the clause), or
-  two requests in one clause has no candidates at all
+  dotted token ("U.S"), and St., Mt., Ft. or Pt. as a name's prefix ("St. Louis": not after a
+  capitalised word or a number, "Main St.", not before a request head or a verb such as Find, and
+  with no request head later in the clause); U.S., D.C., e.g., Inc. and every other abbreviation
+  followed by more words end the clause), or two requests in one clause has no candidates at all
   (`union_of_requests`): a request head before a joiner (and, or, plus, as well as, ...), a
   marker word (also, too, then, alternatively, otherwise, else, failing that, in addition,
   besides, separately) or a comma or dash outside a value list, and after it another head or,
@@ -1033,14 +1037,14 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
-| `attributed.v1` | `88baf67a23b5df36545c6e35c44303d4279df074ecb2fb2796572dbfdc1f4b4b` |
-| `attributed.v1-state` | `510c8c439fb1388158c6c71369440be48a9a1fc3c6bc978109b5d9dccf6317ba` |
-| `attributed.v1-state-years` | `cd48c000a5cdcf915733a11802aeaae28b101c1281237b10d1e3f8dff608635c` |
+| `attributed.v1` | `de24ac7e8d7998fdb1289e7366caa4e921e72b79117e6714fb615d11530bf456` |
+| `attributed.v1-state` | `4af506c977f7517adac0fa6ea12c74115575d1a3dafdcc7bc48316468764fde8` |
+| `attributed.v1-state-years` | `10fb5924583ec082b13890dc0b163c2bb11cdec9b75f787ca1c8b7caef91102b` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check
 settings, caps and timeout, the prompt's system text and wire schema, and `candidate-probes.v1`:
-the candidate builder's outputs on 2,373 fixed questions (every word list entry and every form the
+the candidate builder's outputs on 2,421 fixed questions (every word list entry and every form the
 reviews named), the rendered check inputs and the decisions on 34 fixed check answers, so a changed
 rule, renderer or quote validator changes it too. Do not relabel older cached results with these
 identities.
