@@ -91,12 +91,14 @@ export const INJECTION_PATTERNS: readonly RegExp[] = Object.freeze([
 export const CONDITION_OR_EXCEPTION = /(?<![\p{L}\p{N}_])(?:if|unless|except|excepting|excepted|excluding|exclude|excludes|excluded|but not)(?![\p{L}\p{N}_])/iu;
 /**
  * More than one sentence or clause: a ".", "?", "!" or ";" followed by any further word, whatever
- * its case ("Find incidents in Alaska. airplane accidents are also relevant.", "Find accidents in
- * Juneau, AK. Find fatal cases anywhere."), refuses every field (`multiple_requests`). Only the dot
- * of one of these abbreviations, or one between digits ("2.5 miles"), is no end.
+ * its case, refuses every field (`multiple_requests`): "Find accidents in Juneau, AK. Find fatal
+ * cases anywhere.", "Find accidents in Ohio in the U.S. fatal cases anywhere are also relevant."
+ * The only dots that are no end: one between digits ("1.5 inches"), the inner dots of a dotted
+ * token of single letters ("U.S", "e.g"), and the dot of one of these abbreviations directly
+ * before a capitalised word ("St. Louis", "Mt. Hood"). "U.S.", "D.C.", "e.g." or "Inc." followed
+ * by more words end the clause.
  */
-export const CLAUSE_ABBREVIATIONS = Object.freeze(['St.', 'Mt.', 'Ft.', 'Pt.', 'Dr.', 'Mr.', 'Mrs.', 'Ms.', 'Jr.', 'Sr.', 'U.S.',
-  'U.S.A.', 'D.C.', 'e.g.', 'i.e.', 'vs.', 'approx.', 'no.', 'No.', 'Co.', 'Inc.', 'Corp.', 'Ltd.'] as const);
+export const CLAUSE_ABBREVIATIONS = Object.freeze(['St', 'Mt', 'Ft', 'Pt'] as const);
 /**
  * Two requests in one clause, which the filters' AND cannot run as one search, so every field is
  * refused: a request head before one of these joiners, marker words or marks (not inside one field's
@@ -136,6 +138,22 @@ export const UNMAPPED_AIRCRAFT_WORDS = Object.freeze(['fixed-wing', 'fixed wing'
  */
 export const NON_STATE_PLACES = Object.freeze(['Puerto Rico', 'Guam', 'Mexico', 'Canada', 'Ontario', 'British Columbia', 'Bahamas',
   'Virgin Islands', 'American Samoa', 'Northern Mariana Islands'] as const);
+/**
+ * Whatever its case, after a state value: a coordinator (a comma, and, or, &, /, plus), then
+ * (past the articles and quantifiers below) a word that is neither a value (a state, a category, a
+ * year) nor one of these continuations refuses the state (`unmapped_value`): "Ohio, boston", "Ohio,
+ * BOSTON". A location preposition there counts only before a value, a continuation or a time of
+ * day or season: "Ohio and in boston" refuses, "Ohio and at night" and "Ohio and in 2019" do not.
+ */
+export const STATE_LIST_CONTINUATIONS = Object.freeze(['during', 'with', 'without', 'involving', 'after', 'before', 'since', 'from',
+  'between', 'when', 'where', 'while', 'which', 'that', 'who', 'whose', 'on', 'for', 'of', 'including', 'especially', 'particularly',
+  'mostly', 'mainly', 'only', 'then', 'also', 'plus', 'fatal', 'nonfatal', 'non-fatal', 'serious', 'minor', 'deadly', 'accident',
+  'accidents', 'crash', 'crashes', 'incident', 'incidents', 'event', 'events', 'case', 'cases', 'investigation', 'investigations',
+  'record', 'records', 'report', 'reports'] as const);
+export const STATE_LIST_PREPOSITIONS = Object.freeze(['in', 'near', 'at', 'around', 'outside', 'by'] as const);
+export const STATE_LIST_TIMES = Object.freeze(['night', 'day', 'dusk', 'dawn', 'noon', 'midnight', 'winter', 'summer', 'spring', 'fall',
+  'autumn'] as const);
+export const STATE_LIST_TRANSPARENT = Object.freeze(['the', 'a', 'an', 'any', 'all'] as const);
 /**
  * Alternative words. AirCase joins different filters with AND, so an alternative that touches a
  * candidate cannot be represented. With two or more fields named in the question (candidates or
@@ -385,7 +403,10 @@ const NON_STATE_RE = new RegExp(`${B}(?:${words(NON_STATE_PLACES)})${E}`, 'giu')
 const COORDINATORS = set(['and', 'or', 'nor', 'plus', '/', '&']);
 /** A clause end followed by any further word; not a dot after a one- or two-letter abbreviation or between digits. */
 const CLAUSE_END = /[.?!;]+(?=[^\p{L}\p{N}]*[\p{L}\p{N}])/gu;
-const ABBREVIATIONS = set(CLAUSE_ABBREVIATIONS);
+const ABBREVIATION_BEFORE = new RegExp(`${B}(?:${words(CLAUSE_ABBREVIATIONS)})$`, 'u');
+const LIST_CONTINUES = set(STATE_LIST_CONTINUATIONS), LIST_PREPOSITIONS = set(STATE_LIST_PREPOSITIONS);
+const LIST_TIMES = set(STATE_LIST_TIMES), LIST_TRANSPARENT = set(STATE_LIST_TRANSPARENT);
+const LIST_COORDINATOR = /^\s*(?:(?:[,&/]|(?:and|or|plus)(?![\p{L}\p{N}_]))\s*)+/iu;
 /** Words coordinated directly with a state value ("Ohio and boston") need only these between them. */
 const DIRECT_GAP = set(['and', 'or', 'nor', 'plus', '&', '/', ',', 'the']);
 /** Function words that open a phrase rather than name a list member ("in Ohio or during 2019"). */
@@ -731,10 +752,9 @@ function multipleClauses(text: string): boolean {
   return [...text.matchAll(CLAUSE_END)].some(m => {
     if (m[0] !== '.') return true;
     const at = m.index!, before = text.slice(0, at), after = text.slice(at + 1);
-    if (/\p{N}$/u.test(before) && /^\p{N}/u.test(after)) return false;
-    // The whole dotted token around this dot ("U.S.", "e.g.", "St.") must be a listed abbreviation.
-    const token = (/[\p{L}.]*$/u.exec(before)![0] + '.' + /^[\p{L}.]*/u.exec(after)![0]).replace(/^\.+/u, '').replace(/\.+$/u, '.');
-    return !ABBREVIATIONS.has(token);
+    if (/\p{N}$/u.test(before) && /^\p{N}/u.test(after)) return false; // 1.5 inches
+    if (/(?<![\p{L}\p{N}_])\p{L}$/u.test(before) && /^\p{L}(?![\p{L}\p{N}])/u.test(after)) return false; // the inner dots of U.S., e.g.
+    return !(ABBREVIATION_BEFORE.test(before) && /^\s+\p{Lu}/u.test(after)); // St. Louis
   });
 }
 
@@ -765,10 +785,9 @@ function unionOfRequests(s: Scan): boolean {
     if (heads.some(h => h.start >= at.end)) return true;
     const head = words.find(w => w.start >= at.end && !MARKER_SKIP.has(w.word));
     if (!head) continue;
-    // "Juneau, Alaska", "Kansas City, Missouri": a place, a comma, then its state is no second request.
+    // "Juneau, Alaska", "kansas city, Missouri": a place, a comma, then its state is no second request, whatever the case.
     const place = words.filter(w => w.end <= at.start).at(-1);
-    const placeComma = j[0] === ',' && place !== undefined && /^\p{Lu}\p{Ll}/u.test(text.slice(place.start, place.end))
-      && s.state.some(m => m.start === head.start);
+    const placeComma = j[0] === ',' && place !== undefined && !HEAD_NOUNS.has(place.word) && s.state.some(m => m.start === head.start);
     if (HEADS.has(head.word) || starts.has(head.start) && !placeComma) return true;
   }
   return false;
@@ -813,7 +832,33 @@ function unmappedState(s: Scan): boolean {
     return parts.length > 0 && parts.every(w => DIRECT_GAP.has(w)) && parts.some(w => COORDINATORS.has(w));
   };
   const members = s.words.filter(w => !NON_MEMBERS.has(w.word) && !values.some(m => overlaps(m, w)));
-  return members.some(o => s.state.some(v => v.end <= o.start ? direct(text.slice(v.end, o.start)) : o.end <= v.start && direct(text.slice(o.end, v.start))));
+  if (members.some(o => s.state.some(v => v.end <= o.start ? direct(text.slice(v.end, o.start)) : o.end <= v.start && direct(text.slice(o.end, v.start))))) return true;
+  return unlistedAfterState(s);
+}
+
+/** STATE_LIST_CONTINUATIONS: after a state value and a coordinator, the next word must be a value or a continuation. */
+function unlistedAfterState(s: Scan): boolean {
+  const { text, words } = s;
+  const isValue = (w: Word) => [...s.state, ...s.category].some(m => m.start <= w.start && w.end <= m.end) || YEAR_WORD.test(w.word);
+  // Pass over articles and quantifiers, and "state of" ("Alaska or the state of Hawaii").
+  const next = (i: number) => {
+    for (;;) {
+      if (words[i] && LIST_TRANSPARENT.has(words[i]!.word)) i++;
+      else if (words[i]?.word === 'state' && words[i + 1]?.word === 'of') i += 2;
+      else return i;
+    }
+  };
+  for (const m of s.state) {
+    const coordinator = LIST_COORDINATOR.exec(text.slice(m.end));
+    if (!coordinator) continue;
+    const i = next(words.findIndex(w => w.start >= m.end + coordinator[0].length)), first = words[i];
+    if (i < 0 || !first) continue;
+    if (LIST_PREPOSITIONS.has(first.word)) {
+      const second = words[next(i + 1)];
+      if (second && !isValue(second) && !LIST_TIMES.has(second.word) && !LIST_CONTINUES.has(second.word)) return true;
+    } else if (!isValue(first) && !LIST_CONTINUES.has(first.word)) return true;
+  }
+  return false;
 }
 
 function scan(text: string): Scan {

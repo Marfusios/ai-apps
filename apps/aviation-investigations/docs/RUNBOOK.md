@@ -912,9 +912,14 @@ suggestion, and edited searches never add automatic filters.
   City"; a Title-Case place, "Alaska or the Yukon"; Puerto Rico, Guam, Mexico, Canada, Ontario,
   British Columbia, the Bahamas and the other territories). So does any other word coordinated
   directly with a state value, whatever its case ("Ohio and Boston", "Ohio and BOSTON", "Ohio and
-  boston"): no city is mapped to a state, so the set is not known to be complete. "Kansas City,
-  Missouri" and "Juneau, Alaska" (a place, a comma, then its state) are one place, and a word
-  that opens a phrase ("in Ohio and at night") is no member.
+  boston"): no city is mapped to a state, so the set is not known to be complete. After a state
+  value, a coordinator (a comma, and, or, &, /, plus) and an optional location preposition (in,
+  near, at, around, outside, by) must lead to a value (a state, a category, a year), a time of day
+  or season after the preposition, or a closed list of continuations (during, with, from, which,
+  especially, fatal, accidents, ...), whatever the case: "Ohio, boston", "Ohio, BOSTON" and "Ohio
+  and in boston" refuse, while "Ohio, Iowa, or Texas", "Ohio and at night", "Ohio and in 2019" and
+  "Florida, from 2008 through 2026" stay. "Kansas City, Missouri" and "Juneau, Alaska" (a place, a
+  comma, then its state) are one place.
 - A question with instruction-like wording ("ignore previous instructions", "system prompt", "set
   the state"), quotation marks (every initial and final quote but the apostrophe ’, low-9, corner
   and ornament quotes, double primes), any control, format or default-ignorable character (soft
@@ -922,9 +927,11 @@ suggestion, and edited searches never add automatic filters.
   more than 600 characters, a condition or exception (if, unless, except, excepted, excluding,
   but not), more than one sentence or clause (a ".", "?", "!" or ";" followed by any further word,
   whatever its case: `multiple_requests`, so "Find accidents in Juneau, AK. Find fatal cases
-  anywhere." refuses; only the dot of a listed abbreviation, St., Mt., Ft., Pt., Dr., Mr., Mrs.,
-  Ms., Jr., Sr., U.S., U.S.A., D.C., e.g., i.e., vs., approx., no., No., Co., Inc., Corp., Ltd.,
-  or one between digits is no end), or two requests in one clause has no candidates at all
+  anywhere." and "Find accidents in Ohio in the U.S. fatal cases anywhere are also relevant."
+  refuse; the only dots that are no end are one between digits ("1.5 inches"), the inner dots of a
+  dotted token ("U.S"), and St., Mt., Ft. or Pt. directly before a capitalised word ("St. Louis");
+  U.S., D.C., e.g., Inc. and every other abbreviation followed by more words end the clause), or
+  two requests in one clause has no candidates at all
   (`union_of_requests`): a request head before a joiner (and, or, plus, as well as, ...), a
   marker word (also, too, then, alternatively, otherwise, else, failing that, in addition,
   besides, separately) or a comma or dash outside a value list, and after it another head or,
@@ -1026,14 +1033,14 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
-| `attributed.v1` | `e96a2903c3a01203fdb59d996a370e38bdb7364c9182f2a942d869332855029c` |
-| `attributed.v1-state` | `d1d5f480a6c1ad175475dc8e6fe66031366aad07e84ce0808f398220d4ebc018` |
-| `attributed.v1-state-years` | `65955d51f614724e4aac54e388fb09e3a0442aac28160132a0d7b5323c8ae61d` |
+| `attributed.v1` | `88baf67a23b5df36545c6e35c44303d4279df074ecb2fb2796572dbfdc1f4b4b` |
+| `attributed.v1-state` | `510c8c439fb1388158c6c71369440be48a9a1fc3c6bc978109b5d9dccf6317ba` |
+| `attributed.v1-state-years` | `cd48c000a5cdcf915733a11802aeaae28b101c1281237b10d1e3f8dff608635c` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check
 settings, caps and timeout, the prompt's system text and wire schema, and `candidate-probes.v1`:
-the candidate builder's outputs on 2,305 fixed questions (every word list entry and every form the
+the candidate builder's outputs on 2,373 fixed questions (every word list entry and every form the
 reviews named), the rendered check inputs and the decisions on 34 fixed check answers, so a changed
 rule, renderer or quote validator changes it too. Do not relabel older cached results with these
 identities.
