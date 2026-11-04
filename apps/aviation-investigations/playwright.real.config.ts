@@ -12,7 +12,9 @@ import { defineConfig, devices } from '@playwright/test';
  * may pick on E2E_REAL_V3_PORT (default E2E_REAL_PORT + 3) for tests/e2e-real/evidence-v3.spec.ts,
  * and a third with what live runs, Google sign-in through the same stand-in and an admin, on
  * E2E_REAL_LIVE_PORT (default E2E_REAL_PORT + 4) for the search checklist, ratings and the admin
- * page (tests/e2e-real/search-checklist.spec.ts, admin.spec.ts). The admin tests sign in over the
+ * page (tests/e2e-real/search-checklist.spec.ts, admin.spec.ts), and a fourth with the attributed
+ * policy (Task 30) on E2E_REAL_FIELDS_PORT (default E2E_REAL_PORT + 5) for
+ * tests/e2e-real/evidence-attributed.spec.ts. The admin tests sign in over the
  * same auth tables as tests/e2e-real/sign-in-out.spec.ts, which counts every session, so they run
  * after the rest (project `chromium-real-admin`).
  * The mock-mode tests are playwright.config.ts (`pnpm test:e2e`).
@@ -24,6 +26,9 @@ process.env.E2E_REAL_V3_PORT = String(v3Port);
 const livePort = Number(process.env.E2E_REAL_LIVE_PORT) || port + 4;
 // Read by the workers (tests/e2e-real/search-checklist.spec.ts, admin.spec.ts) and both servers.
 process.env.E2E_REAL_LIVE_PORT = String(livePort);
+const fieldsPort = Number(process.env.E2E_REAL_FIELDS_PORT) || port + 5;
+// The workers read it too (tests/e2e-real/evidence-attributed.spec.ts).
+process.env.E2E_REAL_FIELDS_PORT = String(fieldsPort);
 const authPort = Number(process.env.E2E_AUTH_PORT) || 5182;
 const googlePort = Number(process.env.E2E_GOOGLE_PORT) || 5183;
 const env: Record<string, string> = {};
@@ -53,7 +58,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 240_000,
       gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 },
-      env: { ...env, E2E_REAL_PORT: String(port), E2E_REAL_V3_PORT: String(v3Port), E2E_REAL_LIVE_PORT: String(livePort), E2E_GOOGLE_PORT: String(googlePort) },
+      env: { ...env, E2E_REAL_PORT: String(port), E2E_REAL_V3_PORT: String(v3Port), E2E_REAL_LIVE_PORT: String(livePort), E2E_REAL_FIELDS_PORT: String(fieldsPort), E2E_GOOGLE_PORT: String(googlePort) },
     },
     {
       command: 'tsx tests/e2e-real/auth-server.ts',
