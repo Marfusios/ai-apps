@@ -1,4 +1,4 @@
-/** The server's decision on the attribution check's answer (server/evidence/attribution.ts, attr.a2), with fixed answers. */
+/** The server's decision on the attribution check's answer (server/evidence/attribution.ts, attr.a3), with fixed answers. */
 import { describe, expect, it } from 'vitest';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import { automaticCandidates } from '../../shared/automatic-candidates.js';
@@ -129,14 +129,24 @@ describe('attributedFilters', () => {
     expect(decide(q, { yearFrom: 2016 }, date('after 2016')).fields).toEqual({ years: 'bad_quote' });
     expect(decide(q, { yearFrom: 2016 }, date('accidents after 2015'))).toEqual({ filters: { yearFrom: 2016 }, fields: { years: 'applied' } });
   });
-  it('a merged category mention is one value with one witness', () => {
+  it('a merged category mention is one value; a quote covering any one of its words covers it (review A2 m4)', () => {
     const q = 'Find blimp or airship accidents.', aircraft = (quote: string): Check[] => [{ id: 'category:BLIM', about: 'accident_aircraft', quote }];
     expect(decide(q, { category: ['BLIM'] }, aircraft('blimp or airship'))).toEqual({ filters: { category: ['BLIM'] }, fields: { category: 'applied' } });
-    expect(decide(q, { category: ['BLIM'] }, aircraft('airship')).fields).toEqual({ category: 'bad_quote' });
+    expect(decide(q, { category: ['BLIM'] }, aircraft('airship')).fields).toEqual({ category: 'applied' });
+    expect(decide(q, { category: ['BLIM'] }, aircraft('blimp')).fields).toEqual({ category: 'applied' });
+    expect(decide(q, { category: ['BLIM'] }, aircraft('or')).fields).toEqual({ category: 'bad_quote' });
+    expect(decide(q, { category: ['BLIM'] }, aircraft('airshi')).fields).toEqual({ category: 'bad_quote' });
+  });
+  it('a decade\'s witness is "the 1990s", without its lead word (review A2 m4)', () => {
+    const date = (quote: string): Check[] => [{ id: 'years', about: 'accident_date', quote }];
+    for (const q of ['Find accidents in the 1990s.', 'Find accidents during the 1990s.', 'Find crashes of the 1990s.']) {
+      expect(decide(q, { yearFrom: 1990, yearTo: 1999 }, date('the 1990s')), q).toEqual({ filters: { yearFrom: 1990, yearTo: 1999 }, fields: { years: 'applied' } });
+      expect(decide(q, { yearFrom: 1990, yearTo: 1999 }, date('1990s')).fields, q).toEqual({ years: 'bad_quote' });
+    }
   });
   it('a quote from another occurrence of the same words does not cover the witness', () => {
     // "helicopter" names the category once; the quote's other "accidents" occurrence is beside another value.
-    const q = 'Find helicopter accidents near Juneau, AK, then accidents of the operator.';
+    const q = 'Find helicopter accidents near Juneau, AK where accidents of the operator happened.';
     expect(decide(q, { category: ['HELI'] }, [{ id: 'category:HELI', about: 'accident_aircraft', quote: 'accidents of the operator' }]).fields)
       .toEqual({ category: 'bad_quote' });
     // Overlapping occurrences are all tried.

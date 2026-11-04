@@ -116,7 +116,7 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
  * Includes the strict object envelope and maximum-length Unicode suggested terms. */
 export const EVIDENCE_SCOPE_CAPS = Object.freeze({ input: 10_000, output: 2_500 });
 /**
- * The automatic-filter attribution check (`attr.a2`, Haiku 5.5): a question of at most 600
+ * The automatic-filter attribution check (`attr.a3`, Haiku 5.5): a question of at most 600
  * characters and at most twelve values (eight states, the year range, three categories), one
  * check each. The free preflight counted twelve checks at their schema bounds at 982 output
  * tokens, so output is capped at 1,200; the largest request was 3,328 tokens, so input stays

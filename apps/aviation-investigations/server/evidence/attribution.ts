@@ -1,5 +1,5 @@
 /**
- * The attribution check's input and the server's decision on its answer (`attributed.v1`, attr.a2).
+ * The attribution check's input and the server's decision on its answer (`attributed.v1`, attr.a3).
  * The check judges each value on its own: `state:XX` for each state, `years` for the one range,
  * `category:CODE` for each category, as AirCase's own canonical labels, never scope text; the
  * question is the reader's. A field applies only as a whole: only when every one of its values'
@@ -62,8 +62,9 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * True when some occurrence of the quote (normalised like the question, compared without case) in
- * the normalised question contains every witness span. An empty quote, a quote that is not in the
- * question, or one taken from another occurrence of the same words does not.
+ * the normalised question contains every witness span, or one of a merged mention's words. An empty
+ * quote, a quote that is not in the question, or one taken from another occurrence of the same
+ * words does not.
  */
 export function quoteCovers(question: string, quote: string, witnesses: readonly WitnessSpan[]): boolean {
   const text = normalizedQuestion(question), q = normalizedQuestion(quote);
@@ -72,7 +73,8 @@ export function quoteCovers(question: string, quote: string, witnesses: readonly
   try { re = new RegExp(escape(q), 'giu'); } catch { return false; }
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const start = m.index, end = start + m[0].length;
-    if (witnesses.every(w => start <= w.start && w.end <= end)) return true;
+    const holds = (w: { start: number; end: number }) => start <= w.start && w.end <= end;
+    if (witnesses.every(w => holds(w) || (w.parts ?? []).some(holds))) return true;
     re.lastIndex = start + 1; // overlapping occurrences too
   }
   return false;
