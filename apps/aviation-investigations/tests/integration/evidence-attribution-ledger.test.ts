@@ -96,7 +96,7 @@ describe('the attribution ticket on the evaluation ledger', () => {
     expect((await reservations()).map(r => [r.stage, r.status])).toEqual([['scope', 'settled']]);
   });
   it('concurrent searches never overspend the cap: once it is exhausted, the attribution ticket is refused before dispatch', async () => {
-    // Three searches each settle scope at $0.0021; then $0.0015 is left, room for exactly one check ticket ($0.001025).
+    // Three searches each settle scope at $0.0021; then $0.0015 is left, room for exactly one check ticket ($0.001225).
     const searches = 3, scopeUsd = 0.0021, budgets = { ...BUDGETS, ingestionMonthlyUsd: searches * scopeUsd + 0.0015 };
     // Every search reaches its check ticket only once all scope calls have settled, and the one check that is admitted
     // answers only once every ticket was decided, so the outcome does not depend on timing.

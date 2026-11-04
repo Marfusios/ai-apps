@@ -799,8 +799,8 @@ by the evidence ranking object; incompatible model overrides fail its price chec
 Only the baseline retains suggestion-based highlights (executed words if absent);
 every alternative highlights executed lexical words. This policy is part of the hash.
 The conservative reservations are $0.0025 without rerank, $0.0090 for Haiku/50,
-$0.0140 for Haiku/100 and $0.1332 for Sonnet/50, each $0.001025 more (before the
-rounding) under the `attributed.v1` automatic-filter policy: $0.0035, $0.0100, $0.0150 and $0.1343. Confirm budget capacity before
+$0.0140 for Haiku/100 and $0.1332 for Sonnet/50, each $0.001225 more (before the
+rounding) under the `attributed.v1` automatic-filter policy: $0.0037, $0.0102, $0.0152 and $0.1345. Confirm budget capacity before
 authorizing any paid test; preflight does not generate.
 
 For a non-HTTP evaluation use `rankEvidence(config, input, providers, spendGate)`
@@ -883,17 +883,17 @@ automatic filters.
 - One check (`attr.a2`, `server/ai/prompts/attribution.a2.ts`) on Haiku 5.5, only when there is a
   candidate: one check per value (`state:XX` for each state, `years`, `category:CODE` for each
   category; at most twelve), thinking off, effort low, no retries, a cached system prompt, at most
-  5,000 input and 800 output tokens, an 8-second bound, inside the scope phase. A field applies only
+  5,000 input and 1,200 output tokens, an 8-second bound, inside the scope phase. A field applies only
   as a whole, when every one of its values' checks names the field's accident class and quotes a
   span of the question holding that value's own matched words ("crashes in Nevada of aircraft
   registered in California" cannot apply California with Nevada). A failure, timeout, invalid or
   incomplete answer, another class or a bad quote applies nothing for that field and leaves it a
   suggestion. The uncertain allowance, a failed scope and non-search intents skip the check.
-- Money: the check's worst case is $0.001025 (5,000 input tokens all written to the cache and 800
+- Money: the check's worst case is $0.001225 (5,000 input tokens all written to the cache and 1,200
   output tokens at the price table's Haiku rates). A typical request is about 3,200 input and 100
   output tokens by the offline sizing, about $0.0004, less when the five-minute cache hits; a
   search without a candidate makes no call. The search reservation adds the worst case before its
-  one rounding: $0.0035 with `er-q-v1` and $0.0100 with `er-q-h50-v1` (from $0.0025 and $0.0090).
+  one rounding: $0.0037 with `er-q-v1` and $0.0102 with `er-q-h50-v1` (from $0.0025 and $0.0090).
   The check settles as its own `attribution` ledger line; a call of unknown usage is charged at
   its worst case and counts toward the daily uncertain allowance.
 - Time: the request deadline adds the check's 8 seconds once (73 seconds at most, with the
@@ -915,11 +915,11 @@ To enable it on an environment, in two steps:
    real request: the fixed prompt and schema, the most values one check takes (the eight longest
    state labels, the longest year value and the three longest category labels) with a
    600-character question, and the output at its schema bounds (twelve checks with 160-character
-   quotes). Require no OVER row. The caps were sized offline: the largest request is about 3,700 tokens with a Latin
-   question (more with dense text), within 5,000; the output at its bounds is about 620 cl100k
-   tokens, near 1,100 with the conservative offline factor, so whether 800 holds rests on the
-   provider's count here. At runtime a request over the input cap is refused unbilled, and an
-   answer over the output cap truncates (billed); either way that search applies nothing.
+   quotes). Require no OVER row. The free count on the Task 30 release candidate was 2,924
+   tokens for the largest request with a Latin question and 3,328 with a dense one (cap 5,000),
+   2,356 for the cached prefix, and 982 for the output at its bounds (cap 1,200). At runtime a
+   request over the input cap is refused unbilled, and an answer over the output cap truncates
+   (billed); either way that search applies nothing.
 4. Run `pnpm app:up`, check that `/api/config` reports `aiAutomaticFilters:
    ['state', 'years', 'category']` after its cache expires, and that automatic filters are
    disclosed and removable without a visitor quota unit.
@@ -962,7 +962,7 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
-| `attributed.v1` | `db0b977ec4c30c682dd275e9f4f84f2d58edfe970ace481a6c90f2ef43088157` |
+| `attributed.v1` | `102401506dc56512a1042499c0afc968ac1337212cc4a11aaa6f7c001958c33c` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check

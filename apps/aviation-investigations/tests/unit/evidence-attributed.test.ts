@@ -53,10 +53,10 @@ describe('the attributed.v1 policy', () => {
     expect(Object.isFrozen(attributed)).toBe(true); expect(Object.isFrozen(attributed.attribution.caps)).toBe(true);
     expect(attributed).toMatchObject({ version: 'attributed.v1', fields: ['state', 'years', 'category'],
       rules: { state: 'state-mention.v1', years: 'year-mention.v1', category: 'category-mention.v1' },
-      attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a2' }, caps: { input: 5000, output: 800 },
+      attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a2' }, caps: { input: 5000, output: 1200 },
         timeoutMs: 8000, settings: { thinking: 'off', effort: 'low', retries: 0, cache: 'system-5m' } },
       behaviour: { version: 'candidate-probes.v1' }, appliesTo: 'question-case-search' });
-    expect(autoFilterIdentity(attributed).sha256).toBe('db0b977ec4c30c682dd275e9f4f84f2d58edfe970ace481a6c90f2ef43088157');
+    expect(autoFilterIdentity(attributed).sha256).toBe('102401506dc56512a1042499c0afc968ac1337212cc4a11aaa6f7c001958c33c');
     expect(autoFilterIdentity(autoFilterPolicy('none')).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
     expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.3')).sha256).toBe('8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de');
   });
@@ -249,15 +249,15 @@ describe('money', () => {
     const none = evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', c);
     const with_ = evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', c, attributed);
     expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', c, autoFilterPolicy('state-explicit.v1.3'))).toEqual(none);
-    expect(with_.worstCaseUsd - none.worstCaseUsd).toBeCloseTo(0.001025, 12);
+    expect(with_.worstCaseUsd - none.worstCaseUsd).toBeCloseTo(0.001225, 12);
     expect(with_.reservationUsd).toBe(Math.ceil(with_.worstCaseUsd * 1e4) / 1e4);
   });
-  it('is $0.001025: 5,000 input tokens all written to the cache, 800 output tokens (twelve checks)', () => {
-    expect(WORST).toBeCloseTo((5000 * 0.1 + 800 * 0.5 + 5000 * (0.125 - 0.1)) / 1e6, 12);
+  it('is $0.001225: 5,000 input tokens all written to the cache, 1,200 output tokens (twelve checks)', () => {
+    expect(WORST).toBeCloseTo((5000 * 0.1 + 1200 * 0.5 + 5000 * (0.125 - 0.1)) / 1e6, 12);
     expect(attributionWorstCaseUsd(attributed.attribution)).toBe(WORST);
     const reserve = (version: Parameters<typeof evidenceRankingConfig>[0]) =>
       evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig(version), attributed).reservationUsd;
-    expect(reserve('er-q-v1')).toBe(0.0035); expect(reserve('er-q-h50-v1')).toBe(0.01); expect(reserve('er-q-h100-v1')).toBe(0.015);
+    expect(reserve('er-q-v1')).toBe(0.0037); expect(reserve('er-q-h50-v1')).toBe(0.0102); expect(reserve('er-q-h100-v1')).toBe(0.0152);
   });
   it('the admitted HTTP gate holds every stage within the attributed reservation; without the check\'s share it runs out at the last stage', async () => {
     const c = evidenceRankingConfig('er-q-h50-v1'), r = c.rerank!;
@@ -275,7 +275,7 @@ describe('money', () => {
   });
   it('the startup check prices the configured policy, and an uncertain check counts toward the daily allowance', () => {
     const cfg = loadConfig({ env: { NODE_ENV: 'test', AI_LLM_PROVIDER: 'fake', AVIATION_EVIDENCE_AUTO_FILTERS: 'attributed.v1' }, files: [] });
-    expect(evidenceStartupCheck(cfg).reservationUsd).toBe(0.0035);
+    expect(evidenceStartupCheck(cfg).reservationUsd).toBe(0.0037);
     expect(UNCERTAIN_CALL_STAGES).toContain('attribution');
   });
 });
@@ -298,7 +298,7 @@ describe('the real adapter on an offline transport', () => {
     expect(result).toMatchObject({ output, model: ATTRIBUTION_MODEL, promptVersion: 'attr.a2', provider: 'anthropic' });
     const [sent, options] = (parse.mock.calls as unknown as [Record<string, any>, Record<string, any>][])[0]!;
     const [counted] = (count.mock.calls as unknown as [Record<string, any>][])[0]!;
-    expect(sent).toEqual({ ...counted, max_tokens: 800 });
+    expect(sent).toEqual({ ...counted, max_tokens: 1200 });
     expect(sent.model).toBe('claude-haiku-5-5'); expect(sent.thinking).toEqual({ type: 'disabled' }); expect(sent.output_config.effort).toBe('low');
     expect(sent.system).toEqual([{ type: 'text', text: ATTRIBUTION_SYSTEM, cache_control: { type: 'ephemeral' } }]);
     expect(sent.messages).toEqual([{ role: 'user', content: renderAttributionUser(input) }]);
@@ -310,7 +310,7 @@ describe('the real adapter on an offline transport', () => {
     const { p, parse } = provider(null);
     const ctx = evidenceAttributionCtx(new AbortController().signal, 8000);
     await expect(p.evidenceAttribution!(input, { ...ctx, maxInputTokens: 5001 })).rejects.toMatchObject({ category: 'invalid_input', billing: { kind: 'none' } });
-    expect(isValidStageCtx('attribution', { ...ctx, maxOutputTokens: 801 })).toBe(false);
+    expect(isValidStageCtx('attribution', { ...ctx, maxOutputTokens: 1201 })).toBe(false);
     expect(parse).not.toHaveBeenCalled();
     await expect(p.evidenceAttribution!(input, ctx)).rejects.toMatchObject({ category: 'invalid_output', stage: 'attribution', billing: { kind: 'usage' } });
     const over = provider(undefined, 5001);
@@ -337,7 +337,7 @@ describe('preflight and prompt mirror', () => {
     expect(rows.map(r => [r.request, r.limit, r.ok])).toEqual([
       ['attr.a2: fixed prompt + schema', 5000, true], ['attr.a2: cached prefix', CACHED_PREFIX_MAX, true],
       ['attr.a2: most values, 600-character Latin question', 5000, false], ['attr.a2: most values, 600-character dense question', 5000, false],
-      ['attr.a2: output at its schema bounds', 800, true]]);
+      ['attr.a2: output at its schema bounds', 1200, true]]);
     expect(rows.every(r => r.model === 'claude-haiku-5-5')).toBe(true);
     expect(provider.calls).toHaveLength(0);
     // The reservation must cover the check, and no other policy counts it.

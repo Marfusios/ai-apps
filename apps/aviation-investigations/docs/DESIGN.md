@@ -1071,7 +1071,7 @@ free undo. Existing expiry, authorization and backup exclusions remain unchanged
 
 `server/evidence/pricing.ts` derives the reservation from the configured scope and
 embedding models and their hard caps, plus the selected reranker and, under
-`attributed.v1`, the attribution check ($0.001025), with one final rounding. For the baseline with Haiku 5.5 and `text-embedding-3-small`,
+`attributed.v1`, the attribution check ($0.001225), with one final rounding. For the baseline with Haiku 5.5 and `text-embedding-3-small`,
 10,000 scope input tokens, a cache-write premium on up to 6,500 prefix tokens,
 2,500 output tokens and 1,000 embedding tokens cost at most **$0.0024325**. Round up
 to **$0.0025** per admitted search. These scope caps are independent of `scope.v2` for
