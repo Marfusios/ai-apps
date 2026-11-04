@@ -11,7 +11,9 @@ import { describe, expect, it } from 'vitest';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { CreateEvidenceResponseSchema, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
+import { EVIDENCE_AUTO_FILTER_VERSIONS } from '../../shared/evidence-auto-filters.js';
 import { isNarrativeHeading, wholeNarrativeParagraphs } from '../../shared/narrative-paragraphs.js';
+import { autoFilterPolicy, automaticFieldsOf as registeredFields } from '../../server/evidence/auto-filters.js';
 import casesJson from '../../web/mock/cases.json' with { type: 'json' };
 import {
   MOCK_EVIDENCE_BASELINE,
@@ -20,6 +22,8 @@ import {
   MOCK_EVIDENCE_STATE_POLICY,
   MockEvidence,
   aiOrder,
+  attributedOf,
+  automaticFieldsOf,
   evidenceCases,
   parseMockEvidenceConfig,
   questionWords,
@@ -447,6 +451,29 @@ describe('what live runs: the question alone, the leading results in AI order, t
     const named = results(server, MOCK_EVIDENCE_QUESTIONS.stateMarked, 3);
     expect([named.automaticFilters, named.appliedFilters, named.undo]).toEqual([null, {}, 'none']);
     expect(named.suggestion?.filters.state).toEqual(['MO']);
+  });
+});
+
+describe('each policy applies only the fields the server says it may (`aiAutomaticFilters`)', () => {
+  it('every policy has the fields of the server’s registry (server/evidence/auto-filters.ts)', () => {
+    for (const version of EVIDENCE_AUTO_FILTER_VERSIONS) expect(automaticFieldsOf(version), version).toEqual([...registeredFields(autoFilterPolicy(version))]);
+    expect(automaticFieldsOf('attributed.v1')).toEqual(['state', 'years', 'category']);
+  });
+
+  it('an attributed policy applies the suggested values of its fields only; the suggestion keeps the rest, in order', () => {
+    const suggested: BriefFilters = { category: ['HELI'], phase: ['approach'], state: ['TX'], yearFrom: 2008, yearTo: 2010 };
+    expect(attributedOf(suggested, ['state', 'years', 'category'])).toEqual({ automatic: { state: ['TX'], yearFrom: 2008, yearTo: 2010, category: ['HELI'] }, rest: { phase: ['approach'] } });
+    // A variant with fewer fields: the others stay suggested where the scope put them.
+    const state = attributedOf(suggested, ['state']);
+    expect(state).toEqual({ automatic: { state: ['TX'] }, rest: { category: ['HELI'], phase: ['approach'], yearFrom: 2008, yearTo: 2010 } });
+    expect(Object.keys(state?.rest ?? {})).toEqual(['category', 'phase', 'yearFrom', 'yearTo']);
+    // The years are one field: both bounds, or the one suggested.
+    expect(attributedOf(suggested, ['years'])).toEqual({ automatic: { yearFrom: 2008, yearTo: 2010 }, rest: { category: ['HELI'], phase: ['approach'], state: ['TX'] } });
+    expect(attributedOf({ yearTo: 1999 }, ['years'])).toEqual({ automatic: { yearTo: 1999 }, rest: {} });
+    expect(attributedOf(suggested, ['category', 'state'])).toEqual({ automatic: { state: ['TX'], category: ['HELI'] }, rest: { phase: ['approach'], yearFrom: 2008, yearTo: 2010 } });
+    // Nothing of its fields suggested, or no fields: nothing applied.
+    expect(attributedOf({ phase: ['approach'], state: ['TX'] }, ['years', 'category'])).toBeNull();
+    expect(attributedOf(suggested, [])).toBeNull();
   });
 });
 

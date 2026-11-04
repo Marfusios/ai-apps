@@ -29,9 +29,10 @@
  * - **The suggestion** (a stand-in for the scope stage): a few fixed rules turn words into
  *   Explore filters ("helicopter", "on approach", "IMC", "fatal", "at night", "agricultural", a
  *   US state, "since 2015") and the rest into search words. The state policy may apply only the
- *   guarded state (the server's own guard, shared/state-eligibility.ts); the attributed policy
- *   applies the suggested state, years and aircraft category (standing in for the server's
- *   candidate rules and AI check, which the mock does not run). Terms keyword search read and
+ *   guarded state (the server's own guard, shared/state-eligibility.ts); an attributed policy
+ *   applies the suggested values of its fields (shared/evidence-auto-filter-fields.ts: the state,
+ *   years and aircraft category for `attributed.v1`), standing in for the server's candidate rules
+ *   and AI check, which the mock does not run. Terms keyword search read and
  *   applied filters are not suggested again, and a suggestion with nothing left is null. With the
  *   baseline ranking the excerpts mark the suggested terms when there are any, else the words
  *   searched. The server, not the scope stage, reads an explicit counting request (the dashboard
@@ -92,8 +93,8 @@ import {
 import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters } from '../../shared/contracts/briefs.js';
 import type { CaseDetail, Section } from '../../shared/contracts/cases.js';
 import type { ErrorResponse } from '../../shared/contracts/common.js';
-import type { ConfigResponse } from '../../shared/contracts/config.js';
 import { FACET_VALUES, SECTION_LABEL, defaultSearchRequest, type CaseRow, type SearchRequest } from '../../shared/contracts/search.js';
+import { EVIDENCE_AUTO_FILTER_FIELDS, type AutomaticFilterField } from '../../shared/evidence-auto-filter-fields.js';
 import { DEFAULT_EVIDENCE_AUTO_FILTERS, EVIDENCE_AUTO_FILTER_VERSIONS, type EvidenceAutoFilterVersion } from '../../shared/evidence-auto-filters.js';
 import { DEFAULT_EVIDENCE_RANKING, EVIDENCE_RANKING_VERSIONS, type EvidenceRankingVersion } from '../../shared/evidence-ranking.js';
 import { eligibleEmittedStates } from '../../shared/state-eligibility.js';
@@ -192,13 +193,13 @@ export const MOCK_EVIDENCE_STATE_POLICY: MockEvidenceConfig = { ranking: DEFAULT
  */
 export const MOCK_EVIDENCE_FIELDS_POLICY: MockEvidenceConfig = { ranking: 'er-q-h50-v1', autoFilters: 'attributed.v1' };
 
-/** A field an automatic-filter policy may apply. */
-type AutomaticField = NonNullable<ConfigResponse['aiAutomaticFilters']>[number];
-
-/** The fields an automatic-filter policy may apply (`/api/config` `aiAutomaticFilters`, as the server reports them). */
-export function automaticFieldsOf(autoFilters: EvidenceAutoFilterVersion): AutomaticField[] {
-  if (autoFilters === 'attributed.v1') return ['state', 'years', 'category'];
-  return autoFilters === 'state-explicit.v1.3' ? ['state'] : [];
+/**
+ * The fields an automatic-filter policy may apply (`/api/config` `aiAutomaticFilters`, as the server
+ * reports them): the policy's own list (shared/evidence-auto-filter-fields.ts), so a variant that
+ * applies fewer fields needs no edit here.
+ */
+export function automaticFieldsOf(autoFilters: EvidenceAutoFilterVersion): AutomaticFilterField[] {
+  return [...EVIDENCE_AUTO_FILTER_FIELDS[autoFilters]];
 }
 
 /**
@@ -617,20 +618,33 @@ function sameFilters(a: BriefFilters, b: BriefFilters): boolean {
 }
 
 /**
- * What the attributed policy (`attributed.v1`) applies of a suggestion: its state, years and
- * aircraft category, as automatic filters, the rest left suggested; null when it suggests none of
- * them. The server applies only those its candidate rules and AI check pass; the mock's stand-in
- * for the scope stage suggests only what its question names.
+ * What an attributed policy applies of a suggestion: the suggested values of its fields (the state,
+ * the years, the aircraft category: all three for `attributed.v1`), as automatic filters, the rest
+ * left suggested; null when it suggests none of them. The suggestion loses exactly the applied
+ * facets, as on the server (server/evidence/pipeline.ts). The server applies only those its
+ * candidate rules and AI check pass; the mock's stand-in for the scope stage suggests only what its
+ * question names.
  */
-function attributedOf(filters: BriefFilters): { automatic: EvidenceAutomaticFilters; rest: BriefFilters } | null {
-  const { state, yearFrom, yearTo, category, ...rest } = filters;
+export function attributedOf(filters: BriefFilters, fields: readonly AutomaticFilterField[]): { automatic: EvidenceAutomaticFilters; rest: BriefFilters } | null {
+  const { state, yearFrom, yearTo, category } = filters;
+  const years = fields.includes('years');
   const automatic: EvidenceAutomaticFilters = {
-    ...(state?.length ? { state: [...state] as EvidenceAutomaticFilters['state'] } : {}),
-    ...(yearFrom !== undefined ? { yearFrom } : {}),
-    ...(yearTo !== undefined ? { yearTo } : {}),
-    ...(category?.length ? { category: [...category] } : {}),
+    ...(fields.includes('state') && state?.length ? { state: [...state] as EvidenceAutomaticFilters['state'] } : {}),
+    ...(years && yearFrom !== undefined ? { yearFrom } : {}),
+    ...(years && yearTo !== undefined ? { yearTo } : {}),
+    ...(fields.includes('category') && category?.length ? { category: [...category] } : {}),
   };
-  return Object.keys(automatic).length > 0 ? { automatic, rest } : null;
+  if (Object.keys(automatic).length === 0) return null;
+  const rest = Object.fromEntries(Object.entries(filters).filter(([key]) => !Object.hasOwn(automatic, key))) as BriefFilters;
+  return { automatic, rest };
+}
+
+/** What the guarded state policy (`state-explicit.v1.3`) applies: the suggested states the server's own guard passes. */
+function guardedStateOf(question: string, filters: BriefFilters): { automatic: EvidenceAutomaticFilters; rest: BriefFilters } | null {
+  const { states } = eligibleEmittedStates(question, filters.state ?? []);
+  if (states.length === 0) return null;
+  const { state: _applied, ...rest } = filters;
+  return { automatic: { state: states as EvidenceAutomaticFilters['state'] }, rest };
 }
 
 /** A question search's applied filters: what its policy applied on its own (the question request carries none). */
@@ -1004,22 +1018,17 @@ export class MockEvidence {
     const mode = lexicalText(this.config.ranking);
     const keywords: Keywords = scope && mode !== 'question' ? { kind: mode, terms: scope.terms } : { kind: 'question' };
     const lexical = keywords.kind === 'terms' ? keywords.terms : keywords.kind === 'question+terms' ? `${words} ${keywords.terms}` : words;
-    // A state the question names, applied only by the guarded policy and the server's own guard;
-    // or, by the attributed policy, the suggested state, years and aircraft category.
+    // What the policy applies on its own, only ever of its fields: the guarded policy a state the
+    // question names that the server's own guard passes; an attributed policy the suggested values
+    // of its fields (the state, years and aircraft category for attributed.v1).
     let suggested = scope;
     let automaticFilters: EvidenceAutomaticFilters | null = null;
-    if (scope && this.config.autoFilters === 'state-explicit.v1.3' && (scope.filters.state ?? []).length > 0) {
-      const { states } = eligibleEmittedStates(body.question, scope.filters.state ?? []);
-      if (states.length > 0) {
-        automaticFilters = { state: states as EvidenceAutomaticFilters['state'] };
-        const { state: _applied, ...rest } = scope.filters;
-        suggested = { ...scope, filters: rest };
-      }
-    }
-    const attributed = scope && this.config.autoFilters === 'attributed.v1' ? attributedOf(scope.filters) : null;
-    if (scope && attributed) {
-      automaticFilters = attributed.automatic;
-      suggested = { ...scope, filters: attributed.rest };
+    const fields = automaticFieldsOf(this.config.autoFilters);
+    const applied = !scope || fields.length === 0 ? null
+      : this.config.autoFilters === 'state-explicit.v1.3' ? guardedStateOf(body.question, scope.filters) : attributedOf(scope.filters, fields);
+    if (scope && applied) {
+      automaticFilters = applied.automatic;
+      suggested = { ...scope, filters: applied.rest };
     }
     const suggestion = remainingSuggestion(keywords, suggested);
     // The baseline marks the suggested terms while it suggests some; every other configuration marks the words searched.
