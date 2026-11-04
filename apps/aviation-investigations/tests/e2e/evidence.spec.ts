@@ -568,7 +568,7 @@ for (const [width, theme] of [
       await expect(chip.locator('[data-automatic-tag]')).toHaveText('from your question');
     }
     // Under them, the note that AI applied them, and that taking them out is free once.
-    await expect(yours.locator('[data-automatic-note]')).toHaveText(`${AUTOMATIC_NOTE} Remove any that are wrong; searching again without them is free once.`);
+    await expect(yours.locator('[data-automatic-note]')).toHaveText(`${AUTOMATIC_NOTE} Remove any that are wrong: taking out everything AI added is free once.`);
     // The suggestion keeps only what was not applied: the phase and the terms.
     const suggestion = page.getByRole('region', { name: SUGGESTION });
     await expect(suggestion).toContainText('AI suggested these as well. AirCase applies none of them unless you choose them.');

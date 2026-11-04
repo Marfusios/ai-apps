@@ -1051,10 +1051,11 @@ note above them; counting and comparison questions get results with a hint.
    it is as AirCase applied it (a chip the reader adds, or years they change, has none). Under the
    chips, while the page has such a filter, a fixed muted note says who applied them (Task 30, after
    the design review: the tag alone can read as plain extraction; never model text): "AI applied the
-   filters marked “from your question”. Remove any that are wrong; searching again without them is
+   filters marked “from your question”. Remove any that are wrong: taking out everything AI added is
    free once." while the page says the free undo is there and that is not in doubt (as for the
    button below), else "AI applied the filters marked “from your question”." (paper prints the short
-   one). After an edit the box is labelled
+   one). The second sentence promises only what is always free (after the web review): a single
+   whole filter is free too, as the button says, but one state or category of several uses one. After an edit the box is labelled
    "Your edited search" (an edit that kept the question and has no filter left, such as removing the
    state again once its undo is used, reads as the question's own search: the page cannot tell them
    apart).
@@ -1813,7 +1814,8 @@ counting rules.
 - Builder calls (Task 30), for the owner's review: with the attributed policy (`attributed.v1`), the
   years and aircraft category chips tagged "from your question" like the state's, and each removable
   as the one free undo; the note under them, "AI applied the filters marked “from your question”.
-  Remove any that are wrong; searching again without them is free once." (the first sentence alone
-  once the undo is used or in doubt, and on paper; added after the design review); the Explore
+  Remove any that are wrong: taking out everything AI added is free once." (the first sentence alone
+  once the undo is used or in doubt, and on paper; added after the design review, its second sentence
+  reworded after the web review so that it never promises a narrower edit is free); the Explore
   nudge's and About's sentences for the three fields, which name only the fields the configuration
   reports when a policy applies fewer (§4.2, §4.8); and the admin page's words for the policy (§4.12).

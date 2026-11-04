@@ -814,7 +814,7 @@ describe('the attributed policy (`MOCK_EVIDENCE_FIELDS_POLICY`, Task 30): a stat
     // The note under them: fixed words, with the free undo while the page says it is there; paper keeps its first sentence.
     const note = automaticNote() as HTMLElement;
     expect(note.textContent).toBe(AUTOMATIC_NOTE_FREE);
-    expect(AUTOMATIC_NOTE_FREE).toBe('AI applied the filters marked “from your question”. Remove any that are wrong; searching again without them is free once.');
+    expect(AUTOMATIC_NOTE_FREE).toBe('AI applied the filters marked “from your question”. Remove any that are wrong: taking out everything AI added is free once.');
     expect(hidden(note)).toBe(true);
     const paper = panel.querySelector('[data-automatic-note-print]') as HTMLElement;
     expect([paper.textContent, paper.getAttribute('data-print')]).toEqual([AUTOMATIC_NOTE, 'only']);

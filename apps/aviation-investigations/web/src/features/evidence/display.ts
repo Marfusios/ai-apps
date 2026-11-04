@@ -83,9 +83,11 @@ export const FROM_QUESTION_SPOKEN = 'added automatically from your question';
 /**
  * Task 30 (the design review: the tag alone can read as plain extraction, though an AI check
  * applied the filter): fixed words under the filters of a search with filters AirCase applied on
- * its own, never model text. While the page says its one free undo is there…
+ * its own, never model text. While the page says its one free undo is there… (after the web
+ * review: it promises only what is always free, taking out everything AI added; a single whole
+ * filter is free too, which the button says, but one state or category of several uses one)
  */
-export const AUTOMATIC_NOTE_FREE = `AI applied the filters marked “${FROM_QUESTION}”. Remove any that are wrong; searching again without them is free once.`;
+export const AUTOMATIC_NOTE_FREE = `AI applied the filters marked “${FROM_QUESTION}”. Remove any that are wrong: taking out everything AI added is free once.`;
 /** …and otherwise (the undo used, or in doubt), and on paper. */
 export const AUTOMATIC_NOTE = `AI applied the filters marked “${FROM_QUESTION}”.`;
 /** The suggestion's note when AirCase applied something on its own (a state, years, an aircraft category, or terms). */
