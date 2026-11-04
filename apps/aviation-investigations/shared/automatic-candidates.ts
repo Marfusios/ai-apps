@@ -100,6 +100,16 @@ export const CONDITION_OR_EXCEPTION = /(?<![\p{L}\p{N}_])(?:if|unless|except|exc
  */
 export const CLAUSE_ABBREVIATIONS = Object.freeze(['St', 'Mt', 'Ft', 'Pt'] as const);
 /**
+ * Such a dot is no end only as a name's prefix ("St. Louis"): not after a capitalised word or a
+ * number ("Main St.", "5th St."), not before a request head or one of these words ("Main St. Find
+ * fatal cases anywhere.", "Main St. Fatal cases ..."), and with no request head after the name in
+ * the rest of the clause. When in doubt the dot ends the clause.
+ */
+export const CLAUSE_ABBREVIATION_STOP_WORDS = Object.freeze(['find', 'show', 'list', 'give', 'search', 'get', 'look', 'also',
+  'retrieve', 'collect', 'include', 'return', 'display', 'please', 'which', 'what', 'how', 'where', 'when', 'are', 'is'] as const);
+/** The prepositions that lead a place named before a comma and its state ("in boston, Ohio", "miles of Juneau, Alaska"). */
+export const PLACE_COMMA_LEADS = Object.freeze(['in', 'near', 'at', 'around', 'outside', 'from', 'by', 'of'] as const);
+/**
  * Two requests in one clause, which the filters' AND cannot run as one search, so every field is
  * refused: a request head before one of these joiners, marker words or marks (not inside one field's
  * value list), and after it another head, or directly (past "the" and marker words) a pronoun head
@@ -404,9 +414,12 @@ const COORDINATORS = set(['and', 'or', 'nor', 'plus', '/', '&']);
 /** A clause end followed by any further word; not a dot after a one- or two-letter abbreviation or between digits. */
 const CLAUSE_END = /[.?!;]+(?=[^\p{L}\p{N}]*[\p{L}\p{N}])/gu;
 const ABBREVIATION_BEFORE = new RegExp(`${B}(?:${words(CLAUSE_ABBREVIATIONS)})$`, 'u');
+const ABBREVIATION_PREVIOUS = new RegExp(`([\\p{L}\\p{N}][\\p{L}\\p{N}'’-]*)\\s+(?:${words(CLAUSE_ABBREVIATIONS)})$`, 'u');
+const ABBREVIATION_STOPS = set(CLAUSE_ABBREVIATION_STOP_WORDS), PLACE_LEADS = set(PLACE_COMMA_LEADS);
 const LIST_CONTINUES = set(STATE_LIST_CONTINUATIONS), LIST_PREPOSITIONS = set(STATE_LIST_PREPOSITIONS);
 const LIST_TIMES = set(STATE_LIST_TIMES), LIST_TRANSPARENT = set(STATE_LIST_TRANSPARENT);
 const LIST_COORDINATOR = /^\s*(?:(?:[,&/]|(?:and|or|plus)(?![\p{L}\p{N}_]))\s*)+/iu;
+const LIST_COORDINATOR_END = /(?:[,&/]|(?<![\p{L}\p{N}_])(?:and|or|plus))\s*$/iu;
 /** Words coordinated directly with a state value ("Ohio and boston") need only these between them. */
 const DIRECT_GAP = set(['and', 'or', 'nor', 'plus', '&', '/', ',', 'the']);
 /** Function words that open a phrase rather than name a list member ("in Ohio or during 2019"). */
@@ -754,8 +767,39 @@ function multipleClauses(text: string): boolean {
     const at = m.index!, before = text.slice(0, at), after = text.slice(at + 1);
     if (/\p{N}$/u.test(before) && /^\p{N}/u.test(after)) return false; // 1.5 inches
     if (/(?<![\p{L}\p{N}_])\p{L}$/u.test(before) && /^\p{L}(?![\p{L}\p{N}])/u.test(after)) return false; // the inner dots of U.S., e.g.
-    return !(ABBREVIATION_BEFORE.test(before) && /^\s+\p{Lu}/u.test(after)); // St. Louis
+    return !abbreviationPrefix(before, after); // St. Louis
   });
+}
+
+/** CLAUSE_ABBREVIATION_STOP_WORDS: whether a St./Mt./Ft./Pt. dot is the prefix of a name ("St. Louis") rather than an end. */
+function abbreviationPrefix(before: string, after: string): boolean {
+  if (!ABBREVIATION_BEFORE.test(before)) return false;
+  const next = /^\s+(\p{Lu}[\p{L}'’-]*)/u.exec(after);
+  if (!next) return false;
+  const previous = ABBREVIATION_PREVIOUS.exec(before)?.[1];
+  if (previous !== undefined && /^[\p{Lu}\p{N}]/u.test(previous)) return false; // "Main St.", "5th St."
+  const name = next[1]!.toLowerCase();
+  if (HEAD_NOUNS.has(name) || ABBREVIATION_STOPS.has(name)) return false;
+  const rest = after.slice(next[0].length).split(/[.?!;]/u)[0]!;
+  return !wordsOf(rest).some(w => HEAD_NOUNS.has(w.word));
+}
+
+/**
+ * A place named directly before a comma and its state, positively: one to three words right after a
+ * location preposition, none a function word or request head ("in boston, Ohio", "near Kansas City,
+ * Missouri"); "nationwide, Ohio included" is none.
+ */
+function placeBeforeComma(s: Scan, comma: number): boolean {
+  const before = s.words.filter(w => w.end <= comma);
+  const last = before.at(-1);
+  if (!last || s.text.slice(last.end, comma) !== '') return false;
+  for (let k = 1; k <= 3 && k < before.length; k++) {
+    const phrase = before.slice(-k), lead = before[before.length - k - 1]!;
+    const plain = [lead, ...phrase].every((w, i, all) => i === 0 || /^[ -]$/u.test(s.text.slice(all[i - 1]!.end, w.start)));
+    if (plain && PLACE_LEADS.has(lead.word)
+      && phrase.every(w => !NON_MEMBERS.has(w.word) && !HEAD_NOUNS.has(w.word) && !LIST_TRANSPARENT.has(w.word))) return true;
+  }
+  return false;
 }
 
 /** The values the question names, by field: state and category mentions and year expressions not attributed elsewhere. */
@@ -787,7 +831,7 @@ function unionOfRequests(s: Scan): boolean {
     if (!head) continue;
     // "Juneau, Alaska", "kansas city, Missouri": a place, a comma, then its state is no second request, whatever the case.
     const place = words.filter(w => w.end <= at.start).at(-1);
-    const placeComma = j[0] === ',' && place !== undefined && !HEAD_NOUNS.has(place.word) && s.state.some(m => m.start === head.start);
+    const placeComma = j[0] === ',' && place !== undefined && placeBeforeComma(s, at.start) && s.state.some(m => m.start === head.start);
     if (HEADS.has(head.word) || starts.has(head.start) && !placeComma) return true;
   }
   return false;
@@ -857,6 +901,31 @@ function unlistedAfterState(s: Scan): boolean {
       const second = words[next(i + 1)];
       if (second && !isValue(second) && !LIST_TIMES.has(second.word) && !LIST_CONTINUES.has(second.word)) return true;
     } else if (!isValue(first) && !LIST_CONTINUES.has(first.word)) return true;
+  }
+  // The same before a state value: "boston and in Ohio", "BOSTON and in Ohio". A place, a comma, then
+  // its state ("boston, Ohio", "Kansas City, Missouri") is one place.
+  for (const m of s.state) {
+    // k walks back from the last word before the state over the articles, "state of" and one preposition.
+    let k = words.filter(w => w.end <= m.start).length - 1;
+    for (;;) {
+      if (k >= 0 && LIST_TRANSPARENT.has(words[k]!.word)) k--;
+      else if (k >= 1 && words[k]!.word === 'of' && words[k - 1]!.word === 'state') k -= 2;
+      else break;
+    }
+    if (k >= 0 && LIST_PREPOSITIONS.has(words[k]!.word)) k--;
+    const tail = words[k + 1] && words[k + 1]!.start < m.start ? words[k + 1]!.start : m.start;
+    let rest = text.slice(0, tail), commaOnly = true, any = false;
+    for (let c = LIST_COORDINATOR_END.exec(rest); c; c = LIST_COORDINATOR_END.exec(rest)) {
+      any = true; commaOnly &&= c[0].trim() === ','; rest = rest.slice(0, c.index);
+    }
+    if (!any) continue;
+    const member = words.filter(w => w.end <= rest.length).at(-1);
+    if (!member || rest.slice(member.end).trim() !== '') continue;
+    if (isValue(member) || LIST_CONTINUES.has(member.word)) continue;
+    const lead = words[words.indexOf(member) - 1];
+    if (LIST_TIMES.has(member.word) && lead && LIST_PREPOSITIONS.has(lead.word)) continue; // "at night and in Ohio"
+    if (commaOnly && placeBeforeComma(s, member.end)) continue;
+    return true;
   }
   return false;
 }

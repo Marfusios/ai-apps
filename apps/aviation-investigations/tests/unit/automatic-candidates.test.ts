@@ -1,12 +1,15 @@
 /** The deterministic candidate rules of `attributed.v1` (shared/automatic-candidates.ts): every branch, exact. */
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import before6dd89db from '../support/candidates-6dd89db.json' with { type: 'json' };
+import { CANDIDATE_PROBES } from '../../server/evidence/candidate-probes.js';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import {
   AUTOMATIC_FIELDS, AUTOMATIC_MAX_CATEGORIES, AUTOMATIC_MAX_STATES, automaticCandidates, CATEGORY_ATTRIBUTE_NOUNS, CATEGORY_COMPARISON_PHRASES,
   CATEGORY_EXPERIENCE_PREPOSITIONS, CATEGORY_EXPERIENCE_WORDS, CATEGORY_WORDS, normalizedQuestion, REFERENCE_WORDS, REFERENCED_EVENT_NOUNS,
   NON_STATE_PLACES, NOT_RESTRICTED_PHRASES, REFERENCE_WRITING_PREPOSITIONS, REFERENCE_WRITING_WORDS, TITLE_WORDS, UNION_JOINERS,
   UNMAPPED_AIRCRAFT_WORDS, YEAR_APPROXIMATIONS, YEAR_ATTRIBUTE_WORDS, YEAR_CONTINUATION_WORDS, type AutomaticCandidate, type AutomaticField,
-  type CandidateReason, YEAR_PERSON_ACTIVITIES, YEAR_PERSON_NOUNS, CLAUSE_ABBREVIATIONS,
+  type CandidateReason, YEAR_PERSON_ACTIVITIES, YEAR_PERSON_NOUNS, CLAUSE_ABBREVIATIONS, CLAUSE_ABBREVIATION_STOP_WORDS,
 } from '../../shared/automatic-candidates.js';
 import { AIRCRAFT_CATEGORY } from '../../shared/vocab.js';
 
@@ -65,7 +68,8 @@ describe('state-mention.v1', () => {
     ['Find accidents in neither Alaska.', ['AK'], 'negated', undefined],
     ['Find accidents not near Anchorage, AK.', ['AK'], 'negated', undefined],
     // Five words before the mention are outside the window.
-    ['Find accidents not, by any account, in Alaska.', ['AK'], 'candidate', ['Alaska']],
+    ['Find accidents not involving icing by any account in Alaska.', ['AK'], 'candidate', ['Alaska']],
+    ['Find accidents not, by any account, in Alaska.', ['AK'], 'unmapped_value', undefined],
     // A non- prefix only on the mention itself.
     ['Find non-fatal accidents in Alaska.', ['AK'], 'candidate', ['Alaska']],
     ['Find accidents in Alaska with none at night.', ['AK'], 'candidate', ['Alaska']],
@@ -591,7 +595,9 @@ describe('question-level refusals: every suggested field', () => {
   it('two values of one request are no union', () => {
     expect(run('Find accidents in Alaska and Hawaii.', { state: ['AK', 'HI'] }).reasons.state).toBe('candidate');
     expect(run('Find accident reports in Alaska.', { state: ['AK'] }).reasons.state).toBe('candidate');
-    expect(run('Find accidents in St. Paul, MN and helicopter accidents.', { state: ['MN'] }).reasons.state).toBe('union_of_requests');
+    // A request head after "St. Paul" in the same clause: the dot may end a sentence (fix round 10).
+    expect(run('Find accidents in St. Paul, MN and helicopter accidents.', { state: ['MN'] }).reasons.state).toBe('multiple_requests');
+    expect(run('Find accidents in Juneau, AK and helicopter accidents.', { state: ['AK'] }).reasons.state).toBe('union_of_requests');
   });
   it.each([
     ['Find helicopter accidents in Alaska or Hawaii during 2019.', { state: ['AK', 'HI'], category: ['HELI'], yearFrom: 2019, yearTo: 2019 }],
@@ -1015,6 +1021,65 @@ describe('fix round 9 (final gate R2): blunt clause ends and case-independent li
       expect(['candidate', 'union_of_requests'], `${question}: ${r}`).toContain(r);
       if (!question.includes('helicopter')) expect(r).toBe('candidate');
     }
+  });
+});
+
+describe('fix round 10 (refusals only): supported place commas, St. prefixes, members before a state', () => {
+  it.each(['Find accidents nationwide, Ohio included.', 'Find accidents anywhere, Ohio included.', 'Find accidents in the boston area, Ohio.'])(
+    'a word before a comma is a place only after a location preposition: %s refuses', question => {
+      for (const fields of [undefined, ['state']] as const) expect(run(question, { state: ['OH'] }, {}, fields).reasons.state).not.toBe('candidate');
+    });
+  it.each(['Find accidents in boston, Ohio.', 'Find accidents near boston, Ohio.', 'Find accidents in Kansas City, Missouri.', 'Find accidents in Juneau, Alaska.'])(
+    'a place, a comma, then its state stays a candidate: %s', question => {
+      const state = question.includes('Missouri') ? ['MO'] : question.includes('Alaska') ? ['AK'] : ['OH'];
+      for (const fields of [undefined, ['state']] as const) expect(run(question, { state }, {}, fields).reasons.state).toBe('candidate');
+    });
+  it.each(['Find accidents in Ohio near Main St. Find fatal cases anywhere.', 'Find accidents in Ohio near Main St. Fatal cases anywhere are also relevant.',
+    'Find accidents in Ohio near 5th St. Fatal cases anywhere.', 'Find St. Louis accidents in Ohio.',
+    ...CLAUSE_ABBREVIATION_STOP_WORDS.map(w => `Find accidents in Ohio near St. ${w[0]!.toUpperCase()}${w.slice(1)} cases anywhere.`)])(
+    'St./Mt./Ft./Pt. that may end a sentence ends the clause: %s', question => {
+      expect(reason(question, { state: ['OH'] }, 'state')).toBe('multiple_requests');
+    });
+  it('St. Louis and Mt. Hood stay one clause', () => {
+    expect(reason('Find accidents in St. Louis, MO.', { state: ['MO'] }, 'state')).toBe('candidate');
+    expect(reason('Find accidents near Mt. Hood in Oregon.', { state: ['OR'] }, 'state')).toBe('candidate');
+  });
+  it.each(['Find accidents in boston and in Ohio.', 'Find accidents in BOSTON and in Ohio.', 'Find accidents in Boston and in Ohio.',
+    'Find accidents in boston or Ohio.', 'Find accidents in boston & Ohio.', 'Find accidents in boston and the state of Ohio.'])(
+    'a member before a state value that is no value or continuation refuses the state, whatever its case: %s', question => {
+      for (const fields of [undefined, ['state']] as const) expect(run(question, { state: ['OH'] }, {}, fields).reasons.state).not.toBe('candidate');
+    });
+  it.each<readonly [string, BriefFilters]>([
+    ['accidents in Iowa and Ohio', { state: ['IA', 'OH'] }], ['fatal and serious accidents in Ohio', { state: ['OH'] }],
+    ['Find accidents at night and in Ohio.', { state: ['OH'] }], ['Find accidents in 2019 and in Ohio.', { state: ['OH'] }],
+    ['accidents in Ohio, Iowa, or Texas', { state: ['OH', 'IA', 'TX'] }], ['Find accidents in Ohio and at night.', { state: ['OH'] }],
+    ['in Alabama, Illinois, New Mexico, or Ohio, from 2008 through 2020', { state: ['AL', 'IL', 'NM', 'OH'] }],
+    ['Which investigations in Florida, from 2008 through 2026, have a finding concerning microburst?', { state: ['FL'] }],
+  ])('control %s keeps its state', (question, emitted) => {
+    for (const fields of [undefined, ['state']] as const) expect(run(question, emitted, {}, fields).reasons.state).toBe('candidate');
+  });
+});
+
+describe('fix round 10: every change only refuses, never creates, a candidate (relative to 6dd89db)', () => {
+  const fixture = before6dd89db as { all: Record<string, string>; state: Record<string, string> };
+  const signature = (c: AutomaticCandidate) => c.field === 'years' ? `years:${c.yearFrom ?? ''}-${c.yearTo ?? ''}`
+    : `${c.field}:${(c.field === 'state' ? c.state : c.category).join(',')}`;
+  const key = (p: { question: string; suggested: unknown; requested: unknown }) =>
+    createHash('sha256').update(JSON.stringify([p.question, p.suggested, p.requested])).digest('hex').slice(0, 16);
+  it('over the probe corpus the candidates are a subset of those at 6dd89db, with all fields and with the state only', () => {
+    let compared = 0;
+    for (const p of CANDIDATE_PROBES) {
+      const k = key(p);
+      for (const [fields, old] of [[undefined, fixture.all[k]], [['state'] as const, fixture.state[k]]] as const) {
+        if (old === undefined) continue; // a probe newer than the fixture
+        const earlier = new Set(old ? old.split('|') : []);
+        for (const c of automaticCandidates(p.question, p.suggested, p.requested, fields).candidates) {
+          expect(earlier.has(signature(c)), `${p.question} ${signature(c)}`).toBe(true);
+        }
+        compared++;
+      }
+    }
+    expect(compared).toBeGreaterThan(4_800);
   });
 });
 
