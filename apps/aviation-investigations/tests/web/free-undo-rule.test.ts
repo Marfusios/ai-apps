@@ -66,6 +66,15 @@ describe('removing whole automatic filters is the free undo', () => {
     expect(freeUndoRule(original({ state: ['AK'], yearTo: 1999 }), edit({ yearTo: 1999 }))).toBe(true);
   });
 
+  it('a category-only page: the whole category, the terms, or both', () => {
+    const helicopter = original({ category: ['HELI'] }, PLUS_TERMS);
+    expect(freeUndoRule(helicopter, edit({}))).toBe(true);
+    expect(freeUndoRule(helicopter, edit({ ...CATEGORY }, { keywords: 'question' }))).toBe(true);
+    expect(freeUndoRule(helicopter, edit({}, { keywords: 'question' }))).toBe(true);
+    // Two categories are one filter: both out together.
+    expect(freeUndoRule(original({ category: ['AIR', 'HELI'] }), edit({}))).toBe(true);
+  });
+
   it('a state-only page reads as before: the whole state, the terms, or both', () => {
     const texas = original({ state: ['TX'] }, PLUS_TERMS);
     expect(freeUndoRule(texas, edit({}))).toBe(true);
@@ -75,6 +84,14 @@ describe('removing whole automatic filters is the free undo', () => {
 });
 
 describe('anything else uses one of the visitor’s searches', () => {
+  it('one category of two left narrows a category-only search, and a category added widens it', () => {
+    const two = original({ category: ['AIR', 'HELI'] });
+    expect(freeUndoRule(two, edit({ category: ['HELI'] }))).toBe(false);
+    expect(freeUndoRule(two, edit({ category: ['AIR'] }))).toBe(false);
+    expect(freeUndoRule(original({ category: ['HELI'] }), edit({ category: ['AIR', 'HELI'] }))).toBe(false);
+    expect(freeUndoRule(original({ category: ['HELI'] }), edit({ category: ['GLI'] }))).toBe(false);
+  });
+
   it('one value of several left narrows the search', () => {
     const two = original({ state: ['CA', 'NV'], category: ['AIR', 'HELI'] });
     expect(freeUndoRule(two, edit({ state: ['NV'], category: ['AIR', 'HELI'] }))).toBe(false);
@@ -166,6 +183,8 @@ describe('the mock API applies the same rule (web/mock/evidence.ts `quotaExempt`
       ids.push(mock.seedForTests({ question: MOCK_EVIDENCE_QUESTIONS.fields, query, appliedFilters: applied, automaticFilters: automatic, edited: more.edited ?? false, undoClaimed: more.undoClaimed ?? false }));
     seed({ state: ['CA', 'NV'], yearFrom: 2010, yearTo: 2020, category: ['AIR', 'HELI'] }, { state: ['CA', 'NV'], yearFrom: 2010, yearTo: 2020, category: ['AIR', 'HELI'] }, PLUS_TERMS);
     seed({ yearTo: 1999 }, { yearTo: 1999 }, QUESTION);
+    seed({ category: ['HELI'] }, { category: ['HELI'] }, PLUS_TERMS);
+    seed({ category: ['AIR', 'HELI'] }, { category: ['AIR', 'HELI'] }, QUESTION);
     seed({ state: ['TX'], yearFrom: 2008 }, { state: ['OK', 'TX'], yearFrom: 2008 }, QUESTION);
     seed({ category: ['HELI'], yearFrom: 2008 }, { category: ['AIR', 'HELI'], yearFrom: 2008 }, QUESTION);
     seed({ state: ['TX'], yearFrom: 2008 }, { state: ['TX'], yearFrom: 2010 }, PLUS_TERMS);

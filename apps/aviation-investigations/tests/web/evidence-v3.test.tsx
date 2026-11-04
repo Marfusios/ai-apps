@@ -1095,6 +1095,9 @@ describe('the AI nudge on Explore follows the server’s automatic-filter policy
 
   it('a state, years and an aircraft type applied (Task 30): the nudge says so, and that they can be removed; the rest stays a suggestion', async () => {
     freshApi({ evidence: MOCK_EVIDENCE_FIELDS_POLICY });
+    // The mock reports exactly the policy's three fields, as the server does.
+    const response = await fetch(new URL('/api/config', window.location.origin));
+    expect(ClientConfigSchema.parse(await response.json()).aiAutomaticFilters).toEqual(['state', 'years', 'category']);
     const nudge = await nudgeWith(AI_NUDGE_FIELDS);
     expect(nudge.textContent).toContain(`${AI_NUDGE_FIELDS} ${AI_NUDGE_FILTERS}`);
     expect(AI_NUDGE_FIELDS).toBe(
