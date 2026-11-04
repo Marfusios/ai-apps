@@ -213,6 +213,18 @@ describe('the About page words its AI line for what the evidence policy applies 
     expect(main.textContent).not.toContain('AI suggests filters you can choose to apply');
   });
 
+  it('only the fields the configuration reports, when a policy applies fewer of them (Task 30)', async () => {
+    server.use(...createHandlers({ evidence: MOCK_EVIDENCE_FIELDS_POLICY, aiAutomaticFilters: ['state', 'years'] }));
+    renderApp('/about');
+    const main = await screen.findByRole('main');
+    await waitFor(() =>
+      expect(main.textContent).toContain(
+        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state or years your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.',
+      ),
+    );
+    expect(main.textContent).not.toContain('aircraft type');
+  });
+
   it('a server that does not report the policy: the configuration still reads, and the line claims nothing applied', async () => {
     server.use(...createHandlers({ evidence: MOCK_EVIDENCE_RELEASE, aiAutomaticFilters: null }));
     renderApp('/about');

@@ -22,6 +22,7 @@ import { cx } from '../lib/cx';
 import { formatCount, plural } from '../lib/format';
 import { AiNoticeBox } from '../features/ai/AiNoticeBox';
 import { AskAiButton } from '../features/ai/AskAiButton';
+import { automaticFieldsSentence } from '../features/ai/automatic-fields';
 import { SearchWait } from '../features/evidence/SearchWait';
 import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { CaseDrawer, type DrawerPosition } from '../features/case/CaseDrawer';
@@ -46,9 +47,10 @@ import {
  * (`/api/config` `aiAutomaticFilters`): it only suggests them (`AI_NUDGE`, also while the
  * configuration or the field is unknown), or a US state the question names explicitly can be
  * applied (the guard may abstain), which can be removed, and the rest is suggested
- * (`AI_NUDGE_STATE`), or, when the policy applies years or an aircraft category too (Task 30), a US
- * state, years or aircraft type the question sets for the accidents can be applied (an AI check may
- * abstain), which can be removed, and the rest is suggested (`AI_NUDGE_FIELDS`).
+ * (`AI_NUDGE_STATE`), or, when the policy applies years or an aircraft category too (Task 30), the
+ * fields it reports (a US state, years or aircraft type) the question sets for the accidents can be
+ * applied (an AI check may abstain), which can be removed, and the rest is suggested: `AI_NUDGE_FIELDS`
+ * for all three, else the same sentence naming only the reported fields (features/ai/automatic-fields.ts).
  */
 export const AI_NUDGE = 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.';
 export const AI_NUDGE_STATE =
@@ -59,7 +61,7 @@ export const AI_NUDGE_FILTERS = 'It searches the question alone, not the filters
 
 /** The nudge's sentence for the fields the evidence policy applies on its own (unknown: the cautious one). */
 export function aiNudge(automatic: ClientConfig['aiAutomaticFilters']): string {
-  if (automatic?.includes('years') || automatic?.includes('category')) return AI_NUDGE_FIELDS;
+  if (automatic?.includes('years') || automatic?.includes('category')) return `Ask in plain English: AirCase searches with your question. ${automaticFieldsSentence(automatic)}`;
   return automatic?.includes('state') ? AI_NUDGE_STATE : AI_NUDGE;
 }
 

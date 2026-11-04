@@ -1104,18 +1104,39 @@ describe('the AI nudge on Explore follows the server’s automatic-filter policy
     expect(document.body.textContent).not.toContain(AI_NUDGE);
   });
 
-  it('each sentence for the fields the policy may apply, on Explore and on About: years or a category name all three; the state alone its own; nothing or unknown the cautious one', () => {
+  it('a policy that applies fewer fields (Task 30): the nudge names only those the configuration reports', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_FIELDS_POLICY, aiAutomaticFilters: ['years'] });
+    const years = 'Ask in plain English: AirCase searches with your question. Years your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.';
+    const nudge = await nudgeWith(years);
+    expect(nudge.textContent).toContain(`${years} ${AI_NUDGE_FILTERS}`);
+    expect(document.body.textContent).not.toContain('US state');
+    expect(document.body.textContent).not.toContain('aircraft type');
+  });
+
+  it('each sentence for the fields the policy may apply, on Explore and on About: years or a category name exactly the reported fields; the state alone its own; nothing or unknown the cautious one', () => {
+    const nudgeOf = (what: string) => `Ask in plain English: AirCase searches with your question. ${what} your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.`;
+    const lineOf = (what: string) => `Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. ${what} your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.`;
     for (const [fields, nudge, line] of [
       [undefined, AI_NUDGE, AI_ON_LINE],
       [[], AI_NUDGE, AI_ON_LINE],
       [['state'], AI_NUDGE_STATE, AI_ON_LINE_STATE],
+      // All three: the exact sentences.
       [['state', 'years', 'category'], AI_NUDGE_FIELDS, AI_ON_LINE_FIELDS],
-      [['years'], AI_NUDGE_FIELDS, AI_ON_LINE_FIELDS],
-      [['category'], AI_NUDGE_FIELDS, AI_ON_LINE_FIELDS],
-      [['state', 'years'], AI_NUDGE_FIELDS, AI_ON_LINE_FIELDS],
+      [['category', 'years', 'state'], AI_NUDGE_FIELDS, AI_ON_LINE_FIELDS],
+      // Fewer: only those reported, in the same order and joins.
+      [['state', 'years'], nudgeOf('A US state or years'), lineOf('A US state or years')],
+      [['state', 'category'], nudgeOf('A US state or aircraft type'), lineOf('A US state or aircraft type')],
+      [['years', 'category'], nudgeOf('Years or aircraft type'), lineOf('Years or aircraft type')],
+      [['years'], nudgeOf('Years'), lineOf('Years')],
+      [['category'], nudgeOf('Aircraft type'), lineOf('Aircraft type')],
     ] as const) {
       const automatic = fields === undefined ? undefined : [...fields];
       expect([aiNudge(automatic), aiOnLine(automatic)], JSON.stringify(fields)).toEqual([nudge, line]);
     }
+    expect(nudgeOf('A US state, years or aircraft type')).toBe(AI_NUDGE_FIELDS);
+    expect(lineOf('A US state, years or aircraft type')).toBe(AI_ON_LINE_FIELDS);
+    expect(AI_ON_LINE_FIELDS).toBe(
+      'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state, years or aircraft type your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.',
+    );
   });
 });

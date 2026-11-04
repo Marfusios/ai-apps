@@ -5,6 +5,7 @@ import { pageTitle } from '../../../shared/page-titles';
 import { aiStatusQuery, configQuery, type ClientConfig } from '../api';
 import { CREDIT_EMAIL, CREDIT_EMAIL_HREF, CREDIT_NAME, CREDIT_SITE, CREDIT_SITE_HREF, PRODUCT_NAME } from '../brand';
 import { Placard } from '../components/Placard';
+import { automaticFieldsSentence } from '../features/ai/automatic-fields';
 import { aiFeatureOn } from '../features/ai/status';
 import { formatChartDate, formatCount } from '../lib/format';
 
@@ -16,9 +17,10 @@ export const AI_OFF_LINE = 'AI features are not available yet.';
  * (`/api/config` `aiAutomaticFilters`): it only suggests them (`AI_ON_LINE`, also when the field
  * is missing), or (Task 24) a US state the question names explicitly can be applied (the guard may
  * abstain), which can be removed, and the rest is suggested (`AI_ON_LINE_STATE`), or (Task 30, when
- * the policy applies years or an aircraft category too) a US state, years or aircraft type the
- * question sets for the accidents can be applied (an AI check may abstain), which can be removed,
- * and the rest is suggested (`AI_ON_LINE_FIELDS`).
+ * the policy applies years or an aircraft category too) the fields it reports (a US state, years or
+ * aircraft type) the question sets for the accidents can be applied (an AI check may abstain), which
+ * can be removed, and the rest is suggested: `AI_ON_LINE_FIELDS` for all three, else the same
+ * sentence naming only the reported fields (features/ai/automatic-fields.ts).
  */
 export const AI_ON_LINE =
   'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words, and AI suggests filters you can choose to apply.';
@@ -29,7 +31,9 @@ export const AI_ON_LINE_FIELDS =
 
 /** The About page's AI line for the fields the evidence policy applies on its own (unknown: the cautious one). */
 export function aiOnLine(automatic: ClientConfig['aiAutomaticFilters']): string {
-  if (automatic?.includes('years') || automatic?.includes('category')) return AI_ON_LINE_FIELDS;
+  if (automatic?.includes('years') || automatic?.includes('category')) {
+    return `Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. ${automaticFieldsSentence(automatic)}`;
+  }
   return automatic?.includes('state') ? AI_ON_LINE_STATE : AI_ON_LINE;
 }
 

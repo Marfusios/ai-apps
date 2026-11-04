@@ -496,8 +496,10 @@ Facet order:
   English: AirCase searches with your question. A US state, years or aircraft type your question sets
   for the accidents can be applied automatically, and you can remove them; everything else AI suggests
   stays a suggestion." when it applies years or an aircraft category too (an AI check may still
-  decline one); and, while filters are set, "It searches the question alone, not the filters set
-  here." (an AI search reads the question alone; it never groups or explains results). It replaced
+  decline one), naming only the fields the configuration reports ("A US state or years …", "Years or
+  aircraft type …", "Aircraft type …": "A US state", "years" and "aircraft type" in that order, joined
+  "A, B or C", "A or B" or "A"); and, while filters are set, "It searches the question alone, not the
+  filters set here." (an AI search reads the question alone; it never groups or explains results). It replaced
   "Want these grouped and explained? Ask the AI with these filters."
 
 Keyword results are complete matches with a real total. They are not "examples".
@@ -979,7 +981,8 @@ then state the processed cohort (DESIGN §5).
   or, when it applies years or an aircraft category too (Task 30), "Ask in plain English: AirCase
   shows the investigations it retrieved for your question, in their own words. A US state, years or
   aircraft type your question sets for the accidents can be applied automatically, and you can remove
-  them; everything else AI suggests stays a suggestion."
+  them; everything else AI suggests stays a suggestion.", naming only the fields the configuration
+  reports, as Explore's nudge does (§4.2)
   (the first line when the configuration lacks the field; while the status or the configuration is
   unknown, neither),
   where the data comes from (the NTSB database, with the snapshot and coverage), what
@@ -1023,7 +1026,8 @@ AirCase searches with your question, and AI suggests filters you can choose to a
 server's evidence policy applies states, `aiAutomaticFilters`: "… A US state it names explicitly can
 be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.", and
 when it applies years or an aircraft category too: "… A US state, years or aircraft type your
-question sets for the accidents can be applied automatically, and you can remove them; …", §4.2)
+question sets for the accidents can be applied automatically, and you can remove them; …", naming only
+the fields it reports, §4.2)
 and, with filters set, "It searches the question alone, not the filters set here." Nothing blocks a search
 (gate answer 2 of 2026-10-25): every question opens its results and uses one AI search. A question
 about something else, or asking for operational advice, gets its results with a fixed capability
@@ -1811,5 +1815,5 @@ counting rules.
   as the one free undo; the note under them, "AI applied the filters marked “from your question”.
   Remove any that are wrong; searching again without them is free once." (the first sentence alone
   once the undo is used or in doubt, and on paper; added after the design review); the Explore
-  nudge's and About's sentences for the three fields (§4.2, §4.8); and the admin page's words for the
-  policy (§4.12).
+  nudge's and About's sentences for the three fields, which name only the fields the configuration
+  reports when a policy applies fewer (§4.2, §4.8); and the admin page's words for the policy (§4.12).
