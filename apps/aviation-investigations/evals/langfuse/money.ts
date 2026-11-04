@@ -11,8 +11,14 @@ import { appendDurable, EvaluationError } from '../search-quality/money.js';
 import type { EvaluationSettings } from '../search-quality/config.js';
 import { TASK_CAP_MICROS } from './data.js';
 
-/** One task's own ledger prefix, advisory lock and hard cap. A new task never reuses another's. */
-export interface TaskSpec { allocation: string; lockKey: number; capMicros: number; label: string; probeStage: string; applicationName: string }
+/**
+ * One task's own ledger prefix, advisory lock and hard cap. A new task never reuses another's.
+ * `family`: the task is one of several lanes that run side by side (Task 30), each with its own
+ * prefix, lock and cap; the evaluation allowance it opens with covers the remaining liability of
+ * every lane whose prefix starts with `family.prefix`, so one lane's spend cannot starve another's.
+ */
+export interface TaskSpec { allocation: string; lockKey: number; capMicros: number; label: string; probeStage: string; applicationName: string;
+  family?: { prefix: string; capMicros: number } }
 export const TASK25: TaskSpec = { allocation: 'eval-task25', lockKey: 732500025, capMicros: TASK_CAP_MICROS, label: 'Task 25',
   probeStage: 'task25_preflight', applicationName: 'aircase-task25-evaluation' };
 export const ALLOCATION = TASK25.allocation;
@@ -31,8 +37,18 @@ export function checkTaskCap(t: Totals, proposed: number, task: TaskSpec = TASK2
   if (t.chargedMicros !== t.ledgerMicros) throw new EvaluationError(`${task.label} ledger and reservations disagree`);
   if (t.chargedMicros + proposed > task.capMicros) throw new EvaluationError(`${task.label} hard $${(task.capMicros / 1e6).toFixed(2)} cap would be exceeded`);
 }
-export async function taskTotals(db: Db, task: TaskSpec = TASK25): Promise<Totals> {
-  const pattern = `${task.allocation}:%`;
+export const taskTotals = (db: Db, task: TaskSpec = TASK25): Promise<Totals> => prefixTotals(db, `${task.allocation}:%`);
+/**
+ * The evaluation allowance an allocation opens with: this month's indexing and evaluation spend plus the
+ * remaining liability, of the task alone or of its whole family of lanes. Other caps stay unchanged.
+ */
+export function categoryAllowanceMicros(ingestionMonthMicros: number, task: TaskSpec, prior: Totals, family?: Totals): number {
+  const remaining = (cap: number, t: Totals) => Math.max(0, cap - t.chargedMicros - t.openMicros);
+  const liability = task.family ? remaining(task.family.capMicros, family ?? prior) : remaining(task.capMicros, prior);
+  return Math.min(50_000_000, ingestionMonthMicros + liability);
+}
+/** Reservations and ledger lines whose request id matches `pattern` (a LIKE pattern). */
+export async function prefixTotals(db: Db, pattern: string): Promise<Totals> {
   const result = await db.execute(sql`select count(*)::int as reservations,
     count(*) filter(where status='open')::int as open,
     coalesce(sum(usd) filter(where status='open'),0)::text as open_usd,
@@ -61,14 +77,14 @@ export class CappedAllocation {
       if (!r.rows[0]?.locked) throw new EvaluationError(`${task.label} evaluator already running`);
       const monthly = await spendSnapshot(db, new Date());
       const prior = await taskTotals(db, task);
-      // Other caps stay unchanged. The category allowance covers only remaining task liability.
-      const remaining = Math.max(0, task.capMicros - prior.chargedMicros - prior.openMicros);
-      const categoryUsd = Math.min(50, (monthly.ingestionMonth + remaining) / 1e6);
+      // Other caps stay unchanged. The category allowance covers only remaining task liability (a family's, for parallel lanes).
+      const family = task.family ? await prefixTotals(db, `${task.family.prefix}%`) : undefined;
+      const categoryUsd = categoryAllowanceMicros(monthly.ingestionMonth, task, prior, family) / 1e6;
       const config = loadConfig({ env: { ...settings.env, AI_INGESTION_MONTHLY_BUDGET_USD: String(categoryUsd) } });
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       if (prior.open || prior.openMicros || prior.chargedMicros !== prior.ledgerMicros) throw new EvaluationError(`Unreconciled prior ${task.label} spend`);
       appendDurable(join(directory, 'allocation.jsonl'), { event: 'open', at: new Date().toISOString(), task: task.allocation,
-        lockKey: task.lockKey, capMicros: task.capMicros, prior, categoryBudgetMicros: toMicros(categoryUsd) });
+        lockKey: task.lockKey, capMicros: task.capMicros, prior, ...(family ? { family } : {}), categoryBudgetMicros: toMicros(categoryUsd) });
       return new CappedAllocation(db, config, client, directory, task);
     } catch (e) {
       if (client) { await client.query('select pg_advisory_unlock($1)', [task.lockKey]).catch(() => undefined); client.release(); }

@@ -7,8 +7,9 @@ import { getActiveManifest } from '../../server/db/generations.js';
 import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { createOpenAIQueryEmbedder, type QueryEmbedder } from '../../server/ai/embeddings.js';
 import type { LlmProvider } from '../../server/ai/provider.js';
-import { rankEvidence, RankingFailure } from '../../server/evidence/pipeline.js';
-import { autoFilterPolicy } from '../../server/evidence/auto-filters.js';
+import { rankEvidence, RankingFailure, type RankingExecution } from '../../server/evidence/pipeline.js';
+import { attributionStage, autoFilterIdentity, autoFilterPolicy } from '../../server/evidence/auto-filters.js';
+import { evidenceReservation } from '../../server/evidence/pricing.js';
 import { evidenceRankingConfig, evidenceRankingIdentity } from '../../server/evidence/ranking-config.js';
 import { createEvidenceRetriever, type EvidenceRetriever } from '../../server/evidence/retrieve.js';
 import { evaluationRankingSpendGate } from '../../server/evidence/spend.js';
@@ -32,9 +33,13 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
     const active = await getActiveManifest(db);
     if (!active || active.generationId !== pinned.manifest.generationId || active.casesIndex !== pinned.manifest.casesIndex || active.passagesIndex !== pinned.manifest.passagesIndex) throw new EvaluationError('Active target changed before dispatch');
     const stage = (): StageTiming => ({ attempted: false, ms: 0 });
-    const timing = { scope: stage(), embed: stage(), retrieve: stage(), rerank: stage() };
+    const timing = { scope: stage(), embed: stage(), retrieve: stage(), rerank: stage(), attribution: stage() };
     const reservationIds: string[] = [], settlements = new Map<string, number>();
-    let fused: string[] = [], embedReported = false;
+    let fused: string[] = [], embedReported = false, attributionCalled = false, execution: RankingExecution | undefined;
+    // Every earlier task ran without automatic filters; Task 30 sends its policy with the request.
+    const policy = request.autoFilters ?? autoFilterPolicy('none');
+    const check = attributionStage(policy);
+    const bound = policy.version === 'none' ? expected.reservationUsd : evidenceReservation(c.scope.model, c.embedding.model, c, policy).reservationUsd;
     const timed = async <T>(s: keyof typeof timing, fn: () => Promise<T>): Promise<T> => {
       timing[s].attempted = true; const started = performance.now();
       try { return await fn(); } finally { timing[s].ms += performance.now() - started; }
@@ -50,6 +55,12 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
         appendDurable(join(directory, 'model-results.jsonl'), { key: attempt.key, stage: 'rerank', output: result.output, usage: result.usage });
         return result;
       }),
+      ...(baseLlm.evidenceAttribution ? { evidenceAttribution: (...args: Parameters<NonNullable<LlmProvider['evidenceAttribution']>>) => timed('attribution', async () => {
+        attributionCalled = true;
+        const result = await baseLlm.evidenceAttribution!(...args);
+        appendDurable(join(directory, 'model-results.jsonl'), { key: attempt.key, stage: 'attribution', candidates: args[0].candidates, output: result.output, usage: result.usage });
+        return result;
+      }) } : {}),
     };
     const embedder: QueryEmbedder = { ...baseEmbed,
       embed: texts => timed('embed', () => baseEmbed.embed(texts)),
@@ -57,8 +68,11 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
     };
     const baseRetriever = createEvidenceRetriever(db, es, embedder);
     const retriever: EvidenceRetriever = { ...baseRetriever, search: (...args) => timed('retrieve', async () => {
-      // Only the request's own filters may reach Elasticsearch: none for Task 24, the AI's suggestion for a Task 29 edit.
-      if (filterIdentity(args[1].filters) !== filterIdentity(request.filters)) throw new EvaluationError('Unexpected filters reached execution');
+      // Only the request's own filters may reach Elasticsearch: none for Task 24, the AI's suggestion for a Task 29 edit,
+      // and for a Task 30 question search the automatic filters its policy applied.
+      const automatic = execution?.automaticFilters ?? null;
+      if (automatic && (request.edited || policy.version === 'none')) throw new EvaluationError('Unexpected automatic filters');
+      if (filterIdentity(args[1].filters) !== filterIdentity({ ...request.filters, ...(automatic ?? {}) })) throw new EvaluationError('Unexpected filters reached execution');
       const report = args[3];
       const found = await baseRetriever.search(args[0], args[1], args[2], u => { embedReported = true; report(u); }, args[4]);
       fused = found.ranking.map(r => r.ntsbNo);
@@ -87,12 +101,13 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
     try {
       result = await rankEvidence(c, { question: question.question, filters: request.filters,
         ...(request.edited ? { edited: request.edited } : {}), ...(request.skipScope ? { skipScope: true } : {}),
-        autoFilters: autoFilterPolicy('none'), dataset: pinned, signal: AbortSignal.timeout(c.deadlineMs) },
+        autoFilters: policy, dataset: pinned, signal: AbortSignal.timeout(c.deadlineMs + (check?.timeoutMs ?? 0)) },
         { llm, retriever, embeddingModel: 'text-embedding-3-small' }, spend, undefined, {
           onStage: stage => {
             finishStage(); currentStage = stage === 'retrieval' ? 'retrieve' : stage;
             timing[currentStage].attempted = true; stageStarted = performance.now();
           },
+          onExecution: e => { execution = e; },
         });
       usage = result.usage;
     } catch (e) {
@@ -109,16 +124,19 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
     if (result && (result.configuration.sha256 !== expected.sha256 || result.cases.some((v, i) => v.case.ntsbNo !== ranking[i]))) safetyFaults.push('configuration_or_projection_changed');
     if (reservationIds.some(id => !settlements.has(id))) safetyFaults.push('unsettled_stage');
     const actualUsd = [...settlements.values()].reduce((a, b) => a + b, 0);
-    if (actualUsd > expected.reservationUsd + 1e-9) safetyFaults.push('search_charge_exceeds_bound');
+    if (actualUsd > bound + 1e-9) safetyFaults.push('search_charge_exceeds_bound');
     // A bounded-input rejection is still a rerank attempt, despite making no generation call.
     if (c.rerank && fused.length && result && !['empty', 'disabled', 'not_run', 'skipped_uncertain_allowance'].includes(result.rerankOutcome)) timing.rerank.attempted = true;
     const observation: SearchObservation = { ...attempt, configuration: identity, ranking, fused,
       scopeOutcome: result?.scopeOutcome ?? 'search_failed', lexicalSource: result?.lexicalSource ?? 'unavailable',
       rerankOutcome: result?.rerankOutcome ?? 'not_run', executed: result?.executed ?? null,
-      usage, actualUsd, reservationUsd: expected.reservationUsd, reservationIds, timing, totalMs,
+      usage, actualUsd, reservationUsd: bound, reservationIds, timing, totalMs,
       embeddingCacheHit: timing.retrieve.attempted && !timing.embed.attempted && !embedReported,
       failure, safetyFaults, appliedFilters: result?.appliedFilters ?? request.filters, suggestion: result?.suggestion ?? null,
-      addedTerms: result?.addedTerms ?? null, edited: Boolean(request.edited) };
+      addedTerms: result?.addedTerms ?? null, edited: Boolean(request.edited),
+      autoFilterPolicy: result?.autoFilterPolicy ?? autoFilterIdentity(policy), automaticFilters: result?.automaticFilters ?? null,
+      autoFilterFields: result?.autoFilterFields ?? {}, autoFilterReason: result?.autoFilterReason ?? 'search_failed',
+      attributionOutcome: result?.attributionOutcome ?? 'not_run', attributionCalled };
     return observation;
   } };
 }
