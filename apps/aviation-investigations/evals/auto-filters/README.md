@@ -123,8 +123,8 @@ development runs provide the review-24 veto.
 
 **Cost.** Each item (a retrieval question) starts only when its remaining worst case fits its
 lane's cap and the allowance, and the production gate checks every stage. Worst cases per stage:
-a scope $0.002413, the check `attributionWorstCaseUsd` ($0.000625 at a 3,000-token input cap), an
-embedding $0.00002, a rerank $0.006538. A scripted-scope sample reserves the scope, the check and
+a scope $0.002413, the check `attributionWorstCaseUsd` ($0.001225 for attr.a2 at its 5,000-token input
+and 1,200-token output caps), an embedding $0.00002, a rerank $0.006538. A scripted-scope sample reserves the scope, the check and
 the embedding but can be charged only for the check; a scope.e3 sample for the scope and the check.
 Expected (conservative): $0.0003 per scripted sample whose check runs, $0.0006 per scope.e3 sample,
 about $0.0125 per retrieval sample (`QH50`, `QH50+A` and their edits).

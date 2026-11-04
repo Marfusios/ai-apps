@@ -57,8 +57,8 @@ export interface AttributionObservation extends AttributionAttempt {
   autoFilterReason: string;
   attributionOutcome: string;
   attributionCalled: boolean;
-  /** The candidates the check was given (field ids and AirCase-rendered values), never the question. */
-  candidates: { id: string; values: string[] }[] | null;
+  /** The candidate values the check was given (attr.a2: one per value, AirCase-rendered), never the question. */
+  candidates: { id: string; field: string; value: string }[] | null;
   appliedFilters: BriefFilters;
   usage: SpendLine[]; actualUsd: number; boundUsd: number; reservationIds: string[];
   timing: { scope: StageTiming; attribution: StageTiming; retrieve: StageTiming }; totalMs: number;
@@ -116,7 +116,7 @@ export function attributionPort(settings: EvaluationSettings, allocation: Pick<C
     const llm: LlmProvider = { ...base, evidenceScope,
       evidenceAttribution: (input, ctx) => timed('attribution', async () => {
         attributionCalled = true;
-        candidates = input.candidates.map(c => ({ id: c.id, values: [...c.values] }));
+        candidates = input.candidates.map(c => ({ id: c.id, field: c.field, value: c.value }));
         const result = await base.evidenceAttribution!(input, ctx);
         record({ stage: 'attribution', candidates, output: result.output, usage: result.usage });
         return result;

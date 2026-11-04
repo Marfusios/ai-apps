@@ -415,7 +415,7 @@ describe('Task 30 attribution parts through the production entry point', () => {
     expect(charged(h.memory, 'attribution')[0]).toBeGreaterThan(0);
     expect(h.memory.records.every(r => r.status === 'settled')).toBe(true);
     expect(o.actualUsd).toBeCloseTo(charged(h.memory, 'attribution')[0]!, 9);
-    expect(o.candidates).toEqual([{ id: 'state', values: ['Alaska (AK)'] }]);
+    expect(o.candidates).toEqual([{ id: 'state:AK', field: 'state', value: 'Alaska (AK)' }]);
   });
   it('leaves a trap unapplied when the check attributes it elsewhere', async () => {
     mocks.provider = createFakeProvider({ evidenceAttribution: input => ({ output: { checks: input.candidates.map(c => ({ id: c.id, about: 'aircraft_history' as const, quote: 'Alaska' })) } }) });
@@ -454,6 +454,7 @@ describe('Task 30 attribution parts through the production entry point', () => {
     expect(o.failure).toBeNull(); expect(o.safetyFaults).toEqual([]);
     expect(o).toMatchObject({ scope: 'real', automaticFilters: { state: ['AK'], yearFrom: 2019, yearTo: 2019 }, autoFilterFields: { state: 'applied', years: 'applied' } });
     expect(mocks.provider.calls.map((c: { stage: string }) => c.stage)).toEqual(['scope', 'attribution']);
+    expect(o.candidates!.map(c => c.id)).toEqual(['state:AK', 'years']);
     expect(charged(h.memory, 'scope')[0]).toBeGreaterThan(0);
     expect(o.actualUsd).toBeLessThanOrEqual(o.boundUsd);
   });
@@ -579,6 +580,8 @@ describe('Task 30 preflight', () => {
     const { preflightPart, stages, resolvePolicy } = await import('../../evals/auto-filters/run.js');
     const policy = resolvePolicy('attributed.v1'), s = stages(policy);
     expect(s.attribution).toBe(Math.round(attributionWorstCaseUsd(attributionStage(policy)!) * 1e6));
+    // attr.a2 at its caps (5,000 in, 1,200 out, the whole input a cache write): $0.001225.
+    expect(s.attribution).toBe(1225);
     const dir = mkdtempSync(join(tmpdir(), 'task30-preflight-'));
     try {
       const replayPart = preflightPart('state-replay', dir, policy, s, undefined, true) as any;
