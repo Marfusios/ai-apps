@@ -63,13 +63,28 @@ export const PART_BUDGET_MICROS: Readonly<Record<PartName, number>> = Object.fre
 /** Every lane's ledger prefix starts with `eval-task30-`; the evaluation allowance a lane opens with covers the whole family. */
 export const TASK30_FAMILY = Object.freeze({ prefix: 'eval-task30-', capMicros: 8_000_000 });
 export const laneCapMicros = (part: PartName, k: number): number => Math.floor(PART_BUDGET_MICROS[part] / k);
-/** Lock keys: 733000100 + 10 x (the part's index in PARTS, from 0) + i; dev-forced 101-109 ... retrieval 161. */
-export const laneLockKey = (part: PartName, i: number): number => 733_000_100 + 10 * PARTS.indexOf(part) + i;
-export function laneSpec(part: PartName, s: Shard): TaskSpec {
+/**
+ * An optional allocation tag (`--allocation-tag`) gives a lane a fresh ledger prefix
+ * `eval-task30-<part>-<i>of<k>-<tag>`, lock and cap (the same budget formula); the family cap still applies.
+ */
+export const ALLOCATION_TAG = /^[a-z0-9]{1,6}$/;
+/** A tag's lock block: 1 + (32-bit FNV-1a of the tag) mod 999, so tagged keys are 733001101-733999169, never an untagged one. */
+export function tagLockSlot(tag: string): number {
+  let h = 0x811c9dc5;
+  for (let n = 0; n < tag.length; n += 1) { h ^= tag.charCodeAt(n); h = Math.imul(h, 0x01000193) >>> 0; }
+  return 1 + (h % 999);
+}
+/** Lock keys: 733000100 + 10 x (the part's index in PARTS, from 0) + i (dev-forced 101-109 ... retrieval 161), plus 1000 x the tag's slot for a tagged lane. */
+export const laneLockKey = (part: PartName, i: number, tag?: string): number =>
+  733_000_100 + (tag === undefined ? 0 : 1000 * tagLockSlot(tag)) + 10 * PARTS.indexOf(part) + i;
+export function laneSpec(part: PartName, s: Shard, tag?: string): TaskSpec {
   if (!isPart(part) || !Number.isInteger(s.i) || !Number.isInteger(s.k) || s.i < 1 || s.i > s.k || s.k > MAX_SHARDS) throw new Error('invalid lane');
   if (part === 'retrieval' && s.k !== 1) throw new Error('The retrieval part runs as one lane (1/1)');
-  return { allocation: `eval-task30-${part}-${laneName(s)}`, lockKey: laneLockKey(part, s.i), capMicros: laneCapMicros(part, s.k),
-    label: `Task 30 ${part} lane ${laneName(s)}`, probeStage: 'task30_preflight', applicationName: `aircase-task30-${part}-${laneName(s)}`, family: TASK30_FAMILY };
+  if (tag !== undefined && !ALLOCATION_TAG.test(tag)) throw new Error('--allocation-tag must be 1 to 6 characters a-z or 0-9');
+  const name = `${laneName(s)}${tag === undefined ? '' : `-${tag}`}`, allocation = `eval-task30-${part}-${name}`;
+  if (allocation.length > 40) throw new Error('lane allocation name over 40 characters');
+  return { allocation, lockKey: laneLockKey(part, s.i, tag), capMicros: laneCapMicros(part, s.k),
+    label: `Task 30 ${part} lane ${name}`, probeStage: 'task30_preflight', applicationName: `aircase-task30-${part}-${name}`, family: TASK30_FAMILY };
 }
 
 // ---------------------------------------------------------------------------

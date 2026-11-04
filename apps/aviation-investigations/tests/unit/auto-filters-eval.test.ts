@@ -10,7 +10,7 @@ import {
   editRequest, exactLower, exactUpper, fieldKey, fieldOutcome, fieldSummary, fittedTerms, groupSummary, liveRequest, nextStreak30, positiveRecall,
   precisionOf, q0Request, questionPrecision, replayScope, retrievalQuestionMicros, review24Unsafe, scriptedScopeOutput, stageMicros30, trapFailures,
   trapStops, v13Replay, wholeObject, wholeOutcome, Z_ONE_SIDED_95, Z_SIMULTANEOUS, type AutoFilters, type DecisionInputs, type ScoredSample,
-  MAX_SHARDS, PART_BUDGET_MICROS, PARTS, TASK30_FAMILY, laneCapMicros, laneLockKey, laneSpec, parseShard, shardItems,
+  MAX_SHARDS, PART_BUDGET_MICROS, PARTS, TASK30_FAMILY, laneCapMicros, laneLockKey, laneSpec, parseShard, shardItems, tagLockSlot,
 } from '../../evals/auto-filters/plan.js';
 import { categoryAllowanceMicros } from '../../evals/langfuse/money.js';
 import { wilson } from '../../evals/search-quality/field-score.js';
@@ -667,6 +667,34 @@ describe('Task 30 parallel lanes', () => {
     expect(laneSpec('confirm-forced', { i: 2, k: 4 })).toMatchObject({ allocation: 'eval-task30-confirm-forced-2of4', capMicros: 325_000, family: TASK30_FAMILY });
     expect(laneSpec('retrieval', { i: 1, k: 1 }).capMicros).toBe(1_400_000);
     expect(laneSpec('dev-e2e', { i: 3, k: 3 }).capMicros).toBe(466_666);
+  });
+  it('gives a tagged lane a fresh ledger prefix, lock and cap from the same budget, still inside the family', () => {
+    expect(laneSpec('retrieval', { i: 1, k: 1 }, 's')).toEqual({ allocation: 'eval-task30-retrieval-1of1-s', lockKey: 733494161, capMicros: 1_400_000,
+      label: 'Task 30 retrieval lane 1of1-s', probeStage: 'task30_preflight', applicationName: 'aircase-task30-retrieval-1of1-s', family: TASK30_FAMILY });
+    expect(tagLockSlot('s')).toBe(494);
+    const untagged = PARTS.flatMap(part => (part === 'retrieval' ? [{ i: 1, k: 1 }] : Array.from({ length: MAX_SHARDS }, (_, j) => ({ i: j + 1, k: MAX_SHARDS })))
+      .map(shard => laneSpec(part, shard)));
+    for (const tag of ['s', 'b2', 'zzzzzz', '0']) {
+      const tagged = PARTS.flatMap(part => (part === 'retrieval' ? [{ i: 1, k: 1 }] : Array.from({ length: MAX_SHARDS }, (_, j) => ({ i: j + 1, k: MAX_SHARDS })))
+        .map(shard => laneSpec(part, shard, tag)));
+      const keys = tagged.map(l => l.lockKey);
+      expect(new Set(keys).size).toBe(keys.length);
+      for (const key of keys) {
+        expect(untagged.map(l => l.lockKey)).not.toContain(key);
+        expect([732400024, 732500025, 732900029, 733000030]).not.toContain(key);
+        expect(key).toBeGreaterThanOrEqual(733001101); expect(key).toBeLessThanOrEqual(733999169);
+      }
+      for (const l of tagged) {
+        expect(l.allocation.length).toBeLessThanOrEqual(40);
+        expect(l.allocation.startsWith(TASK30_FAMILY.prefix)).toBe(true);
+        for (const u of untagged) {
+          expect(`${l.allocation}:`.startsWith(`${u.allocation}:`)).toBe(false);
+          expect(`${u.allocation}:`.startsWith(`${l.allocation}:`)).toBe(false);
+        }
+      }
+      expect(tagged.map(l => l.capMicros)).toEqual(untagged.map(l => l.capMicros));
+    }
+    for (const bad of ['', 'S', 'abcdefg', 'a-b', 's ']) expect(() => laneSpec('retrieval', { i: 1, k: 1 }, bad)).toThrow(/allocation-tag/);
   });
   it('gives every lane its own lock key, ledger prefix and application name', () => {
     const lanes = PARTS.flatMap(part => (part === 'retrieval' ? [{ i: 1, k: 1 }] : Array.from({ length: MAX_SHARDS }, (_, j) => ({ i: j + 1, k: MAX_SHARDS })))

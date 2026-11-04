@@ -33,7 +33,7 @@ import { compareNarrowR20, fallbackRates, filterMatch, rowScores, type RowRankin
 import { probeWarnings, type LoadedProbes } from './probes.js';
 import { attemptKey, partData, seededOrder, type PartData, type PartItem } from './inputs.js';
 import {
-  AUTO_FIELDS, DEVELOPMENT_PARTS, EXPECTED_MICROS, MAX_SHARDS, PART_BUDGET_MICROS, PART_SPECS, PARTS, ROWS30, STOP_STREAK, TASK30_FAMILY, attributedRequest, attributionRates,
+  ALLOCATION_TAG, AUTO_FIELDS, DEVELOPMENT_PARTS, EXPECTED_MICROS, MAX_SHARDS, PART_BUDGET_MICROS, PART_SPECS, PARTS, ROWS30, STOP_STREAK, TASK30_FAMILY, attributedRequest, attributionRates,
   attributionSampleMicros, autoFilters, buttonFilters, c2Verdict, chargeableSampleMicros, decideField, editRequest, expectedRetrievalQuestionMicros,
   expectedSampleMicros, fieldKey, fieldSummary, groupSummary, isPart, laneName, laneSpec, liveRequest, nextStreak30, parseShard, q0Request,
   retrievalQuestionMicros, review24Unsafe, shardItems, stageMicros30, v13Replay, V13_RECORDED, wholeObject, type AttributionPart, type AutoField,
@@ -435,12 +435,15 @@ export function mergeLanes(dir: string, part: PartName, k: number, manifestSha25
 export async function main() {
   const { values } = parseArgs({ options: { mode: { type: 'string', default: 'preflight' }, part: { type: 'string' }, shard: { type: 'string', default: '1/1' },
     'env-files': { type: 'string', default: '.env.local' }, 'keys-file': { type: 'string' }, out: { type: 'string', default: 'data/work/task30' },
-    'run-label': { type: 'string' }, policy: { type: 'string', default: DEFAULT_POLICY }, 'dev-label': { type: 'string' }, 'confirm-cost': { type: 'boolean', default: false } } });
+    'run-label': { type: 'string' }, policy: { type: 'string', default: DEFAULT_POLICY }, 'dev-label': { type: 'string' }, 'confirm-cost': { type: 'boolean', default: false },
+    'allocation-tag': { type: 'string' } } });
   const label = values['run-label'] ?? '';
   if (!['preflight', 'run', 'summarize'].includes(values.mode!) || !/^[a-zA-Z0-9-]{1,40}$/.test(label)) throw new EvaluationError('Invalid mode or run label (--run-label required)');
   if (values['dev-label'] !== undefined && !/^[a-zA-Z0-9-]{1,40}$/.test(values['dev-label'])) throw new EvaluationError('Invalid development label');
   if (values.part !== undefined && !isPart(values.part)) throw new EvaluationError(`Unknown part; one of ${PARTS.join(', ')}`);
   if (values.mode === 'run' && (!values.part || !values['confirm-cost'])) throw new EvaluationError('A paid run needs --part and --confirm-cost');
+  const tag = values['allocation-tag'];
+  if (tag !== undefined && !ALLOCATION_TAG.test(tag)) throw new EvaluationError('--allocation-tag must be 1 to 6 characters a-z or 0-9');
   let shard: Shard;
   try { shard = parseShard(values.shard!); } catch (e) { throw new EvaluationError((e as Error).message); }
   if (values.part === 'retrieval' && shard.k !== 1) throw new EvaluationError('The retrieval part runs as one lane: --shard 1/1');
@@ -468,21 +471,21 @@ export async function main() {
     const preflight: Record<string, unknown>[] = [];
     for (const part of parts) {
       const laneShard = part === 'retrieval' ? { i: 1, k: 1 } : shard;
-      try { preflight.push(preflightPart(part, dir, policy, s, target?.sets, values.mode === 'preflight', laneShard, Boolean(values.part))); }
+      try { preflight.push(preflightPart(part, dir, policy, s, target?.sets, values.mode === 'preflight', laneShard, Boolean(values.part), tag)); }
       catch (e) { if (!(e instanceof EvaluationError)) throw e; preflight.push({ part, ready: false, reason: e.message }); }
     }
     console.log(JSON.stringify({ event: 'preflight', label, codeCommit, policy: policyRecord(policy), stages: s, identities: currentIdentities(),
       ...(target ? { generation: target.identity.source.generationId, revision: target.identity.dataset.revision, passages: target.identity.passages.indexVersion } : {}),
       family: TASK30_FAMILY, budgets: PART_BUDGET_MICROS, parts: preflight }));
     if (values.mode === 'preflight') {
-      if (values.part) await preflightLane(settings, dir, values.part as PartName, shard, Number(preflight[0]?.firstBlockMicros ?? 1));
+      if (values.part) await preflightLane(settings, dir, values.part as PartName, values.part === 'retrieval' ? { i: 1, k: 1 } : shard, Number(preflight[0]?.firstBlockMicros ?? 1), tag);
       else await familyTotals(settings);
       return;
     }
     const part = parts[0]!, ready = preflight[0]!;
     if (ready.ready === false) throw new EvaluationError(`${part} is not ready: ${String(ready.reason)}`);
-    if (part === 'retrieval') await runRetrieval(settings, db!, es!, target!, dir, label, codeCommit, policy, s);
-    else await runAttributionLane(settings, dir, label, codeCommit, policy, s, part, shard);
+    if (part === 'retrieval') await runRetrieval(settings, db!, es!, target!, dir, label, codeCommit, policy, s, tag);
+    else await runAttributionLane(settings, dir, label, codeCommit, policy, s, part, shard, tag);
     // The last lane of a part to close finds every lane closed and writes the part's summary.
     summarizePart(dir, part, label, dir, label);
   } finally {
@@ -491,8 +494,8 @@ export async function main() {
 }
 
 /** The free check of one lane: its allocation opened (lock, family allowance) and its first block asserted, nothing reserved. */
-async function preflightLane(settings: EvaluationSettings, dir: string, part: PartName, shard: Shard, firstBlockMicros: number) {
-  const task = laneSpec(part, shard);
+async function preflightLane(settings: EvaluationSettings, dir: string, part: PartName, shard: Shard, firstBlockMicros: number, tag?: string) {
+  const task = laneSpec(part, shard, tag);
   const allocation = await CappedAllocation.open(settings, laneDirOf(dir, part, shard), task);
   try {
     await allocation.assertBlock(Math.max(1, firstBlockMicros));
@@ -509,13 +512,13 @@ async function familyTotals(settings: EvaluationSettings) {
 
 /** One part's free preflight: its inputs validated, sizing per part and per lane, and (for a confirmation part) the probes' freeze. */
 export function preflightPart(part: PartName, dir: string, policy: EvidenceAutoFilterPolicy, s: StageMicros30, sets: readonly QuestionSet[] | undefined,
-  freeze: boolean, shard: Shard = { i: 1, k: 1 }, oneLane = false) {
+  freeze: boolean, shard: Shard = { i: 1, k: 1 }, oneLane = false, tag?: string) {
   const spec = PART_SPECS[part];
   if (part === 'retrieval') {
     if (!sets) throw new EvaluationError('The retrieval part needs the development target');
     const worst = sets.reduce((n, set) => n + set.questions.length * retrievalQuestionMicros(s, set.samples.length), 0);
     const expected = sets.reduce((n, set) => n + set.questions.length * expectedRetrievalQuestionMicros(set.samples.length), 0);
-    const task = laneSpec('retrieval', { i: 1, k: 1 });
+    const task = laneSpec('retrieval', { i: 1, k: 1 }, tag);
     return { part, ready: true, sets: sets.map(set => ({ name: set.name, questions: set.questions.length, samples: set.samples.length,
       labelChanges: set.changes.filter(c => c.added || c.removed), crossGroupShares: set.crossGroupShares })),
       worstCaseMicros: worst, chargeableWorstMicros: worst, expectedMicros: expected, firstBlockMicros: retrievalQuestionMicros(s, 3),
@@ -535,7 +538,7 @@ export function preflightPart(part: PartName, dir: string, policy: EvidenceAutoF
   };
   const whole = size(data.items), order = seededOrder(data.items);
   const lanes = (oneLane ? [shard] : Array.from({ length: shard.k }, (_, j) => ({ i: j + 1, k: shard.k }))).map(sh => {
-    const task = laneSpec(part, sh), l = size(shardItems(order, sh));
+    const task = laneSpec(part, sh, tag), l = size(shardItems(order, sh));
     return { lane: laneName(sh), allocation: task.allocation, lockKey: task.lockKey, capMicros: task.capMicros, items: l.items,
       chargeableWorstMicros: l.chargeableWorstMicros, expectedMicros: l.expectedMicros, expectedFits: l.expectedMicros <= task.capMicros };
   });
@@ -577,13 +580,13 @@ function attributionManifest(part: AttributionPart, data: PartData, order: reado
 }
 
 async function runAttributionLane(settings: EvaluationSettings, dir: string, label: string, codeCommit: string,
-  policy: EvidenceAutoFilterPolicy, s: StageMicros30, part: AttributionPart, shard: Shard) {
+  policy: EvidenceAutoFilterPolicy, s: StageMicros30, part: AttributionPart, shard: Shard, tag?: string) {
   const spec = PART_SPECS[part], data = partData(part), order = seededOrder(data.items), items = shardItems(order, shard);
   const confirmFreeze = spec.family === 'confirm' ? freezeConfirm(dir, data.probes!, false).sha256 : undefined;
   mkdirSync(partDirOf(dir, part), { recursive: true, mode: 0o700 });
   const manifest = attributionManifest(part, data, order, codeCommit, label, policy, s, shard.k, confirmFreeze);
   freezeShared(join(partDirOf(dir, part), 'manifest.json'), manifest, 'part manifest');
-  const hash = sha256(stable(manifest)), task = laneSpec(part, shard), directory = laneDirOf(dir, part, shard);
+  const hash = sha256(stable(manifest)), task = laneSpec(part, shard, tag), directory = laneDirOf(dir, part, shard);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   freezeShared(join(directory, 'lane.json'), { part, shard, allocation: task.allocation, lockKey: task.lockKey, capMicros: task.capMicros,
     manifestSha256: hash, items: items.map(i => i.id) } satisfies LaneRecord, 'lane record');
@@ -621,7 +624,7 @@ async function runAttributionLane(settings: EvaluationSettings, dir: string, lab
 }
 
 async function runRetrieval(settings: EvaluationSettings, db: Db, es: Client, target: Awaited<ReturnType<typeof verifyTarget>>,
-  dir: string, label: string, codeCommit: string, policy: EvidenceAutoFilterPolicy, s: StageMicros30) {
+  dir: string, label: string, codeCommit: string, policy: EvidenceAutoFilterPolicy, s: StageMicros30, tag?: string) {
   const shard = { i: 1, k: 1 }, partDirectory = partDirOf(dir, 'retrieval'), directory = laneDirOf(dir, 'retrieval', shard);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const identities = currentIdentities();
@@ -632,7 +635,7 @@ async function runRetrieval(settings: EvaluationSettings, db: Db, es: Client, ta
   freezeShared(join(partDirectory, 'manifest.json'), manifest, 'part manifest');
   // The re-derived sets, so the free summary needs no database.
   freezeShared(join(partDirectory, 'questions.json'), target.sets, 're-derived question sets');
-  const hash = sha256(stable(manifest)), task = laneSpec('retrieval', shard);
+  const hash = sha256(stable(manifest)), task = laneSpec('retrieval', shard, tag);
   freezeShared(join(directory, 'lane.json'), { part: 'retrieval', shard, allocation: task.allocation, lockKey: task.lockKey, capMicros: task.capMicros,
     manifestSha256: hash, items: target.sets.flatMap(set => set.questions.map(q => `${set.name}:${q.id}`)) } satisfies LaneRecord, 'lane record');
   let allocation: CappedAllocation | undefined = await CappedAllocation.open(settings, directory, task);

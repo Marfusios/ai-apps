@@ -89,7 +89,11 @@ allocation, advisory lock, cap and journal, and makes one reservation at a time 
 | `retrieval` | $1.40 | 733000161 (one lane only) |
 
 The budgets sum to the **$8.00** hard cap. A lane's ledger prefix is `eval-task30-<part>-<i>of<k>`
-and its cap the part's budget divided by `k`, rounded down. A lane opens with an evaluation
+and its cap the part's budget divided by `k`, rounded down. `--allocation-tag <tag>` (1 to 6 characters
+a-z or 0-9) gives a lane a fresh prefix `eval-task30-<part>-<i>of<k>-<tag>`, a fresh cap from the same
+formula, and lock key `733000100 + 1000 x (1 + FNV-1a(tag) mod 999) + 10 x index + i` (733001101 to
+733999169, never an untagged key; tag `s` is 733494161 for retrieval). The family cap still covers
+every `eval-task30-` lane. A lane opens with an evaluation
 allowance covering the whole family's remaining liability (every `eval-task30-` lane), so lanes
 never starve each other while each stops at its own cap. The part manifest (code commit, policy,
 input and order shas, `k`) is frozen by the first lane to start; every other lane must match it, so
