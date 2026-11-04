@@ -111,9 +111,9 @@ function Expired({ id }: { id: string }) {
 }
 
 /**
- * An empty or tiny result (UI_DESIGN §4.9): the filters and words the search ran with (a state
- * AirCase applied on its own tagged "from your question", and the terms it added), and the free
- * way out.
+ * An empty or tiny result (UI_DESIGN §4.9): the filters and words the search ran with (a state,
+ * years or an aircraft category AirCase applied on its own tagged "from your question", and the
+ * terms it added), and the free way out.
  */
 function FewResults({ search }: { search: EvidencePage }) {
   const terms = queryWords(search);

@@ -12,9 +12,10 @@ import { FAKE_TURNSTILE, TEST_SITE_KEY } from './fake-turnstile.js';
  * search; and, with the mock standing in for the configurations the evaluation may pick (session
  * storage `casebook-mock-evidence`), what AirCase added on its own (a state the question names,
  * terms in keyword search, AI's order), said as such, and its one free undo, at zero searches left
- * too, used in another tab, or failing after the server took it; and the configuration live runs
- * (`er-q-v1` with the state policy). Cloudflare's Turnstile is a local stand-in
- * (tests/e2e/fake-turnstile.ts).
+ * too, used in another tab, or failing after the server took it; the configuration live runs
+ * (`er-q-h50-v1` with nothing applied on its own); and the attributed policy of Task 30, which
+ * applies a state, years and an aircraft type the question names, each tagged and free to remove.
+ * Cloudflare's Turnstile is a local stand-in (tests/e2e/fake-turnstile.ts).
  *
  * `E2E_SCREENSHOTS=<dir>` keeps screenshots of the new states there.
  */
@@ -542,12 +543,98 @@ for (const [width, theme] of [
   });
 }
 
+// ---------------------------------------------------------------------------
+// The attributed policy (Task 30): live's ranking, with a state, years and an aircraft type the question names applied on their own
+
+const FIELDS_POLICY = { ranking: 'er-q-h50-v1', autoFilters: 'attributed.v1' };
+const FIELDS = 'Helicopter power loss on approach in Texas since 2008';
+const AUTOMATIC_NOTE = 'AI applied the filters marked “from your question”.';
+
+for (const [width, theme] of [
+  [1280, 'day'],
+  [390, 'night'],
+] as const) {
+  test(`the attributed policy: a state, years and an aircraft type from the question, each tagged; removing the years is free; the suggestion keeps the rest (${width}px, ${theme})`, async ({ page }) => {
+    await configure(page, FIELDS_POLICY);
+    await open(page, { width, theme });
+    await ask(page, FIELDS);
+    const parent = page.url();
+    const yours = page.getByRole('region', { name: 'Your search', exact: true });
+    // Three applied chips, each tagged, in the filters' order, years last.
+    await expect(yours.locator('[data-automatic]')).toHaveCount(3);
+    for (const label of ['Aircraft: Helicopter', 'Location: Texas', 'Years: from 2008']) {
+      const chip = yours.getByRole('button', { name: new RegExp(`^${label}\\s*, added automatically from your question, remove$`) });
+      await expect(chip).toBeVisible();
+      await expect(chip.locator('[data-automatic-tag]')).toHaveText('from your question');
+    }
+    // Under them, the note that AI applied them, and that taking them out is free once.
+    await expect(yours.locator('[data-automatic-note]')).toHaveText(`${AUTOMATIC_NOTE} Remove any that are wrong; searching again without them is free once.`);
+    // The suggestion keeps only what was not applied: the phase and the terms.
+    const suggestion = page.getByRole('region', { name: SUGGESTION });
+    await expect(suggestion).toContainText('AI suggested these as well. AirCase applies none of them unless you choose them.');
+    await expect(suggestion.getByRole('list', { name: 'Suggested filters' })).toHaveText('Phase: Approach');
+    await expect(suggestion).toContainText('“power loss”');
+    await expect(suggestion).not.toContainText(/Texas|Helicopter|2008/);
+    // Two investigations, in AI order, summed up with each automatic filter tagged.
+    await expect(page.locator('[data-count-line]')).toHaveText('2 retrieved · leading results ordered by AI for relevance · not every matching investigation');
+    await expect(page.locator('[data-few-results-search]')).toHaveText(
+      'Filters: Aircraft: Helicopter (from your question) · Location: Texas (from your question) · Years: from 2008 (from your question) · Your question, as asked',
+    );
+    await fitsTheWidth(page);
+    await shot(page, `fields-search-${width}-${theme}`);
+    // On paper the tags print, and the note keeps its first sentence only (paper has no controls).
+    await page.emulateMedia({ media: 'print' });
+    await expect(yours.locator('[data-automatic-tag]')).toHaveCount(3);
+    await expect(yours.locator('[data-automatic-tag]').first()).toBeVisible();
+    await expect(yours.locator('[data-automatic-note]')).toBeHidden();
+    await expect(yours.locator('[data-automatic-note-print]')).toBeVisible();
+    await expect(yours.locator('[data-automatic-note-print]')).toHaveText(AUTOMATIC_NOTE);
+    await page.emulateMedia({ media: 'screen' });
+    await expect(yours.locator('[data-automatic-note-print]')).toBeHidden();
+
+    // Removing the years: the search's one free undo.
+    await yours.getByRole('button', { name: /^Years: from 2008/ }).click();
+    await expect(yours.getByRole('button', { name: '+ Filter' })).toBeFocused();
+    await expect(yours.locator('[data-automatic]')).toHaveCount(2);
+    const again = yours.getByRole('button', { name: 'Search again · free' });
+    await expect(again).toBeVisible();
+    await fitsTheWidth(page);
+    await shot(page, `fields-undo-draft-${width}-${theme}`);
+    await again.click();
+    const edited = page.getByRole('region', { name: 'Your edited search', exact: true });
+    await expect(edited).toBeVisible();
+    await expect(page.locator('[data-evidence-live]')).toHaveText(/^\d+ investigations? retrieved\.\s*$/);
+    // Exactly the undo: the other two filters, no words; it used none of the visitor's searches.
+    const bodies = await postBodies(page, '/api/evidence');
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toEqual({ kind: 'edited', from: expect.any(String), filters: { category: ['HELI'], state: ['TX'] }, idempotencyKey: expect.any(String), turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX' });
+    await expect(page.getByRole('banner').getByText(width < 640 ? 'AI left 9 of 10' : 'AI searches left: 9 of 10')).toBeVisible();
+    await expect(page.locator('[data-undo-charged]')).toHaveCount(0);
+    // The filters left are the reader's own now: no tag, no note.
+    await expect(edited.locator('[data-automatic], [data-automatic-note]')).toHaveCount(0);
+    await shot(page, `fields-undone-${width}-${theme}`);
+
+    // Back on the first search: its undo is used, so the note no longer offers it and removing another uses one.
+    await page.goBack();
+    await expect(page).toHaveURL(parent);
+    const first = page.getByRole('region', { name: 'Your search', exact: true });
+    await expect(first.locator('[data-automatic-note]')).toHaveText(AUTOMATIC_NOTE);
+    await first.getByRole('button', { name: /^Aircraft: Helicopter/ }).click();
+    await expect(first.getByRole('button', { name: 'Search again · uses 1' })).toBeVisible();
+  });
+}
+
 for (const [policy, config, sentence] of [
   ['none', null, 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.'],
   [
     'state',
     STATE_POLICY,
     'Ask in plain English: AirCase searches with your question. A US state it names explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.',
+  ],
+  [
+    'fields',
+    FIELDS_POLICY,
+    'Ask in plain English: AirCase searches with your question. A US state, years or aircraft type your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.',
   ],
 ] as const) {
   test(`the AI nudge on Explore follows the server’s automatic-filter policy (${policy})`, async ({ page }) => {

@@ -18,6 +18,8 @@ import {
   ALSO_SEARCHED_LABEL,
   APPLY_BOTH,
   APPLY_FILTERS,
+  AUTOMATIC_NOTE,
+  AUTOMATIC_NOTE_FREE,
   DRAFT_PENDING_NOTE,
   EDIT_HINT,
   EDITED_LABEL,
@@ -44,6 +46,7 @@ import {
   UNDO_CHARGED,
   WORDS_LABEL,
   YOUR_SEARCH_LABEL,
+  automaticYears,
   isEditedSearch,
   sameSearch,
   suggestionInWords,
@@ -332,15 +335,15 @@ type Action = 'draft' | 'filters' | 'both' | 'words';
  * `evidence.v3`). "Your search" is what retrieval used: the question as asked or the reader's own
  * words, the terms AirCase added to keyword search ("Also searched", or "Keywords searched" when
  * they replaced the question there), each with the AI's tag, and the applied filters, each a chip
- * the reader can remove (blue), a state AirCase applied because the question names it tagged
- * "from your question". Changing them is free until "Search again" (an `edited` search: exactly
- * those filters, words only when they typed them, `keywords: 'question'` when they took the added
- * terms out); it says "· free" when the page says the search's one free undo is there (`undo:
- * 'available'`) and the draft only removes what AirCase added (web/src/features/evidence/undo.ts),
- * else "· uses 1" (also after a free attempt that failed, until the page, read again, says the undo
- * is still there; and right before one is sent the page is read again, "Checking…"). The same words
- * and filters open in
- * Explore as a free keyword search at any time. The suggestion (magenta, dashed, under the
+ * the reader can remove (blue), a state, years or an aircraft category AirCase applied because the
+ * question names it tagged "from your question". Changing them is free until "Search again" (an
+ * `edited` search: exactly those filters, words only when they typed them, `keywords: 'question'`
+ * when they took the added terms out); it says "· free" when the page says the search's one free
+ * undo is there (`undo: 'available'`) and the draft only removes what AirCase added
+ * (web/src/features/evidence/undo.ts), else "· uses 1" (also after a free attempt that failed,
+ * until the page, read again, says the undo is still there; and right before one is sent the page
+ * is read again, "Checking…"). The same words and filters open in Explore as a free keyword search
+ * at any time. The suggestion (magenta, dashed, under the
  * contract's "not applied" label) shows what the AI suggests and AirCase did not apply; "Apply these
  * filters" adds them to the search's filters and keeps its words, and only "Apply filters and
  * terms" (or "Search these terms") takes its terms. Each says it uses one AI search.
@@ -372,8 +375,13 @@ export function SearchPanel({ search }: SearchPanelProps) {
   // A chip the reader added and has not searched yet looks (and is said) different from an applied one.
   const applied = new Set(filterChips(current.filters).map((c) => `${c.key}=${c.label}`));
   const pending = (chip: { key: string; label: string }): boolean => !applied.has(`${chip.key}=${chip.label}`);
-  // A state AirCase applied on its own because the question names it.
-  const automatic = new Set((search.automaticFilters?.state ?? []).map((code) => `state:${code}`));
+  // What AirCase applied on its own because the question names it: a state, an aircraft category
+  // (a chip per value) and the years (one chip, while they are the automatic years).
+  const automatic = new Set([
+    ...(search.automaticFilters?.state ?? []).map((code) => `state:${code}`),
+    ...(search.automaticFilters?.category ?? []).map((code) => `category:${code}`),
+    ...(automaticYears(search.appliedFilters, search.automaticFilters) ? ['years'] : []),
+  ]);
   const isAutomatic = (chip: { key: string; label: string }): boolean => automatic.has(chip.key) && !pending(chip);
   // The added terms stay in the draft until removed; words of the reader's own replace them.
   const showAdded = added !== null && draft.addedTerms !== null && draft.terms === null;
@@ -382,6 +390,9 @@ export function SearchPanel({ search }: SearchPanelProps) {
   const keywords = words === undefined && current.addedTerms !== null && draft.addedTerms === null ? ('question' as const) : undefined;
   // A page whose undo hint is known to be out of date offers no free undo (useEvidenceSearch).
   const free = changed && search !== evidence.staleHint && freeUndoRule(search, { filters: draft.filters, terms: words, keywords });
+  // The note under filters AirCase applied on its own promises the free undo only while the page
+  // says it is there and that is not in doubt, like the button.
+  const undoOffered = search.undo === 'available' && search !== evidence.staleHint;
   const suggestion = search.suggestion;
   const suggested = suggestion ? filterChips(suggestion.filters) : [];
   // The block shows only what is still suggested (the server makes a suggestion with nothing left null).
@@ -493,6 +504,19 @@ export function SearchPanel({ search }: SearchPanelProps) {
                 </button>
               </li>
             </ul>
+            {search.automaticFilters !== null && (
+              <>
+                {/* Fixed words; paper keeps the first sentence only, as it has no controls. */}
+                <p className="mt-1 text-meta text-muted" data-automatic-note="" data-print={undoOffered ? 'hide' : undefined}>
+                  {undoOffered ? AUTOMATIC_NOTE_FREE : AUTOMATIC_NOTE}
+                </p>
+                {undoOffered && (
+                  <p className="mt-1 text-meta text-muted" data-automatic-note-print="" data-print="only">
+                    {AUTOMATIC_NOTE}
+                  </p>
+                )}
+              </>
+            )}
           </Row>
         </dl>
         {adding && (
