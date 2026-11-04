@@ -320,9 +320,9 @@ backup exclusion and 24-hour expiry.
 The automatic-state policy is frozen/hashed separately from the evaluated rankings.
 Live allows `none` (the default and rollback) and `state-explicit.v1.3`; v1.1 and
 v1.2 were never deployed and are no longer accepted. (Superseded in Task 30: live allows
-`none`, `attributed.v1-state` and `attributed.v1-state-years`; `attributed.v1`, whose category
-field failed confirmation, and `state-explicit.v1.3`, which did not clear the 2026-10-25
-re-check, are dev-only.) The guard requires the complete
+`none` and `attributed.v1-state`; `attributed.v1-state-years`, with a recorded wrong year range,
+`attributed.v1`, whose category field failed confirmation, and `state-explicit.v1.3`, which did
+not clear the 2026-10-25 re-check, are dev-only.) The guard requires the complete
 explicit model-emitted state set. v1.3 is built on v1.1 with five rejection rules
 after NFKC: bounded other-event wording, references before the first state mention,
 title/text language, destinations/departures/attributes at each mention, and a definite
@@ -383,9 +383,9 @@ filters, lexical changes, AI ordering and mark sources are disclosed and undoabl
 
 ## Automatic filters attributed to the accident (Task 30)
 
-**What changes.** With a confirmed `attributed.v1` variant, an original question search may apply the
-scope's state (and, in `attributed.v1-state-years`, its event years) without a click (DESIGN
-"Automatic filters attributed to the accident"). A wrong automatic filter silently removes relevant
+**What changes.** With `attributed.v1-state`, the only attributed variant on the live allowlist, an
+original question search may apply the scope's state without a click (DESIGN "Automatic filters
+attributed to the accident"). A wrong automatic filter silently removes relevant
 cases from that visitor's own results. It cannot reach another visitor's search, a stored case or any
 generated text.
 
@@ -416,11 +416,24 @@ or Langfuse.
 them and that taking out everything AI added is free once, and Explore and About name only the fields
 the configured variant applies.
 
-**Review status.** Codex's design review (2 P1, 4 P2, 2 P3) shaped the design and the evaluation
-protocol. Its implementation gate on the server at `54f6fc6` did not clear any field (exact year
-boundaries, joint requests and list members, and the evaluator's decision join); fix rounds 6 and 7
-and the evaluator fix answer those findings, and its re-check of the final identities is recorded
-below when it arrives. No live setting changes without the owner's decision.
+**Review status: not cleared.** Codex's design review (2 P1, 4 P2, 2 P3) shaped the design and the
+evaluation protocol. Its implementation gate at `54f6fc6` did not clear any field (exact year
+boundaries, joint requests and list members, the evaluator's decision join). After fix rounds 6 and 7
+its re-check kept years blocked by the recorded wrong range ("nothing after 2010" applied as 2011
+onwards by both locks), so years stay a suggestion and `attributed.v1-state-years` is dev-only. Its
+checks of fix rounds 8, 9 and 10 each confirmed the reported forms fixed, the subset property and the
+replayed numbers, and each found nearby forms. The last one (`1a798e4`, identity `4af506c9…`) leaves
+one P1 open, request coverage: with an approving mock check, "Find accidents in Boston and also in
+Ohio.", "Find accidents from everywhere, Ohio included." and "Find accidents in Ohio near main St.
+Fatal ones anywhere will do." still apply Ohio alone and drop the rest of the request. These are
+deterministic counterexamples, not observed model failures; the measured system made no wrong state
+filter (OBSERVABILITY_AND_EVALUATION). The refusals are a list, and three rounds show it does not close
+over open English; closing the class needs a different deterministic lock (a short list of accepted
+question shapes) at a further cost in recall. Enabling `attributed.v1-state` before that means the
+owner explicitly accepts this residual: a wrong state is disclosed as a chip "from your question" and
+removable free, and it only narrows that visitor's own results. Codex asked that such an acceptance be
+recorded as a change to the guard requirement, not as a clearance. No live setting changes without the
+owner's decision.
 
 ## Task 25 review surface
 

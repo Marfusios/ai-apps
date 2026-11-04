@@ -972,8 +972,8 @@ hashes; automatic filters are an independent, frozen
 policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
 identity includes the outputs of a fixed, versioned guard-probe set; a changed response
 to any probe changes the hash even without a guard version bump. Live accepts
-`none` and the confirmed subsets `attributed.v1-state` and `attributed.v1-state-years`
-(Task 30); `attributed.v1` (with the category, which failed confirmation) is dev-only, and
+`none` and `attributed.v1-state` (Task 30); `attributed.v1-state-years` (a recorded wrong year
+range) and `attributed.v1` (with the category, which failed confirmation) are dev-only, and
 `state-explicit.v1.3` is dev-only since the 2026-10-25 security re-check. The default stays `none` and an operator must explicitly
 enable automatic filters in the environment settings. The independent live
 ranking allowlist is `er-q-v1` and `er-q-h50-v1`. `state-explicit.v1.3` uses
@@ -1093,14 +1093,19 @@ A value is applied only when both locks agree.
    "fixed-wing" name none). Each value keeps its witness span; a value named twice is no candidate.
    Conservative structural refusals remove a field or the whole question: alternatives or unions of
    separate requests (or, either, versus, compared with, unlike, instead of; two request phrases joined
-   by and, plus, as well as, a comma or a slash; more than one sentence or clause), conditions and
+   by and, plus, as well as, a comma or a slash; "nationwide, Ohio included"; more than one sentence or
+   clause, where a dot before more words ends one unless it is a decimal or a name prefix such as
+   St. Louis), conditions and
    exceptions, local negations, referenced or written-about other events, titles and summaries,
    attribute words around a category (a helicopter pilot, hours in gliders, balloon tires, helicopter
    turbine engines), history or person words before a year (built in, trained during, pilots flying
    since), temporal continuations and approximations around a year, unrestricted wording (wherever,
-   whatever year, any aircraft), coordinated list members that map to no value (fixed-wing, Kansas City,
-   a territory), instruction-like wording, quotation marks, invisible or bidirectional characters, and
-   questions over 600 characters.
+   whatever year, any aircraft), coordinated list members that map to no value, in any letter case and
+   before or after a state (fixed-wing, Kansas City, boston, a territory), instruction-like wording,
+   quotation marks, invisible or bidirectional characters, and questions over 600 characters.
+   The refusals are a list, so they cannot prove that the named states bound the whole request: the
+   last security check still found rare forms where only the state would apply (see SECURITY_REVIEW
+   "Automatic filters attributed to the accident").
 2. **The attribution check** (prompt version `attr.a3`, kept in `server/ai/prompts/attribution.a2.ts`;
    Claude Haiku 5.5, thinking off, effort low, no retries, 5,000 input and 1,200 output tokens, eight
    seconds; one call per search, only when a candidate exists). Each candidate is one value (`state:XX`,
@@ -1115,9 +1120,10 @@ A value is applied only when both locks agree.
 
 **Variants.** The policy's `fields` drive the candidates, the check's input, `/api/config`
 `aiAutomaticFilters` and the identity: `attributed.v1` (state, years, category; dev only),
-`attributed.v1-state-years` and `attributed.v1-state`. Only a variant whose own confirmation passed
-belongs on the live allowlist; the aircraft category failed Task 30's confirmation and stays a
-suggestion.
+`attributed.v1-state-years` (dev only) and `attributed.v1-state`, the only one on the live allowlist.
+The aircraft category failed Task 30's confirmation. The years passed its forced rule, but end to end
+both locks read "nothing after 2010" as 2011 onwards (the parser takes the positive expression and the
+quote covers it). So both stay suggestions.
 
 **Money and time.** The check is one metered `attribution` stage inside the admitted reservation: its
 worst case ($0.001225, the whole input as a cache write) is added to the search reservation before the
@@ -1144,9 +1150,13 @@ back below this release once such pages exist: an older reader rejects them.
 (Task 30)" has the protocol and results. In short, on 1,644 frozen confirmation questions never used
 for any change (990 traps), the three-field policy applied a wrong state in 0 of 348 trap questions and
 0 of 200 applications, a wrong year range in 0 of 358 and 0 of 197, and a wrong category in 4 of 347;
-state and years passed the pre-registered rule, category did not. Applied automatically, the filters
-raised narrow recall@20 from 30% to 68% on the development questions and from 21% to about 50% on fresh
-ones, with no click.
+state and years passed the pre-registered rule (years are held back, see Variants), category did not.
+The state-only release candidate
+with the final rules (`attributed.v1-state`, identity `4af506c9…`) applies a wrong state in 0 of 348
+trap questions and 0 of 176 applications (0 of 151 end to end), and applies the state in 57% of the
+questions that name one (49% end to end). Applied automatically, the state alone raised narrow
+recall@20 from 30% to 60% on the development questions and from 19% to 48% on fresh ones, with no
+click (70% and 51% after one click on all suggested filters, in the same run).
 
 ### Evidence pricing (initial AI feature)
 

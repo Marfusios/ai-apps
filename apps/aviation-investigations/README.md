@@ -2532,8 +2532,8 @@ without additions; expired searches return 404. Automatic filtering is
 independent of ranking: `AVIATION_EVIDENCE_AUTO_FILTERS=none` is the default;
 `attributed.v1` (dev only, needs migration 0030) applies a state, years and an aircraft
 category the question names explicitly, each value approved by one Haiku attribution check
-(`attr.a3`); its confirmed subsets `attributed.v1-state` and `attributed.v1-state-years` (dev and
-live) apply only those fields, so the category stays a suggestion on live; `state-explicit.v1.3`
+(`attr.a3`); its subsets apply only their fields: `attributed.v1-state` (dev and live) and
+`attributed.v1-state-years` (dev only), so years and the category stay suggestions on live; `state-explicit.v1.3`
 (state only) is a dev-only opt-in, not cleared for live. No
 other scope field is applied automatically. See
 [the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migrations

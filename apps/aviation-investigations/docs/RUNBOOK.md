@@ -833,14 +833,16 @@ intervals too wide), not cleared, and it only reorders the retrieved cases.
 `AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default), an attributed policy or, on dev
 only, `state-explicit.v1.3`. Unknown values fail startup. Only a variant whose fields the Task 30
 confirmation cleared belongs on the live allowlist (`LIVE_EVIDENCE_AUTO_FILTERS`,
-`shared/evidence-auto-filters.ts`), which is `none`, `attributed.v1-state` and
-`attributed.v1-state-years`; the attributed variants differ only in their fields (the same rules,
-prompt, caps and settings):
+`shared/evidence-auto-filters.ts`), which is `none` and `attributed.v1-state`; the attributed
+variants differ only in their fields (the same rules, prompt, caps and settings):
 
-- `attributed.v1-state`: the state only; live (the state passed the confirmation).
-- `attributed.v1-state-years`: the state and the years; live (the years passed under the forced rule).
+- `attributed.v1-state`: the state only; live (the state passed the confirmation). Codex's last
+  security check did not clear it (SECURITY_REVIEW "Automatic filters attributed to the accident"):
+  enabling it is the owner's explicit acceptance of the residual it describes.
+- `attributed.v1-state-years`: the state and the years; dev-only. The years passed the forced rule,
+  but end to end both locks read "nothing after 2010" as 2011 onwards.
 - `attributed.v1`: state, years and category; dev-only, because its category field failed the
-  confirmation. On live the aircraft category therefore always stays a suggestion.
+  confirmation. On live the years and the aircraft category therefore always stay suggestions.
 
 `state-explicit.v1.3` fails startup on live: it did not clear the 2026-10-25 security re-check
 ("Find accidents involving aircraft maintained within Alaska" still got an automatic AK filter).
@@ -984,7 +986,7 @@ To enable it on an environment, in two steps:
    the new client before the next step: an older tab reads only automatic `state` and rejects a
    page with automatic years or a category. `none` on this reader is also the rollback.
 3. **Then enable**, only with the variant the confirmation cleared on the live allowlist (above):
-   set `AVIATION_EVIDENCE_AUTO_FILTERS` to `attributed.v1-state` or `attributed.v1-state-years` and run
+   set `AVIATION_EVIDENCE_AUTO_FILTERS` to `attributed.v1-state` and run
    `pnpm worker ai-preflight` with those settings **before** `pnpm app:up`. It counts the check's
    real request: the fixed prompt and schema, the most values one check takes (the eight longest
    state labels, the longest year value and the three longest category labels) with a
@@ -995,7 +997,7 @@ To enable it on an environment, in two steps:
    request over the input cap is refused unbilled, and an answer over the output cap truncates
    (billed); either way that search applies nothing.
 4. Run `pnpm app:up`, check that `/api/config` reports the variant's fields in `aiAutomaticFilters`
-   (`['state']` or `['state', 'years']`) after its cache expires, and that automatic filters are
+   (`['state']`) after its cache expires, and that automatic filters are
    disclosed and removable without a visitor quota unit.
 5. Monitor the private `autoFilterReason`, `autoFilterFields` and `attributionOutcome` mix (kept
    on failed searches too, once the check has settled), the `evidence.attribution` spans and the
