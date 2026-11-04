@@ -6,7 +6,7 @@ import {
   CATEGORY_EXPERIENCE_PREPOSITIONS, CATEGORY_EXPERIENCE_WORDS, CATEGORY_WORDS, normalizedQuestion, REFERENCE_WORDS, REFERENCED_EVENT_NOUNS,
   NON_STATE_PLACES, NOT_RESTRICTED_PHRASES, REFERENCE_WRITING_PREPOSITIONS, REFERENCE_WRITING_WORDS, TITLE_WORDS, UNION_JOINERS,
   UNMAPPED_AIRCRAFT_WORDS, YEAR_APPROXIMATIONS, YEAR_ATTRIBUTE_WORDS, YEAR_CONTINUATION_WORDS, type AutomaticCandidate, type AutomaticField,
-  type CandidateReason,
+  type CandidateReason, YEAR_PERSON_ACTIVITIES, YEAR_PERSON_NOUNS,
 } from '../../shared/automatic-candidates.js';
 import { AIRCRAFT_CATEGORY } from '../../shared/vocab.js';
 
@@ -887,6 +887,44 @@ describe('fix round 6 (implementation gate): exact years and complete joint requ
     const r = run(question, emitted);
     expect(r.candidates.map(c => c.field)).toEqual(Object.keys(emitted));
     for (const field of Object.keys(emitted) as AutomaticField[]) expect(run(question, emitted, {}, [field]).reasons[field]).toBe('candidate');
+  });
+});
+
+describe('fix round 7 (development forced run): attributes after one word, and a person\'s dated activity', () => {
+  it.each([
+    ['Find accidents of aircraft fitted with secondhand helicopter turbine engines.', 'attribute_word'],
+    ['Find helicopter rotor blade failures.', 'attribute_word'], ['Find helicopter tail rotor failures.', 'attribute_word'],
+    ['Find helicopter main gearbox failures.', 'attribute_word'], ['Find helicopter transmission failures.', 'attribute_word'],
+    ['Find helicopter turbines.', 'attribute_word'], ['Find helicopter blades.', 'attribute_word'],
+    ['Find helicopter accidents in Alaska.', 'candidate'], ['Find helicopter crashes during hover.', 'candidate'],
+    ['Find helicopter accidents involving pilots.', 'candidate'], ['Find helicopter accidents, pilot error.', 'candidate'],
+  ] as const)('%s → %s', (question, expected) => {
+    for (const fields of [undefined, ['category']] as const) expect(run(question, { category: ['HELI'] }, {}, fields).reasons.category).toBe(expected);
+  });
+  it.each(CATEGORY_ATTRIBUTE_NOUNS)('"%s" one word after a category word is an attribute too', noun => {
+    expect(reason(`Find accidents involving helicopter spare ${noun}.`, { category: ['HELI'] }, 'category')).toBe('attribute_word');
+    // Two other words between them are outside the window.
+    expect(reason(`Find helicopter accidents during ${noun} checks.`, { category: ['HELI'] }, 'category')).toBe('candidate');
+  });
+  it('an unsuggested category named for its turbine or blades refuses the field (a part)', () => {
+    expect(reason('Find glider and helicopter turbine failures.', { category: ['GLI'] }, 'category')).toBe('attribute_word');
+  });
+  it.each([
+    ['Pilots flying since 1985 who had accidents', { yearFrom: 1985 }],
+    ['Find accidents of instructors teaching since 2010.', { yearFrom: 2010 }], ['Find accidents of companies operating since 2010.', { yearFrom: 2010 }],
+    ['Find accidents of pilots certificated in 2015.', { yearFrom: 2015, yearTo: 2015 }],
+  ] as const)('%s: a person\'s activity is dated, not the accident', (question, interval) => {
+    for (const fields of [undefined, ['years']] as const) expect(run(question, interval, {}, fields).reasons.years).toBe('attribute_word');
+  });
+  it.each(YEAR_PERSON_NOUNS.flatMap(p => YEAR_PERSON_ACTIVITIES.map(a => [p, a] as const)))('"%s %s" before a year dates the activity', (person, activity) => {
+    expect(reason(`Find accidents of ${person} ${activity} since 2010.`, { yearFrom: 2010 }, 'years')).toBe('attribute_word');
+  });
+  it.each([
+    ['Find student pilot accidents in 2019.', { yearFrom: 2019, yearTo: 2019 }], ['Find accidents of student pilots in 2019.', { yearFrom: 2019, yearTo: 2019 }],
+    ['Find accidents in 2019 involving pilots flying at night.', { yearFrom: 2019, yearTo: 2019 }],
+    ['Find accidents of pilots in 2019 during night flying.', { yearFrom: 2019, yearTo: 2019 }],
+  ] as const)('%s keeps its years', (question, interval) => {
+    for (const fields of [undefined, ['years']] as const) expect(run(question, interval, {}, fields).reasons.years).toBe('candidate');
   });
 });
 

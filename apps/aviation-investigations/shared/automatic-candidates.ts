@@ -201,17 +201,22 @@ export const RELATIONSHIP_PATTERNS: readonly RegExp[] = Object.freeze([
   /\ba\s+second\s+(?:airplane|helicopter|aircraft)\b/iu,
 ]);
 /**
- * A category word directly followed by one of these names a person, a business, a part, a kit, a
- * simulator or a model ("airplane parts", "helicopter rotor", "glider kit"), not the accident aircraft.
+ * A category word followed by one of these, directly or after one other word, names a person, a
+ * business, a part, a kit, a simulator or a model ("airplane parts", "helicopter rotor blade",
+ * "secondhand helicopter turbine engines", "glider kit"), not the accident aircraft.
  */
 export const CATEGORY_ATTRIBUTE_NOUNS = Object.freeze(['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students',
   'rating', 'ratings', 'rated', 'license', 'licence', 'licensed', 'certificate', 'dealership', 'dealer', 'dealers', 'operator',
   'operators', 'company', 'companies', 'manufacturer', 'festival', 'crew', 'tires', 'tyres', 'instruction', 'training', 'school',
   'club', 'part', 'parts', 'engine', 'engines', 'propeller', 'propellers', 'rotor', 'rotors', 'wing', 'wings', 'kit', 'kits',
-  'simulator', 'simulators', 'model', 'models'] as const);
+  'simulator', 'simulators', 'model', 'models', 'turbine', 'turbines', 'blade', 'blades', 'transmission', 'transmissions',
+  'gearbox', 'gearboxes'] as const);
+/** How many other words may stand between the category word and the attribute noun. */
+export const CATEGORY_ATTRIBUTE_GAP_WORDS = 1;
 /** Of those, the parts: a rejected mention of an unsuggested category before one always refuses the field ("airplane engine failures"). */
 export const CATEGORY_PART_NOUNS = Object.freeze(['part', 'parts', 'engine', 'engines', 'propeller', 'propellers', 'rotor', 'rotors',
-  'wing', 'wings', 'kit', 'kits', 'model', 'models'] as const);
+  'wing', 'wings', 'kit', 'kits', 'model', 'models', 'turbine', 'turbines', 'blade', 'blades', 'transmission', 'transmissions',
+  'gearbox', 'gearboxes'] as const);
 /** Experience in a category ("hours in helicopters", "transitioned from gliders") within the three words before it. */
 export const CATEGORY_EXPERIENCE_WORDS = Object.freeze(['hours', 'time', 'experience', 'rated', 'rating', 'trained', 'training',
   'instruction', 'transitioned', 'transferred'] as const);
@@ -319,6 +324,17 @@ export const YEAR_ATTRIBUTE_WORDS = Object.freeze(['trained', 'maintained', 'ins
   'certificates', 'license', 'licenses', 'licence', 'licences', 'rating', 'ratings', 'model'] as const);
 export const YEAR_ATTRIBUTE_WINDOW_WORDS = 4;
 /**
+ * A person or business among the four words before a year expression, followed within two words by
+ * one of the activities, dates that activity, not the accident ("Pilots flying since 1985 who had
+ * accidents"); "student pilot accidents in 2019" stays.
+ */
+export const YEAR_PERSON_NOUNS = Object.freeze(['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students', 'mechanic',
+  'mechanics', 'owner', 'owners', 'operator', 'operators', 'crew', 'crews', 'passenger', 'passengers', 'company', 'companies',
+  'school', 'schools', 'dealer', 'dealers', 'manufacturer', 'manufacturers'] as const);
+export const YEAR_PERSON_ACTIVITIES = Object.freeze(['flying', 'operating', 'working', 'teaching', 'instructing', 'training',
+  'owning', 'holding', 'employed', 'certified', 'certificated', 'licensed', 'rated'] as const);
+export const YEAR_PERSON_ACTIVITY_WINDOW_WORDS = 2;
+/**
  * After a year expression, a joiner-like word or mark with a year, a decade or a temporal word among
  * the three words after it changes the interval, which is then not exact ("in 2015 to the
  * present", "in 2015 and also 2016", "in 2015, and the years since"). Any other follower is fine
@@ -357,7 +373,7 @@ const POSTAL = new RegExp(`(?:^|${B}(?:${POSTAL_PREPOSITIONS.map(p => `[${p[0]!.
 const ALLOWED_CATEGORIES = new Set(Object.keys(AIRCRAFT_CATEGORY).filter(code => code !== 'UNK'));
 const CATEGORY_CODE = new Map(Object.entries(CATEGORY_WORDS).flatMap(([code, list]) => list.map(w => [w, code] as const)));
 const CATEGORY_RE = new RegExp(`${B}(?:${words([...CATEGORY_CODE.keys()])})${E}`, 'giu');
-const CATEGORY_ATTRIBUTE_AFTER = new RegExp(`^[ -]+(${words(CATEGORY_ATTRIBUTE_NOUNS)})${E}`, 'iu');
+const CATEGORY_ATTRIBUTE_AFTER = new RegExp(`^(?:[ -]+[\\p{L}\\p{N}][\\p{L}\\p{N}'’]*){0,${CATEGORY_ATTRIBUTE_GAP_WORDS}}?[ -]+(${words(CATEGORY_ATTRIBUTE_NOUNS)})${E}`, 'iu');
 const ALTERNATIVE_RE = new RegExp(`${B}(?:${words(ALTERNATIVE_WORDS)})${E}`, 'giu');
 const COMPARISON_RE = new RegExp(`${B}(?:${words(COMPARISON_WORDS)})${E}`, 'iu');
 const UNION_MARKER_RE = new RegExp(`${B}(?:${words([...UNION_JOINERS, ...UNION_MARKERS].filter(j => /\w/.test(j)))})${E}|[&/]|${words(UNION_PUNCTUATION)}`, 'giu');
@@ -408,6 +424,7 @@ const WRITING = set(REFERENCE_WRITING_WORDS), WRITING_PREPOSITIONS = set(REFEREN
 const NOT_RESTRICTED = Object.fromEntries(AUTOMATIC_FIELDS.map(f => [f, new RegExp(`${B}(?:${words(NOT_RESTRICTED_PHRASES[f]!)})${E}`, 'iu')])) as
   Record<AutomaticField, RegExp>;
 const TITLES = set(TITLE_WORDS), YEAR_ATTRIBUTES = set(YEAR_ATTRIBUTE_WORDS);
+const PERSONS = set(YEAR_PERSON_NOUNS), ACTIVITIES = set(YEAR_PERSON_ACTIVITIES);
 const EXPERIENCE = set(CATEGORY_EXPERIENCE_WORDS), EXPERIENCE_PREPOSITIONS = set(CATEGORY_EXPERIENCE_PREPOSITIONS);
 
 /** The text the rules read and the spans index: NFKC, whitespace collapsed to one space, trimmed. */
@@ -609,7 +626,9 @@ function yearScan(text: string, words: Word[]): { tokens: Mention[]; expressions
     if (!exactFollower(text, x.end, x.yearFrom !== undefined && x.yearTo !== undefined) || approximatedBefore(text, words, x.start)
       || continuesAfterMark(text, x.end)) { ambiguous = true; return; }
     const before = words.filter(w => w.end <= x.start).slice(-YEAR_ATTRIBUTE_WINDOW_WORDS);
-    expressions.push({ ...x, attributed: before.some(w => YEAR_ATTRIBUTES.has(w.word)) });
+    // A person doing something ("pilots flying since 1985") dates that activity.
+    const activity = (w: Word) => words.slice(words.indexOf(w) + 1, words.indexOf(w) + 1 + YEAR_PERSON_ACTIVITY_WINDOW_WORDS).some(n => ACTIVITIES.has(n.word));
+    expressions.push({ ...x, attributed: before.some(w => YEAR_ATTRIBUTES.has(w.word) || PERSONS.has(w.word) && activity(w)) });
   };
   // "after A and/but before B" is one interval, A+1 to B-1, when that is not empty.
   const consumed = new Set<number>();

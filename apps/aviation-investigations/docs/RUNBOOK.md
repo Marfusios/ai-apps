@@ -874,14 +874,17 @@ automatic filters.
   "reports about accidents in 2015"); and a parenthesis, dash or colon after the expression with a
   temporal word or a year later in its clause ("in 2015 (the start of the period) through
   today"). A year after a word about a person, an aircraft's history or a document ("aircraft
-  built in 1981") is set aside, and no longer makes the field ambiguous.
+  built in 1981"), or after a person or business doing something ("pilots flying since 1985",
+  "instructors teaching since 2010"; "student pilot accidents in 2019" stays), is set aside, and
+  no longer makes the field ambiguous.
 - A value is no candidate when its mention sits inside another event's phrase ("reports citing
   accidents in Alaska", "accidents like those in Utah", "investigators wrote about accidents in
   Alaska"; a reading list or a discussion is no other event, and a reference word that opens the
   question is its verb: "Compare ...", "Cite ..."), follows title or text wording ("the heading
   Helicopter accidents"; a summary or abstract only before a naming verb: "whose summary mentions
   Alaska"), or, for a category, names a person, business, part, kit, model, experience or
-  comparison ("helicopter pilots", "airplane parts", "time in gliders", "like a helicopter");
+  comparison, directly or after one other word ("helicopter pilots", "airplane parts", "helicopter
+  tail rotor", "secondhand helicopter turbine engines", "time in gliders", "like a helicopter");
   another aircraft or traffic nearby ("with an aircraft nearby") is a relationship. Such a mention
   of an unsuggested value is set aside ("crashes in Nevada similar to the accident in California"
   keeps Nevada), except in the same list as a suggested value or when it names a part
@@ -1011,12 +1014,12 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
-| `attributed.v1` | `ea52483870e5164983eaceb18f50eec6d390e0e4f86290bf312196c8ff4be92a` |
+| `attributed.v1` | `5c0448bfc72e3d0c425ee1b54766074fdb643634dd2c257085557487e464ec76` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check
 settings, caps and timeout, the prompt's system text and wire schema, and `candidate-probes.v1`:
-the candidate builder's outputs on 2,093 fixed questions (every word list entry and every form the
+the candidate builder's outputs on 2,253 fixed questions (every word list entry and every form the
 reviews named), the rendered check inputs and the decisions on 34 fixed check answers, so a changed
 rule, renderer or quote validator changes it too. Do not relabel older cached results with these
 identities.

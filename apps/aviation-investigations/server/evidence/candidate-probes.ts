@@ -462,6 +462,26 @@ const probes: Probe[] = [
   ['Find accidents in Alaska and Hawaii involving Cessna aircraft.', { state: ['AK', 'HI'] }], ['Find NTSB helicopter accidents in Alaska.', { state: ['AK'], category: ['HELI'] }],
   ['For a historical reading list, retrieve cases near Dover, DE discussing directional control', { state: ['DE'] }],
   ['Find accidents in Alaska or Hawaii', { state: ['AK', 'HI'] }], ['accidents in Ohio, Iowa, or Texas', { state: ['OH', 'IA', 'TX'] }],
+  // Fix round 7: attribute nouns directly after a category word or after one other word, and a person's dated activity.
+  ...['Find accidents of aircraft fitted with secondhand helicopter turbine engines.', 'Find helicopter rotor blade failures.',
+    'Find helicopter tail rotor failures.', 'Find helicopter main gearbox failures.', 'Find helicopter transmission failures.',
+    'Find helicopter turbines.', 'Find helicopter blades.', 'Find helicopter crashes during hover.', 'Find helicopter accidents involving pilots.',
+    'Find helicopter accidents, pilot error.', 'Find glider and helicopter turbine failures.']
+    .map(q => [q, { category: ['HELI'] }] satisfies Probe),
+  ...['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students', 'rating', 'ratings', 'rated', 'license', 'licence', 'licensed',
+    'certificate', 'dealership', 'dealer', 'dealers', 'operator', 'operators', 'company', 'companies', 'manufacturer', 'festival', 'crew', 'tires',
+    'tyres', 'instruction', 'training', 'school', 'club', 'part', 'parts', 'engine', 'engines', 'propeller', 'propellers', 'rotor', 'rotors', 'wing',
+    'wings', 'kit', 'kits', 'simulator', 'simulators', 'model', 'models', 'turbine', 'turbines', 'blade', 'blades', 'transmission', 'transmissions',
+    'gearbox', 'gearboxes'].flatMap(n => [`Find accidents involving helicopter spare ${n}.`, `Find helicopter accidents during ${n} checks.`]
+      .map(q => [q, { category: ['HELI'] }] satisfies Probe)),
+  ...['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students', 'mechanic', 'mechanics', 'owner', 'owners', 'operator', 'operators',
+    'crew', 'crews', 'passenger', 'passengers', 'company', 'companies', 'school', 'schools', 'dealer', 'dealers', 'manufacturer', 'manufacturers']
+    .map(p => [`Find accidents of ${p} flying since 2010.`, { yearFrom: 2010 }] satisfies Probe),
+  ...['flying', 'operating', 'working', 'teaching', 'instructing', 'training', 'owning', 'holding', 'employed', 'certified', 'certificated',
+    'licensed', 'rated'].map(a => [`Find accidents of pilots ${a} since 2010.`, { yearFrom: 2010 }] satisfies Probe),
+  ['Pilots flying since 1985 who had accidents', { yearFrom: 1985 }], ['Find student pilot accidents in 2019.', Y2019],
+  ['Find accidents of student pilots in 2019.', Y2019], ['Find accidents in 2019 involving pilots flying at night.', Y2019],
+  ['Find accidents of pilots in 2019 during night flying.', Y2019], ['Find accidents of pilots with an instrument rating and night flying in 2019.', Y2019],
   // Nested punctuation.
   ['Find ((helicopter)) accidents ((in [Alaska])), during 2019.', { state: ['AK'], category: ['HELI'], ...Y2019 }],
   ['Find helicopter accidents in Alaska (or Hawaii) during 2019.', { state: ['AK', 'HI'], category: ['HELI'], ...Y2019 }],
