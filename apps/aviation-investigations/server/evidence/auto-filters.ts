@@ -2,8 +2,8 @@
  * Which scope suggestions a question search applies on its own: `none`, the dev-only state guard
  * `state-explicit.v1.3` (deterministic, state only), or an attributed policy (deterministic
  * candidates, then one attribution check, server/evidence/pipeline.ts): `attributed.v1` (state,
- * years and category; dev-only) and its confirmed subsets `attributed.v1-state` and
- * `attributed.v1-state-years`, which differ from it only in their fields. The policy object is
+ * years and category; dev-only) and its subsets `attributed.v1-state` (live) and
+ * `attributed.v1-state-years` (dev-only), which differ from it only in their fields. The policy object is
  * hashed into the identity every saved search records.
  */
 import { createHash } from 'node:crypto';
