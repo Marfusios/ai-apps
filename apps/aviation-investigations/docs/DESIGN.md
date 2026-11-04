@@ -975,7 +975,8 @@ to any probe changes the hash even without a guard version bump. Live accepts
 `none` and `attributed.v1-state` (Task 30); `attributed.v1-state-years` (a recorded wrong year
 range) and `attributed.v1` (with the category, which failed confirmation) are dev-only, and
 `state-explicit.v1.3` is dev-only since the 2026-10-25 security re-check. The default stays `none` and an operator must explicitly
-enable automatic filters in the environment settings. The independent live
+enable automatic filters in the environment settings; live runs `attributed.v1-state` since
+4 November 2026, by the owner's decision accepting the residual in SECURITY_REVIEW. The independent live
 ranking allowlist is `er-q-v1` and `er-q-h50-v1`. `state-explicit.v1.3` uses
 only a valid scope.e3 case-search result's state set, on original question searches.
 It requires agreement with the complete explicitly named state set. Its finite

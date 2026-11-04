@@ -432,8 +432,16 @@ over open English; closing the class needs a different deterministic lock (a sho
 question shapes) at a further cost in recall. Enabling `attributed.v1-state` before that means the
 owner explicitly accepts this residual: a wrong state is disclosed as a chip "from your question" and
 removable free, and it only narrows that visitor's own results. Codex asked that such an acceptance be
-recorded as a change to the guard requirement, not as a clearance. No live setting changes without the
-owner's decision.
+recorded as a change to the guard requirement, not as a clearance.
+
+**Owner decision (4 November 2026): residual accepted, state enabled on live.** The owner accepted this
+residual and enabled `attributed.v1-state` on live after the reader-first release of Task 30. This
+changes the guard requirement for the state field: the deterministic lock must still accept only
+explicitly named states and refuse the listed structures, but it no longer has to prove that the named
+states bound the whole request. On rare wordings like the three above, a disclosed, free-to-remove
+automatic state that narrows the visitor's own results is accepted. This is not a clearance of the
+request-coverage finding, and it extends to no other field: years and the aircraft category stay
+suggestions. Rollback is `none` on the same reader.
 
 ## Task 25 review surface
 

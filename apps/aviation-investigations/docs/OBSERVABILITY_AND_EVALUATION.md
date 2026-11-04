@@ -563,7 +563,8 @@ retain actual automatic state/filters in private diagnostics, never logs or trac
 The automatic policy binds `state-probes.v5` outputs as well as the guard version.
 Cache identities for an automatic-filter experiment must include both policy identities,
 the question, explicit edit and pinned corpus. The scope.e3 wire schema is unchanged.
-`none` remains the default and rollback. Live allows `none` and `attributed.v1-state` (Task 30);
+`none` remains the default and rollback. Live allows `none` and `attributed.v1-state` (Task 30) and
+runs `attributed.v1-state` since 4 November 2026;
 `state-explicit.v1.3` is dev-only since the 2026-10-25 security re-check. The live ranking
 allowlist is `er-q-v1` and `er-q-h50-v1`; Task 30's 15-second scope timeout changed the
 ranking hashes. v1.3 is v1.1 plus five

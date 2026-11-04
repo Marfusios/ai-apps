@@ -838,7 +838,7 @@ variants differ only in their fields (the same rules, prompt, caps and settings)
 
 - `attributed.v1-state`: the state only; live (the state passed the confirmation). Codex's last
   security check did not clear it (SECURITY_REVIEW "Automatic filters attributed to the accident"):
-  enabling it is the owner's explicit acceptance of the residual it describes.
+  the owner accepted the residual it describes and enabled it on live on 4 November 2026.
 - `attributed.v1-state-years`: the state and the years; dev-only. The years passed the forced rule,
   but end to end both locks read "nothing after 2010" as 2011 onwards.
 - `attributed.v1`: state, years and category; dev-only, because its category field failed the
@@ -846,7 +846,9 @@ variants differ only in their fields (the same rules, prompt, caps and settings)
 
 `state-explicit.v1.3` fails startup on live: it did not clear the 2026-10-25 security re-check
 ("Find accidents involving aircraft maintained within Alaska" still got an automatic AK filter).
-The default stays `none`, and nothing is enabled on live without the owner's decision.
+The default stays `none`, and nothing is enabled on live without the owner's decision. Live runs
+`AVIATION_EVIDENCE_AUTO_FILTERS=attributed.v1-state` since 4 November 2026. Rollback: set `none`,
+run the preflight and `app:up` on the same image.
 
 **`attributed.v1`** (Task 30) applies the scope's suggested state, years and aircraft category on
 its own when the question names them explicitly and a separate check says each describes the

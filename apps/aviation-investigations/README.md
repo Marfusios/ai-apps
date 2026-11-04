@@ -9,13 +9,15 @@ users see was changed: the directory `apps/aviation-investigations`, the package
 `aviation-casebook`, database and index names, Compose projects, environment variables
 and the `casebook-*` keys in browser storage keep their names.
 
-**Status: Experimental.** Keyword search, case pages and the dashboard are live on the
-dev environment (API server, web client, container deployment, trial identity and AI
-status). The evidence view is implemented, server and interface (the interface tested
-against the mock API); a run of the two together with AI on, and the view's narrower G6
-clearance, remain pending. Generated summaries stay disabled.
-The live deployment is at `https://aircase.app` (public, with Google sign-in and the
-published privacy notice; AI features are not enabled yet).
+**Status: live.** AirCase runs at `https://aircase.app` (public, with Google sign-in and the
+published privacy notice): keyword search, case pages, the dashboard and an AI evidence search.
+Claude Haiku reads the question, suggests filters and search terms, and reorders the leading 50
+cases; a US state the question names is applied automatically after a second check, and the
+other suggestions stay one click away. Results are NTSB cases with highlighted source excerpts;
+generated summaries stay disabled. A daily worker imports new NTSB files into dev and live
+without approvals and reports problems on the Admin page. NTSB plans to replace its legacy
+download on April 5, 2027 ([data assessment](docs/DATA_REVIEW.md)); new data after that needs
+a new source adapter.
 
 - [Implementation design](docs/DESIGN.md): TypeScript stack, retrieval, UI,
   authentication, cost controls, deployment, and delivery milestones.
@@ -27,7 +29,7 @@ published privacy notice; AI features are not enabled yet).
   datasets, compare Q0 and Haiku top-50 through the production spend gate, and inspect scores.
 - [Data assessment](docs/DATA_REVIEW.md): measured archive contents, schema traps,
   real cases, and dashboard opportunities.
-- [Snapshot importer](docs/IMPORTER.md): disabled-by-default scheduled acquisition,
+- [Snapshot importer](docs/IMPORTER.md): daily automatic acquisition (off until installed),
   certification, artifact spending cap, recovery and installation gate.
 - [Aggregate data profile](docs/data-profile-2026-10-16.json): source identifiers
   and observed counts; no raw personal records.
@@ -38,7 +40,7 @@ The initial slice is completed US investigations from 2008 onward. Earlier recor
 need additional source adapters; the UI must show actual coverage. Findings and
 generated interpretations will be distinguishable and linked to NTSB evidence.
 
-The proposed app uses React/Vite, Fastify, PostgreSQL, Elasticsearch, the Anthropic
+The app uses React/Vite, Fastify, PostgreSQL, Elasticsearch, the Anthropic
 API for language models (switchable to OpenAI at deployment), OpenAI embeddings,
 and self-hosted Langfuse for tracing and evaluations. Custom TypeScript
 evaluators complement Vitest and other software tests. Langfuse supplies the
