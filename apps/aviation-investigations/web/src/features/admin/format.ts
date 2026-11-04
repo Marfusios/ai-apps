@@ -95,12 +95,14 @@ export function rankingInWords(id: string): string | null {
 
 /**
  * An automatic-filter policy (`AVIATION_EVIDENCE_AUTO_FILTERS`) in plain words; null for one the
- * page does not know. `attributed.v1` (Task 30) by its exact name, as another version may apply
- * other fields.
+ * page does not know. `attributed.v1` and its subsets (Task 30) by their exact names, as another
+ * version may apply other fields.
  */
 export function automaticFiltersInWords(id: string): string | null {
   if (id === 'none') return 'None: every filter AI suggests stays a suggestion';
   if (/^state-explicit\.v\d+(?:\.\d+)*$/.test(id)) return 'A US state the question names explicitly';
   if (id === 'attributed.v1') return 'A US state, years or aircraft type the question sets for the accidents, after an AI check';
+  if (id === 'attributed.v1-state-years') return 'A US state or years the question sets for the accidents, after an AI check';
+  if (id === 'attributed.v1-state') return 'A US state the question sets for the accidents, after an AI check';
   return null;
 }

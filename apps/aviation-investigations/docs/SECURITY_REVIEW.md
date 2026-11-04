@@ -381,6 +381,47 @@ The scope guard is a conservative permission rule, not a proof of semantic safet
 all language. Relevance and incident interpretation remain research tasks; all public
 filters, lexical changes, AI ordering and mark sources are disclosed and undoable.
 
+## Automatic filters attributed to the accident (Task 30)
+
+**What changes.** With a confirmed `attributed.v1` variant, an original question search may apply the
+scope's state (and, in `attributed.v1-state-years`, its event years) without a click (DESIGN
+"Automatic filters attributed to the accident"). A wrong automatic filter silently removes relevant
+cases from that visitor's own results. It cannot reach another visitor's search, a stored case or any
+generated text.
+
+**Trust boundary.** The question, the scope output and the attribution output are untrusted. Values
+reach retrieval only through the deterministic candidate rules (exact mention with witness spans, exact
+year intervals, set equality, structural refusals) and only for the variant's fields; the model can
+remove a candidate, never add one or change a value. The attribution input carries AirCase's own
+canonical labels; the question sits in the usual untrusted block and the candidate JSON is escaped.
+Instruction-like wording, quotation marks, invisible, bidirectional and default-ignorable characters
+and over-long questions disable automation for that search. Narratives never reach the scope or the
+attribution call.
+
+**Failure modes.** Any stage failure, timeout, refusal, truncation or invalid output, and any coverage or
+quote mismatch, applies nothing and keeps the suggestion; there is no fallback to the old regex guard.
+Shutdown, deletion, admission loss and cancellation still stop further paid dispatch.
+
+**Money.** One `attribution` ticket inside the admitted reservation (worst case $0.001225 added before
+rounding), zero SDK retries, exactly-once settlement, the uncertain-call allowance covers the stage, and a
+reservation or settlement failure fails the search instead of being read as an abstention.
+
+**Storage and undo.** Migration 0030 widens the settlement guard from `state` to the four automatic keys
+only. The free undo stays server-owned and once per original question and removes any whole stored
+automatic facet, with every owner, expiry, idempotency, Turnstile, concurrency and money check
+unchanged. Diagnostics hold fixed reason codes; no question or quote text goes to logs, traces, progress
+or Langfuse.
+
+**Disclosure.** Every automatic chip is tagged "from your question", a fixed note says that AI applied
+them and that taking out everything AI added is free once, and Explore and About name only the fields
+the configured variant applies.
+
+**Review status.** Codex's design review (2 P1, 4 P2, 2 P3) shaped the design and the evaluation
+protocol. Its implementation gate on the server at `54f6fc6` did not clear any field (exact year
+boundaries, joint requests and list members, and the evaluator's decision join); fix rounds 6 and 7
+and the evaluator fix answer those findings, and its re-check of the final identities is recorded
+below when it arrives. No live setting changes without the owner's decision.
+
 ## Task 25 review surface
 
 The new admin endpoint is a PII boundary. `AIRCASE_ADMIN_EMAILS` is empty by default;

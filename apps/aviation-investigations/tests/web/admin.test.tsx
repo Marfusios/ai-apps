@@ -410,6 +410,8 @@ describe('how the admin page says its figures', () => {
 
   it('the attributed policy (Task 30) by its exact name; another version of it as its identifier alone', () => {
     expect(automaticFiltersInWords('attributed.v1')).toBe('A US state, years or aircraft type the question sets for the accidents, after an AI check');
+    expect(automaticFiltersInWords('attributed.v1-state-years')).toBe('A US state or years the question sets for the accidents, after an AI check');
+    expect(automaticFiltersInWords('attributed.v1-state')).toBe('A US state the question sets for the accidents, after an AI check');
     expect(automaticFiltersInWords('attributed.v2')).toBeNull();
     expect(automaticFiltersInWords('attributed')).toBeNull();
   });
