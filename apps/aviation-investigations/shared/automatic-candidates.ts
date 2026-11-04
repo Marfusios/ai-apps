@@ -33,7 +33,8 @@ export const AUTOMATIC_MAX_CATEGORIES = 3;
  * value whose mention describes something other than the requested accidents.
  */
 export type CandidateReason = 'candidate' | 'disabled' | 'requested' | 'empty' | 'unsupported_value' | 'too_many_values'
-  | 'unsafe_text' | 'conditional_or_exception' | 'union_of_requests' | 'not_restricted' | 'cross_field_alternative' | 'not_explicit'
+  | 'unsafe_text' | 'conditional_or_exception' | 'multiple_requests' | 'union_of_requests' | 'not_restricted' | 'unmapped_value'
+  | 'cross_field_alternative' | 'not_explicit'
   | 'set_mismatch' | 'negated' | 'relationship' | 'ambiguous_name' | 'referenced_event' | 'title_text' | 'attribute_word'
   | 'range_mismatch' | 'ambiguous_expression' | 'repeated_mention';
 
@@ -89,23 +90,50 @@ export const INJECTION_PATTERNS: readonly RegExp[] = Object.freeze([
 /** Conditions and exceptions a filter conjunction cannot represent, anywhere in the question. */
 export const CONDITION_OR_EXCEPTION = /(?<![\p{L}\p{N}_])(?:if|unless|except|excepting|excepted|excluding|exclude|excludes|excluded|but not)(?![\p{L}\p{N}_])/iu;
 /**
- * Two requests in one question, which the filters' AND cannot run as one search, so every field is
- * refused: an accident noun before one of these joiners, marker words or marks in one sentence (not
- * inside one field's value list), and after it an accident noun, or directly (past "the" and marker
- * words) a pronoun head or a state or category word ("Alaska accidents and helicopter accidents",
- * "Alaska accidents, helicopter accidents", "accidents in Alaska and those involving helicopters").
- * Values of two fields in different sentences too ("Find Alaska accidents. Also helicopter
- * accidents."). Only these nouns: "the investigation archive for gusts and ... the event location"
- * is one request.
+ * More than one sentence or clause: a ".", "?", "!" or ";" followed by any further word, whatever
+ * its case ("Find incidents in Alaska. airplane accidents are also relevant."), refuses every field
+ * (`multiple_requests`). A dot after a one- or two-letter abbreviation ("St.", "U.S.") or between
+ * digits is no end.
  */
-export const UNION_EVENT_NOUNS = Object.freeze(['accident', 'accidents', 'crash', 'crashes', 'incident', 'incidents', 'mishap',
-  'mishaps'] as const);
+/**
+ * Two requests in one clause, which the filters' AND cannot run as one search, so every field is
+ * refused: a request head before one of these joiners, marker words or marks (not inside one field's
+ * value list), and after it another head, or directly (past "the" and marker words) a pronoun head
+ * or a state or category word ("Alaska records and helicopter cases", "Alaska accidents, helicopter
+ * accidents", "accidents in Alaska and those involving helicopters"). A head noun counts only when
+ * plural, or directly before one of UNION_HEAD_FOLLOWERS or the end of its phrase: "the
+ * investigation archive" and "the event location" are no heads.
+ */
+export const UNION_HEAD_NOUNS = Object.freeze(['accident', 'accidents', 'crash', 'crashes', 'incident', 'incidents', 'mishap',
+  'mishaps', 'occurrence', 'occurrences', 'event', 'events', 'case', 'cases', 'record', 'records', 'report', 'reports',
+  'investigation', 'investigations', 'file', 'files', 'source', 'sources', 'wreck', 'wrecks', 'loss', 'losses', 'emergency',
+  'emergencies', 'fatality', 'fatalities', 'flights'] as const);
+export const UNION_HEAD_PLURALS = Object.freeze(['accidents', 'crashes', 'incidents', 'mishaps', 'occurrences', 'events', 'cases',
+  'records', 'reports', 'investigations', 'files', 'sources', 'wrecks', 'losses', 'emergencies', 'fatalities', 'flights'] as const);
+export const UNION_HEAD_FOLLOWERS = Object.freeze(['in', 'near', 'at', 'of', 'from', 'involving', 'with', 'that', 'where', 'which',
+  'during', 'since', 'before', 'after', 'by'] as const);
 export const UNION_JOINERS = Object.freeze(['and', 'or', 'as well as', 'plus', 'along with', 'together with', '&', '/'] as const);
 export const UNION_MARKERS = Object.freeze(['also', 'too', 'then', 'alternatively', 'otherwise', 'else', 'failing that',
   'in addition to', 'in addition', 'besides', 'separately'] as const);
 /** Comma, semicolon, en and em dash, and a spaced hyphen. */
 export const UNION_PUNCTUATION = Object.freeze([',', ';', '\u2013', '\u2014', ' - '] as const);
 export const UNION_PRONOUN_HEADS = Object.freeze(['one', 'ones', 'those', 'any', 'anything', 'whatever', 'others'] as const);
+/**
+ * Aircraft words that map to no single category. One coordinated with a category value ("helicopter
+ * and fixed-wing accidents", "helicopters or drones") is a list member the filter cannot represent:
+ * the category is refused (`unmapped_value`) rather than narrowed to the values it can name.
+ */
+export const UNMAPPED_AIRCRAFT_WORDS = Object.freeze(['fixed-wing', 'fixed wing', 'rotorcraft', 'plane', 'planes', 'jet', 'jets',
+  'seaplane', 'seaplanes', 'floatplane', 'floatplanes', 'amphibian', 'amphibians', 'drone', 'drones', 'UAS', 'UAV', 'UAVs',
+  'multicopter', 'multicopters', 'aircraft'] as const);
+/**
+ * Places that are no state. A state value coordinated with a place it cannot name (a state name
+ * with a place suffix, "Kansas City"; a Title-Case place that is no state, "Toronto"; or one of
+ * these territories and foreign names) refuses the state (`unmapped_value`). "Kansas City,
+ * Missouri" (a place, a comma, then its state) is no coordination.
+ */
+export const NON_STATE_PLACES = Object.freeze(['Puerto Rico', 'Guam', 'Mexico', 'Canada', 'Ontario', 'British Columbia', 'Bahamas',
+  'Virgin Islands', 'American Samoa', 'Northern Mariana Islands'] as const);
 /**
  * Alternative words. AirCase joins different filters with AND, so an alternative that touches a
  * candidate cannot be represented. With two or more fields named in the question (candidates or
@@ -173,17 +201,22 @@ export const RELATIONSHIP_PATTERNS: readonly RegExp[] = Object.freeze([
   /\ba\s+second\s+(?:airplane|helicopter|aircraft)\b/iu,
 ]);
 /**
- * A category word directly followed by one of these names a person, a business, a part, a kit, a
- * simulator or a model ("airplane parts", "helicopter rotor", "glider kit"), not the accident aircraft.
+ * A category word followed by one of these, directly or after one other word, names a person, a
+ * business, a part, a kit, a simulator or a model ("airplane parts", "helicopter rotor blade",
+ * "secondhand helicopter turbine engines", "glider kit"), not the accident aircraft.
  */
 export const CATEGORY_ATTRIBUTE_NOUNS = Object.freeze(['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students',
   'rating', 'ratings', 'rated', 'license', 'licence', 'licensed', 'certificate', 'dealership', 'dealer', 'dealers', 'operator',
   'operators', 'company', 'companies', 'manufacturer', 'festival', 'crew', 'tires', 'tyres', 'instruction', 'training', 'school',
   'club', 'part', 'parts', 'engine', 'engines', 'propeller', 'propellers', 'rotor', 'rotors', 'wing', 'wings', 'kit', 'kits',
-  'simulator', 'simulators', 'model', 'models'] as const);
+  'simulator', 'simulators', 'model', 'models', 'turbine', 'turbines', 'blade', 'blades', 'transmission', 'transmissions',
+  'gearbox', 'gearboxes'] as const);
+/** How many other words may stand between the category word and the attribute noun. */
+export const CATEGORY_ATTRIBUTE_GAP_WORDS = 1;
 /** Of those, the parts: a rejected mention of an unsuggested category before one always refuses the field ("airplane engine failures"). */
 export const CATEGORY_PART_NOUNS = Object.freeze(['part', 'parts', 'engine', 'engines', 'propeller', 'propellers', 'rotor', 'rotors',
-  'wing', 'wings', 'kit', 'kits', 'model', 'models'] as const);
+  'wing', 'wings', 'kit', 'kits', 'model', 'models', 'turbine', 'turbines', 'blade', 'blades', 'transmission', 'transmissions',
+  'gearbox', 'gearboxes'] as const);
 /** Experience in a category ("hours in helicopters", "transitioned from gliders") within the three words before it. */
 export const CATEGORY_EXPERIENCE_WORDS = Object.freeze(['hours', 'time', 'experience', 'rated', 'rating', 'trained', 'training',
   'instruction', 'transitioned', 'transferred'] as const);
@@ -258,9 +291,19 @@ export const DECADE_LEAD_WORDS = Object.freeze(['in', 'during', 'of', 'throughou
 export const YEAR_PORTION_WORDS = Object.freeze(['early', 'earlier', 'late', 'later', 'mid', 'middle', 'end', 'start',
   'beginning', 'half', 'part', 'rest', 'most', 'first', 'last', 'final', 'close', 'turn', 'dawn', 'starting', 'started',
   'commencing', 'ending', 'ended', 'finishing', 'continuing'] as const);
-/** Approximation words directly before a range ("around 2015 to 2018"): its ends are not exact. */
+/**
+ * Approximation words among the two words before a year expression or its operator, or directly
+ * before a range ("approximately in 2015", "around 2015 to 2018", "close to 2015"): not exact.
+ */
 export const YEAR_APPROXIMATIONS = Object.freeze(['around', 'about', 'approximately', 'approx', 'circa', 'c', 'roughly', 'nearly',
-  'almost'] as const);
+  'almost', 'some', 'close to'] as const);
+/**
+ * Temporal continuations anywhere in the question outside the accepted expression ("in 2015 up to
+ * today", "during 2015 continuing onward"): the interval may go on, so years are refused.
+ */
+export const YEAR_CONTINUATION_WORDS = Object.freeze(['today', 'now', 'present', 'currently', 'current', 'to date', 'so far',
+  'onward', 'onwards', 'forward', 'henceforth', 'subsequently', 'continuing', 'continued', 'ongoing', 'since then', 'up to now',
+  'this day', 'these days', 'nowadays'] as const);
 /** Decades that also name a century ("the 1900s", "the 2000s"): never an exact interval. */
 export const CENTURY_DECADES = Object.freeze(['1900', '2000'] as const);
 /** A duration or offset before an operator ("a year after", "shortly before", "some time after"): the interval is not exact. */
@@ -280,6 +323,17 @@ export const YEAR_ATTRIBUTE_WORDS = Object.freeze(['trained', 'maintained', 'ins
   'released', 'born', 'hired', 'founded', 'sold', 'bought', 'purchased', 'delivered', 'installed', 'certificate',
   'certificates', 'license', 'licenses', 'licence', 'licences', 'rating', 'ratings', 'model'] as const);
 export const YEAR_ATTRIBUTE_WINDOW_WORDS = 4;
+/**
+ * A person or business among the four words before a year expression, followed within two words by
+ * one of the activities, dates that activity, not the accident ("Pilots flying since 1985 who had
+ * accidents"); "student pilot accidents in 2019" stays.
+ */
+export const YEAR_PERSON_NOUNS = Object.freeze(['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students', 'mechanic',
+  'mechanics', 'owner', 'owners', 'operator', 'operators', 'crew', 'crews', 'passenger', 'passengers', 'company', 'companies',
+  'school', 'schools', 'dealer', 'dealers', 'manufacturer', 'manufacturers'] as const);
+export const YEAR_PERSON_ACTIVITIES = Object.freeze(['flying', 'operating', 'working', 'teaching', 'instructing', 'training',
+  'owning', 'holding', 'employed', 'certified', 'certificated', 'licensed', 'rated'] as const);
+export const YEAR_PERSON_ACTIVITY_WINDOW_WORDS = 2;
 /**
  * After a year expression, a joiner-like word or mark with a year, a decade or a temporal word among
  * the three words after it changes the interval, which is then not exact ("in 2015 to the
@@ -319,11 +373,16 @@ const POSTAL = new RegExp(`(?:^|${B}(?:${POSTAL_PREPOSITIONS.map(p => `[${p[0]!.
 const ALLOWED_CATEGORIES = new Set(Object.keys(AIRCRAFT_CATEGORY).filter(code => code !== 'UNK'));
 const CATEGORY_CODE = new Map(Object.entries(CATEGORY_WORDS).flatMap(([code, list]) => list.map(w => [w, code] as const)));
 const CATEGORY_RE = new RegExp(`${B}(?:${words([...CATEGORY_CODE.keys()])})${E}`, 'giu');
-const CATEGORY_ATTRIBUTE_AFTER = new RegExp(`^[ -]+(${words(CATEGORY_ATTRIBUTE_NOUNS)})${E}`, 'iu');
+const CATEGORY_ATTRIBUTE_AFTER = new RegExp(`^(?:[ -]+[\\p{L}\\p{N}][\\p{L}\\p{N}'’]*){0,${CATEGORY_ATTRIBUTE_GAP_WORDS}}?[ -]+(${words(CATEGORY_ATTRIBUTE_NOUNS)})${E}`, 'iu');
 const ALTERNATIVE_RE = new RegExp(`${B}(?:${words(ALTERNATIVE_WORDS)})${E}`, 'giu');
 const COMPARISON_RE = new RegExp(`${B}(?:${words(COMPARISON_WORDS)})${E}`, 'iu');
 const UNION_MARKER_RE = new RegExp(`${B}(?:${words([...UNION_JOINERS, ...UNION_MARKERS].filter(j => /\w/.test(j)))})${E}|[&/]|${words(UNION_PUNCTUATION)}`, 'giu');
-const UNION_NOUN_RE = new RegExp(`${B}(?:${words(UNION_EVENT_NOUNS)})${E}`, 'giu');
+const HEAD_NOUNS = set(UNION_HEAD_NOUNS), HEAD_PLURALS = set(UNION_HEAD_PLURALS), HEAD_FOLLOWERS = set(UNION_HEAD_FOLLOWERS);
+const UNMAPPED_AIRCRAFT_RE = new RegExp(`${B}(?:${words(UNMAPPED_AIRCRAFT_WORDS)})${E}`, 'giu');
+const NON_STATE_RE = new RegExp(`${B}(?:${words(NON_STATE_PLACES)})${E}`, 'giu');
+const COORDINATORS = set(['and', 'or', 'nor', 'plus', '/', '&']);
+/** A clause end followed by any further word; not a dot after a one- or two-letter abbreviation or between digits. */
+const CLAUSE_END = /[.?!;]+(?=[^\p{L}\p{N}]*[\p{L}\p{N}])/gu;
 const HEADS = set(UNION_PRONOUN_HEADS), MARKER_SKIP = set(['the', ...UNION_MARKERS.filter(m => !m.includes(' '))]);
 const LIST_WORDS = set([...LIST_SEPARATORS, ...LIST_QUALIFIERS]);
 const WORD = /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu;
@@ -354,7 +413,9 @@ const JOINER_FOLLOWERS = set(YEAR_JOINER_FOLLOWERS), TEMPORAL = set(YEAR_TEMPORA
 const APPROX_FOLLOWER = new RegExp(`^(?:${words(YEAR_APPROXIMATE_FOLLOWERS)})${E}`, 'iu');
 const FOLLOWER_MARK = new RegExp(`^(?:${words(YEAR_JOINER_FOLLOWERS.filter(f => !/\p{L}/u.test(f)))})+`, 'u');
 const YEAR_WORD = /^(?:(?:19|20)\d\d|2100|(?:19|20)\d0s)$/u;
-const PORTIONS = set(YEAR_PORTION_WORDS), EVENT_NOUNS = set([...YEAR_EVENT_NOUNS, ...UNION_EVENT_NOUNS]);
+const PORTIONS = set(YEAR_PORTION_WORDS), EVENT_NOUNS = set([...YEAR_EVENT_NOUNS, ...UNION_HEAD_NOUNS]);
+const APPROXIMATE = set(YEAR_APPROXIMATIONS);
+const CONTINUATION = new RegExp(`${B}(?:${words(YEAR_CONTINUATION_WORDS)})${E}`, 'giu');
 const REFERENCES = set(REFERENCE_WORDS), REFERENCED_NOUNS = set(REFERENCED_EVENT_NOUNS);
 const OPENERS = new RegExp(`^(?:(?:${words(REFERENCE_OPENERS)}) )*$`, 'u');
 const PARTS = set(CATEGORY_PART_NOUNS), SUMMARIES = set(TITLE_SUMMARY_WORDS), NAMING = set(TITLE_NAMING_VERBS);
@@ -363,6 +424,7 @@ const WRITING = set(REFERENCE_WRITING_WORDS), WRITING_PREPOSITIONS = set(REFEREN
 const NOT_RESTRICTED = Object.fromEntries(AUTOMATIC_FIELDS.map(f => [f, new RegExp(`${B}(?:${words(NOT_RESTRICTED_PHRASES[f]!)})${E}`, 'iu')])) as
   Record<AutomaticField, RegExp>;
 const TITLES = set(TITLE_WORDS), YEAR_ATTRIBUTES = set(YEAR_ATTRIBUTE_WORDS);
+const PERSONS = set(YEAR_PERSON_NOUNS), ACTIVITIES = set(YEAR_PERSON_ACTIVITIES);
 const EXPERIENCE = set(CATEGORY_EXPERIENCE_WORDS), EXPERIENCE_PREPOSITIONS = set(CATEGORY_EXPERIENCE_PREPOSITIONS);
 
 /** The text the rules read and the spans index: NFKC, whitespace collapsed to one space, trimmed. */
@@ -536,6 +598,21 @@ function modelYear(text: string, t: Span): boolean {
     && next !== undefined && !EVENT_NOUNS.has(next) && !JOINER_FOLLOWERS.has(next) && !LIST_WORDS.has(next);
 }
 
+/** An approximation ending among the two words before `at` ("approximately in 2015", "close to 2015", "c. 2015"). */
+function approximatedBefore(text: string, words: Word[], at: number): boolean {
+  const before = words.filter(w => w.end <= at).slice(-3).map(w => ({ ...w })), last = before.slice(-2);
+  return last.some(w => APPROXIMATE.has(w.word) && (w.word !== 'c' || text[w.end] === '.'))
+    || last.some(w => w.word === 'to' && before[before.indexOf(w) - 1]?.word === 'close');
+}
+
+/** A parenthesis, dash or colon after a year expression, with a temporal word or a year in the rest of its clause. */
+function continuesAfterMark(text: string, end: number): boolean {
+  const mark = /^\s*(?:\(|[-\u2013\u2014]+|:)/u.exec(text.slice(end));
+  if (!mark) return false;
+  const clause = text.slice(end + mark[0].length).split(/[.?!;]/u)[0]!;
+  return wordsOf(clause).some(w => TEMPORAL.has(w.word) || YEAR_WORD.test(w.word)) || [...clause.matchAll(CONTINUATION)].length > 0;
+}
+
 function yearScan(text: string, words: Word[]): { tokens: Mention[]; expressions: YearExpression[]; phrases: Span[]; ambiguous: boolean } {
   const all: (Mention & { decade: boolean })[] = [
     ...[...text.matchAll(YEAR_TOKEN)].map(m => ({ field: 'years' as const, value: m[1]!, start: m.index!, end: m.index! + m[0].length, decade: false })),
@@ -546,9 +623,12 @@ function yearScan(text: string, words: Word[]): { tokens: Mention[]; expressions
   /** An operator starting at `at` that another operator joins ("in and after"), or that a duration offsets ("a year after"). */
   const operatorUnsafe = (at: number, offsettable: boolean) => JOINED_OPERATOR.test(text.slice(0, at)) || offsettable && OFFSET_BEFORE.test(text.slice(0, at));
   const push = (x: YearExpression) => {
-    if (!exactFollower(text, x.end, x.yearFrom !== undefined && x.yearTo !== undefined)) { ambiguous = true; return; }
+    if (!exactFollower(text, x.end, x.yearFrom !== undefined && x.yearTo !== undefined) || approximatedBefore(text, words, x.start)
+      || continuesAfterMark(text, x.end)) { ambiguous = true; return; }
     const before = words.filter(w => w.end <= x.start).slice(-YEAR_ATTRIBUTE_WINDOW_WORDS);
-    expressions.push({ ...x, attributed: before.some(w => YEAR_ATTRIBUTES.has(w.word)) });
+    // A person doing something ("pilots flying since 1985") dates that activity.
+    const activity = (w: Word) => words.slice(words.indexOf(w) + 1, words.indexOf(w) + 1 + YEAR_PERSON_ACTIVITY_WINDOW_WORDS).some(n => ACTIVITIES.has(n.word));
+    expressions.push({ ...x, attributed: before.some(w => YEAR_ATTRIBUTES.has(w.word) || PERSONS.has(w.word) && activity(w)) });
   };
   // "after A and/but before B" is one interval, A+1 to B-1, when that is not empty.
   const consumed = new Set<number>();
@@ -631,12 +711,16 @@ function yearScan(text: string, words: Word[]): { tokens: Mention[]; expressions
   // A year or decade in no expression ("in 2015 and also 2016", "starting from 2015", "to late 2018")
   // leaves the interval unknown, unless it is a model year or inside an attributed expression.
   if (all.some(t => !expressions.some(x => x.start <= t.start && t.end <= x.end) && (t.decade || !modelYear(text, t)))) ambiguous = true;
+  // A temporal continuation anywhere outside the accepted expressions ("in 2015 up to today").
+  const within = (m: RegExpMatchArray) => expressions.some(x => x.start <= m.index! && m.index! + m[0].length <= x.end);
+  if ([...text.matchAll(CONTINUATION)].some(m => !within(m))) ambiguous = true;
   return { tokens: all, expressions, phrases: [...phrases, ...expressions], ambiguous };
 }
 
-/** Sentence ends: . ! ? before a capital or the end (a "." after one or two letters is an abbreviation: "St.", "U.S."). */
-function sentenceEnds(text: string): number[] {
-  return [...text.matchAll(/[.!?](?=\s+\p{Lu}|\s*$)/gu)].filter(m => m[0] !== '.' || !/(?<![\p{L}])\p{L}{1,2}$/u.test(text.slice(0, m.index))).map(m => m.index!);
+/** More than one sentence or clause (`multiple_requests`): ". ? ! ;" before any further word, whatever its case. */
+function multipleClauses(text: string): boolean {
+  return [...text.matchAll(CLAUSE_END)].some(m => m[0] !== '.'
+    || !/(?<![\p{L}])\p{L}{1,2}$/u.test(text.slice(0, m.index)) && !(/\p{N}$/u.test(text.slice(0, m.index)) && /^\p{N}/u.test(text.slice(m.index! + 1))));
 }
 
 /** The values the question names, by field: state and category mentions and year expressions not attributed elsewhere. */
@@ -651,27 +735,61 @@ function inValueList(s: Scan, at: Span): boolean {
 }
 
 /**
- * Two requests (UNION_EVENT_NOUNS): values of two fields in different sentences, or within one
- * sentence an accident noun before a joiner, marker word or mark and, after it, an accident noun or,
+ * Two requests in one clause: a request head (UNION_HEAD_NOUNS, plural or before a head follower or
+ * the end of its phrase) before a joiner, marker word or mark and, after it, another head or,
  * directly, a pronoun head or a state or category word.
  */
 function unionOfRequests(s: Scan): boolean {
-  const { text } = s;
-  const ends = sentenceEnds(text);
-  const values = named(s);
-  if (new Set(values.map(v => v.field)).size > 1 && new Set(values.map(v => ends.filter(e => e < v.start).length)).size > 1) return true;
-  const nouns = [...text.matchAll(UNION_NOUN_RE)].map(m => ({ start: m.index!, end: m.index! + m[0].length }));
+  const { text, words } = s;
+  const heads = words.filter((w, i) => HEAD_NOUNS.has(w.word) && (HEAD_PLURALS.has(w.word) || HEAD_FOLLOWERS.has(words[i + 1]?.word ?? '')
+    || !words[i + 1] || /[,;:.!?)\]]/u.test(text.slice(w.end, words[i + 1]!.start))));
   const starts = new Set([...s.state, ...s.category].map(m => m.start));
   for (const j of text.matchAll(UNION_MARKER_RE)) {
     const at = { start: j.index!, end: j.index! + j[0].length };
-    if (inValueList(s, at) || inside(at, s.expressions)) continue;
-    const from = Math.max(-1, ...ends.filter(e => e < at.start)), to = Math.min(text.length, ...ends.filter(e => e >= at.end));
-    if (!nouns.some(n => n.end <= at.start && n.start > from)) continue;
-    if (nouns.some(n => n.start >= at.end && n.end <= to)) return true;
-    const head = s.words.filter(w => w.start >= at.end && w.end <= to).find(w => !MARKER_SKIP.has(w.word));
-    if (head && (HEADS.has(head.word) || starts.has(head.start))) return true;
+    if (inValueList(s, at) || inside(at, s.expressions) || !heads.some(h => h.end <= at.start)) continue;
+    if (heads.some(h => h.start >= at.end)) return true;
+    const head = words.find(w => w.start >= at.end && !MARKER_SKIP.has(w.word));
+    if (!head) continue;
+    // "Juneau, Alaska", "Kansas City, Missouri": a place, a comma, then its state is no second request.
+    const place = words.filter(w => w.end <= at.start).at(-1);
+    const placeComma = j[0] === ',' && place !== undefined && /^\p{Lu}\p{Ll}/u.test(text.slice(place.start, place.end))
+      && s.state.some(m => m.start === head.start);
+    if (HEADS.has(head.word) || starts.has(head.start) && !placeComma) return true;
   }
   return false;
+}
+
+/** Only coordination between two spans ("and", "or", "plus", "&", "/", list qualifiers; a comma only when `comma`). */
+function coordinated(gap: string, comma: boolean): boolean {
+  const parts = gap.replace(/[,/&]/gu, m => ` ${m} `).split(/\s+/u).filter(Boolean).map(w => w.toLowerCase());
+  if (!parts.length || !parts.every(w => COORDINATORS.has(w) || w === ',' || LIST_WORDS.has(w))) return false;
+  return parts.some(w => COORDINATORS.has(w)) || comma && parts.includes(',');
+}
+
+/** Whether a value of `values` and one of `others` are coordinated (a comma counts only after the value). */
+function coordinatedWith(text: string, values: readonly Span[], others: readonly Span[]): boolean {
+  return others.some(o => values.some(v => v.end <= o.start ? coordinated(text.slice(v.end, o.start), true)
+    : o.end <= v.start && coordinated(text.slice(o.end, v.start), false)));
+}
+
+/** A category value coordinated with an aircraft word that maps to no single category ("helicopter and fixed-wing accidents"). */
+function unmappedCategory(s: Scan): boolean {
+  const unmapped = [...s.text.matchAll(UNMAPPED_AIRCRAFT_RE)].map(m => ({ start: m.index!, end: m.index! + m[0].length }))
+    .filter(u => !s.category.some(m => overlaps(m, u)));
+  return coordinatedWith(s.text, s.category, unmapped);
+}
+
+/** A state value coordinated with a place that is no state mention ("Ohio and Kansas City", "Alaska or the Yukon"). */
+function unmappedState(s: Scan): boolean {
+  const { text } = s;
+  const places: Span[] = [];
+  for (const m of text.matchAll(STATE_NAME_RE)) {
+    const end = m.index! + m[0].length, suffix = PLACE_SUFFIX.exec(text.slice(end));
+    if (suffix) places.push({ start: m.index!, end: end + suffix[0].length });
+  }
+  for (const m of text.matchAll(NON_STATE_RE)) places.push({ start: m.index!, end: m.index! + m[0].length });
+  for (const w of s.words) if (/^\p{Lu}\p{Ll}/u.test(text.slice(w.start, w.end))) places.push(w);
+  return coordinatedWith(text, s.state, places.filter(p => ![...s.state, ...s.category].some(m => overlaps(m, p))));
 }
 
 function scan(text: string): Scan {
@@ -771,6 +889,7 @@ function keptMentions(s: Scan, mentions: Mention[], field: AutomaticField, emitt
 
 function stateField(s: Scan, emitted: readonly string[]): { reason: CandidateReason; candidate?: AutomaticCandidate } {
   if (!s.state.length) return { reason: 'not_explicit' };
+  if (unmappedState(s)) return { reason: 'unmapped_value' };
   const { reason, kept } = keptMentions(s, s.state, 'state', emitted);
   if (reason) return { reason };
   if (!kept.length) return { reason: 'not_explicit' };
@@ -784,6 +903,7 @@ function stateField(s: Scan, emitted: readonly string[]): { reason: CandidateRea
 function categoryField(s: Scan, emitted: readonly string[]): { reason: CandidateReason; candidate?: AutomaticCandidate } {
   if (!s.category.length) return { reason: 'not_explicit' };
   if (RELATIONSHIP_PATTERNS.some(re => re.test(s.text))) return { reason: 'relationship' };
+  if (unmappedCategory(s)) return { reason: 'unmapped_value' };
   const { reason, kept: m } = keptMentions(s, s.category, 'category', emitted);
   if (reason) return { reason };
   if (!m.length) return { reason: 'not_explicit' };
@@ -834,7 +954,8 @@ export function automaticCandidates(question: string, emitted: BriefFilters, req
   // Question-level refusals after the structural ones, computed once.
   let global: CandidateReason | null | undefined;
   const questionLevel = () => global === undefined
-    ? global = CONDITION_OR_EXCEPTION.test(text) ? 'conditional_or_exception' : unionOfRequests(scanned ??= scan(text)) ? 'union_of_requests' : null
+    ? global = CONDITION_OR_EXCEPTION.test(text) ? 'conditional_or_exception' : multipleClauses(text) ? 'multiple_requests'
+      : unionOfRequests(scanned ??= scan(text)) ? 'union_of_requests' : null
     : global;
   let candidates: AutomaticCandidate[] = [];
   const reasons = {} as Record<AutomaticField, CandidateReason>;

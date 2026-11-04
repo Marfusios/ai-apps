@@ -417,6 +417,71 @@ const probes: Probe[] = [
   ['Find investigations discussing accidents in Alaska.', AK], ['Find accident summaries for Ohio and Iowa.', { state: ['OH', 'IA'] }],
   ...['summary', 'summaries', 'abstract', 'abstracts'].flatMap(w => ['mentions', 'says', 'reads', 'titled', 'named', 'called', 'for']
     .map(v => [`Find accidents whose ${w} ${v} Alaska.`, AK] satisfies Probe)),
+  // Fix round 6 (implementation gate). Years: its four examples, continuations, approximations, marks, and the controls.
+  ...['Find accidents approximately in 2015.', 'Find accidents in 2015 up to today.', 'Find accidents during 2015 continuing onward.',
+    'Find accidents in 2015 (the start of the period) through today.', 'Find accidents in 2015 (the start of the period).',
+    'Find accidents in 2015 -- through 2016.', 'Find accidents in 2015: and later.', 'Find accidents in 2015 \u2014 the decade after.',
+    'Find accidents in 2015 (and 2016).', 'Find accidents in 2015: the first half.', 'Find accidents in 2015 (in Alaska).',
+    'Find accidents in 2015 that are still under investigation.', 'Find accidents c. 2015.', 'Find Class C airspace accidents in 2015.']
+    .map(q => [q, { yearFrom: 2015, yearTo: 2015 }] satisfies Probe),
+  ...['today', 'now', 'present', 'currently', 'current', 'to date', 'so far', 'onward', 'onwards', 'forward', 'henceforth', 'subsequently',
+    'continuing', 'continued', 'ongoing', 'since then', 'up to now', 'this day', 'these days', 'nowadays']
+    .flatMap(w => [`Find accidents in 2015 that are ${w} relevant.`, `Find ${w} accidents in 2015.`].map(q => [q, { yearFrom: 2015, yearTo: 2015 }] satisfies Probe)),
+  ...['around', 'about', 'approximately', 'approx', 'circa', 'roughly', 'nearly', 'almost', 'some', 'close to']
+    .flatMap(a => [`Find accidents ${a} in 2015.`, `Find ${a} accidents in 2015.`, `Find ${a} the accidents of Alaska in 2015.`]
+      .map(q => [q, { yearFrom: 2015, yearTo: 2015 }] satisfies Probe)),
+  ['Find accidents from c. 2015 to 2018.', { yearFrom: 2015, yearTo: 2018 }], ['Find accidents from 2015 onward.', { yearFrom: 2015 }],
+  ['Find helicopter accidents in 2019 after takeoff', { category: ['HELI'], ...Y2019 }], ['Find accidents in 2020 concerning landing flare.', { yearFrom: 2020, yearTo: 2020 }],
+  // Joint requests: more than one clause, the gate's table, request heads, unmapped list members, and the controls.
+  ...['Find incidents in Alaska. airplane accidents are also relevant.', 'Find Alaska records and helicopter cases.',
+    'Find crashes in Alaska plus occurrences involving helicopters.', 'Find accidents in Alaska. Find fatal cases anywhere.',
+    'Find accidents in Alaska? and helicopter ones', 'Find accidents in Alaska! helicopters too', 'Find accidents in Alaska; helicopters too',
+    'Find accidents in Alaska etc. in 2019', 'Find accidents in St. Paul, MN with helicopters.', 'Find accidents in the U.S. state of Alaska with helicopters.',
+    'Find accidents within 2.5 miles of Juneau, Alaska with helicopters.', 'Find helicopter accidents in Alaska (e.g. icing).',
+    'Could you find helicopter accidents in Alaska?', 'Find airplane accidents in Alaska.']
+    .map(q => [q, { state: ['AK'], category: ['HELI'] }] satisfies Probe),
+  ...['accidents', 'crashes', 'incidents', 'mishaps', 'occurrences', 'events', 'cases', 'records', 'reports', 'investigations', 'files', 'sources',
+    'wrecks', 'losses', 'emergencies', 'fatalities', 'flights'].map(n => [`Find Alaska ${n} and helicopter ${n}.`, { state: ['AK'], category: ['HELI'] }] satisfies Probe),
+  ...['accident', 'crash', 'incident', 'mishap', 'occurrence', 'event', 'case', 'record', 'report', 'investigation', 'file', 'source', 'wreck', 'loss',
+    'emergency', 'fatality'].flatMap(n => [`Find an Alaska ${n} in winter and a helicopter ${n}.`, `Find the ${n} archive for Alaska and helicopter control.`]
+      .map(q => [q, { state: ['AK'], category: ['HELI'] }] satisfies Probe)),
+  ...['in', 'near', 'at', 'of', 'from', 'involving', 'with', 'that', 'where', 'which', 'during', 'since', 'before', 'after', 'by']
+    .map(f => [`Find an Alaska accident ${f} winter and a helicopter crash.`, { state: ['AK'], category: ['HELI'] }] satisfies Probe),
+  ...['fixed-wing', 'fixed wing', 'rotorcraft', 'plane', 'planes', 'jet', 'jets', 'seaplane', 'seaplanes', 'floatplane', 'floatplanes', 'amphibian',
+    'amphibians', 'drone', 'drones', 'UAS', 'UAV', 'UAVs', 'multicopter', 'multicopters', 'aircraft']
+    .flatMap(w => [`Find helicopter and ${w} accidents.`, `Find helicopter/${w} accidents.`].map(q => [q, { category: ['HELI'] }] satisfies Probe)),
+  ...['Puerto Rico', 'Guam', 'Mexico', 'Canada', 'Ontario', 'British Columbia', 'Bahamas', 'Virgin Islands', 'American Samoa', 'Northern Mariana Islands']
+    .flatMap(p => [`Find accidents in Ohio and ${p}.`, `Find accidents in ohio and ${p.toLowerCase()}.`, `Find ${p} or Ohio crashes.`]
+      .map(q => [q, { state: ['OH'] }] satisfies Probe)),
+  ...['Find accidents in Ohio and Kansas City.', 'Find accidents in Ohio or the Texas Panhandle.', 'Find accidents in Ohio and Toronto.',
+    'Find accidents in Ohio, Toronto.', 'Find accidents in Kansas City, Ohio.', 'Find accidents in Toronto, Ohio.', 'Find accidents near Columbus, OH and Toronto.']
+    .map(q => [q, { state: ['OH'] }] satisfies Probe),
+  ['Find accidents in Kansas City, Missouri.', { state: ['MO'] }], ['Find accidents near Kansas City, MO.', { state: ['MO'] }],
+  ['Find accidents in Juneau, Alaska.', AK], ['Find accidents in Alaska or the Yukon.', AK], ['Find accidents in Alaska or in Anchorage.', AK],
+  ['Find accidents near Seattle or near Portland, OR.', { state: ['OR'] }], ['Find accidents in Alaska and the Gulf of Mexico.', AK],
+  ['Find accidents in Alaska and Hawaii involving Cessna aircraft.', { state: ['AK', 'HI'] }], ['Find NTSB helicopter accidents in Alaska.', { state: ['AK'], category: ['HELI'] }],
+  ['For a historical reading list, retrieve cases near Dover, DE discussing directional control', { state: ['DE'] }],
+  ['Find accidents in Alaska or Hawaii', { state: ['AK', 'HI'] }], ['accidents in Ohio, Iowa, or Texas', { state: ['OH', 'IA', 'TX'] }],
+  // Fix round 7: attribute nouns directly after a category word or after one other word, and a person's dated activity.
+  ...['Find accidents of aircraft fitted with secondhand helicopter turbine engines.', 'Find helicopter rotor blade failures.',
+    'Find helicopter tail rotor failures.', 'Find helicopter main gearbox failures.', 'Find helicopter transmission failures.',
+    'Find helicopter turbines.', 'Find helicopter blades.', 'Find helicopter crashes during hover.', 'Find helicopter accidents involving pilots.',
+    'Find helicopter accidents, pilot error.', 'Find glider and helicopter turbine failures.']
+    .map(q => [q, { category: ['HELI'] }] satisfies Probe),
+  ...['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students', 'rating', 'ratings', 'rated', 'license', 'licence', 'licensed',
+    'certificate', 'dealership', 'dealer', 'dealers', 'operator', 'operators', 'company', 'companies', 'manufacturer', 'festival', 'crew', 'tires',
+    'tyres', 'instruction', 'training', 'school', 'club', 'part', 'parts', 'engine', 'engines', 'propeller', 'propellers', 'rotor', 'rotors', 'wing',
+    'wings', 'kit', 'kits', 'simulator', 'simulators', 'model', 'models', 'turbine', 'turbines', 'blade', 'blades', 'transmission', 'transmissions',
+    'gearbox', 'gearboxes'].flatMap(n => [`Find accidents involving helicopter spare ${n}.`, `Find helicopter accidents during ${n} checks.`]
+      .map(q => [q, { category: ['HELI'] }] satisfies Probe)),
+  ...['pilot', 'pilots', 'instructor', 'instructors', 'student', 'students', 'mechanic', 'mechanics', 'owner', 'owners', 'operator', 'operators',
+    'crew', 'crews', 'passenger', 'passengers', 'company', 'companies', 'school', 'schools', 'dealer', 'dealers', 'manufacturer', 'manufacturers']
+    .map(p => [`Find accidents of ${p} flying since 2010.`, { yearFrom: 2010 }] satisfies Probe),
+  ...['flying', 'operating', 'working', 'teaching', 'instructing', 'training', 'owning', 'holding', 'employed', 'certified', 'certificated',
+    'licensed', 'rated'].map(a => [`Find accidents of pilots ${a} since 2010.`, { yearFrom: 2010 }] satisfies Probe),
+  ['Pilots flying since 1985 who had accidents', { yearFrom: 1985 }], ['Find student pilot accidents in 2019.', Y2019],
+  ['Find accidents of student pilots in 2019.', Y2019], ['Find accidents in 2019 involving pilots flying at night.', Y2019],
+  ['Find accidents of pilots in 2019 during night flying.', Y2019], ['Find accidents of pilots with an instrument rating and night flying in 2019.', Y2019],
   // Nested punctuation.
   ['Find ((helicopter)) accidents ((in [Alaska])), during 2019.', { state: ['AK'], category: ['HELI'], ...Y2019 }],
   ['Find helicopter accidents in Alaska (or Hawaii) during 2019.', { state: ['AK', 'HI'], category: ['HELI'], ...Y2019 }],

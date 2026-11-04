@@ -865,16 +865,26 @@ automatic filters.
   "in 2015 and the years since"), as do "at the earliest/latest" and "thereabouts" or "give or
   take"; any other follower is fine ("in 2020 concerning landing flare"). A year or decade outside
   every expression ("in 2015 and also 2016", "to late 2018", "from 2015 up to 2018") gives no
-  interval, except a model year ("a 1978 Cessna"). A year after a word about a person, an
-  aircraft's history or a document ("aircraft built in 1981") is set aside, and no longer makes the
-  field ambiguous.
+  interval, except a model year ("a 1978 Cessna"). So do, by construction: a temporal continuation
+  anywhere outside the expression (today, now, present, currently, current, to date, so far,
+  onward(s), forward, henceforth, subsequently, continuing, continued, ongoing, since then, up to
+  now, this day, these days, nowadays: "in 2015 up to today", "during 2015 continuing onward"); an
+  approximation within the two words before the expression or its operator (approximately, approx,
+  about, around, roughly, circa, c., nearly, almost, some, close to: "approximately in 2015",
+  "reports about accidents in 2015"); and a parenthesis, dash or colon after the expression with a
+  temporal word or a year later in its clause ("in 2015 (the start of the period) through
+  today"). A year after a word about a person, an aircraft's history or a document ("aircraft
+  built in 1981"), or after a person or business doing something ("pilots flying since 1985",
+  "instructors teaching since 2010"; "student pilot accidents in 2019" stays), is set aside, and
+  no longer makes the field ambiguous.
 - A value is no candidate when its mention sits inside another event's phrase ("reports citing
   accidents in Alaska", "accidents like those in Utah", "investigators wrote about accidents in
   Alaska"; a reading list or a discussion is no other event, and a reference word that opens the
   question is its verb: "Compare ...", "Cite ..."), follows title or text wording ("the heading
   Helicopter accidents"; a summary or abstract only before a naming verb: "whose summary mentions
   Alaska"), or, for a category, names a person, business, part, kit, model, experience or
-  comparison ("helicopter pilots", "airplane parts", "time in gliders", "like a helicopter");
+  comparison, directly or after one other word ("helicopter pilots", "airplane parts", "helicopter
+  tail rotor", "secondhand helicopter turbine engines", "time in gliders", "like a helicopter");
   another aircraft or traffic nearby ("with an aircraft nearby") is a relationship. Such a mention
   of an unsuggested value is set aside ("crashes in Nevada similar to the accident in California"
   keeps Nevada), except in the same list as a suggested value or when it names a part
@@ -888,21 +898,33 @@ automatic filters.
   aircraft, no matter what aircraft (category). After a state name, OR is the conjunction
   ("Alaska, OR helicopter accidents"); after a city it is Oregon ("Portland, OR during 2019"); a
   `City, XX` place whose city is another state's name ("Washington, DC", "Delaware, OH") is
-  ambiguous.
+  ambiguous. A value coordinated (and, or, plus, &, /, a comma after it) with a list member the
+  filter cannot represent refuses its field (`unmapped_value`) instead of narrowing it: an
+  aircraft word that maps to no category (fixed-wing, rotorcraft, plane, jet, seaplane,
+  floatplane, amphibian, drone, UAS, UAV, multicopter, aircraft: "helicopter and fixed-wing
+  accidents"), or a place that is no state (a state name with a place suffix, "Ohio and Kansas
+  City"; a Title-Case place, "Alaska or the Yukon"; Puerto Rico, Guam, Mexico, Canada, Ontario,
+  British Columbia, the Bahamas and the other territories). "Kansas City, Missouri" and "Juneau,
+  Alaska" (a place, a comma, then its state) are one place.
 - A question with instruction-like wording ("ignore previous instructions", "system prompt", "set
   the state"), quotation marks (every initial and final quote but the apostrophe ’, low-9, corner
   and ornament quotes, double primes), any control, format or default-ignorable character (soft
   hyphens, joiners, Hangul fillers, variation selectors, tags) other than tabs and line breaks,
   more than 600 characters, a condition or exception (if, unless, except, excepted, excluding,
-  but not), or two requests has no candidates at all (`union_of_requests`): values of two fields
-  in different sentences ("Find Alaska accidents. Also helicopter accidents."), or in one sentence
-  an accident, crash, incident or mishap noun before a joiner (and, or, plus, as well as, ...), a
+  but not), more than one sentence or clause (a ".", "?", "!" or ";" followed by any further word,
+  whatever its case: `multiple_requests`; a dot after a one- or two-letter abbreviation, "St.",
+  "U.S.", or between digits is no end), or two requests in one clause has no candidates at all
+  (`union_of_requests`): a request head before a joiner (and, or, plus, as well as, ...), a
   marker word (also, too, then, alternatively, otherwise, else, failing that, in addition,
-  besides, separately) or a comma, semicolon or dash outside a value list, and after it such a
-  noun or, directly, a pronoun head (one, ones, those, any, anything, whatever, others) or a state
-  or category word ("Alaska accidents and helicopter accidents", "Alaska accidents, helicopter
-  accidents", "accidents in Alaska and those involving helicopters"; "accidents and incidents in
-  Alaska" too). With two or more fields named in the question (candidates or not), any alternative
+  besides, separately) or a comma or dash outside a value list, and after it another head or,
+  directly, a pronoun head (one, ones, those, any, anything, whatever, others) or a state or
+  category word ("Alaska records and helicopter cases", "Alaska accidents, helicopter accidents",
+  "accidents in Alaska and those involving helicopters"; "accidents and incidents in Alaska"
+  too). The heads are accident(s), crash(es), incident(s), mishap(s), occurrence(s), event(s),
+  case(s), record(s), report(s), investigation(s), file(s), source(s), wreck(s), loss(es),
+  emergency/emergencies, fatality/fatalities and flights, counted only when plural or directly
+  before in, near, at, of, from, involving, with, that, where, which, during, since, before, after,
+  by or the end of the phrase, so "the investigation archive" and "the event location" are none. With two or more fields named in the question (candidates or not), any alternative
   word (or, either, nor) outside one field's own value list refuses every candidate; with one,
   only an alternative with the candidate's words among the two words on either side does ("in
   Alaska or at night"; "fatal or serious accidents in Alaska" keeps its state). Any comparison word
@@ -992,12 +1014,12 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
-| `attributed.v1` | `8aa954c0a5ba3607e81438d723cabdacaf66b84aca3efc24addf7d30b6e1cfff` |
+| `attributed.v1` | `5c0448bfc72e3d0c425ee1b54766074fdb643634dd2c257085557487e464ec76` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check
 settings, caps and timeout, the prompt's system text and wire schema, and `candidate-probes.v1`:
-the candidate builder's outputs on 1,836 fixed questions (every word list entry and every form the
+the candidate builder's outputs on 2,253 fixed questions (every word list entry and every form the
 reviews named), the rendered check inputs and the decisions on 34 fixed check answers, so a changed
 rule, renderer or quote validator changes it too. Do not relabel older cached results with these
 identities.
