@@ -53,10 +53,10 @@ describe('the attributed.v1 policy', () => {
     expect(Object.isFrozen(attributed)).toBe(true); expect(Object.isFrozen(attributed.attribution.caps)).toBe(true);
     expect(attributed).toMatchObject({ version: 'attributed.v1', fields: ['state', 'years', 'category'],
       rules: { state: 'state-mention.v1', years: 'year-mention.v1', category: 'category-mention.v1' },
-      attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a2' }, caps: { input: 5000, output: 1200 },
+      attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a3' }, caps: { input: 5000, output: 1200 },
         timeoutMs: 8000, settings: { thinking: 'off', effort: 'low', retries: 0, cache: 'system-5m' } },
       behaviour: { version: 'candidate-probes.v1' }, appliesTo: 'question-case-search' });
-    expect(autoFilterIdentity(attributed).sha256).toBe('07031ba17ab93cac276ed87800a41eeb04978ae37e150bccbf2f7b349ef874d6');
+    expect(autoFilterIdentity(attributed).sha256).toBe('8aa954c0a5ba3607e81438d723cabdacaf66b84aca3efc24addf7d30b6e1cfff');
     expect(autoFilterIdentity(autoFilterPolicy('none')).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
     expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.3')).sha256).toBe('8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de');
   });
@@ -64,7 +64,7 @@ describe('the attributed.v1 policy', () => {
     const { createHash } = await import('node:crypto');
     const { z } = await import('zod');
     const hash = (s: string) => createHash('sha256').update(s).digest('hex');
-    expect(attributed.attribution.prompt).toEqual({ version: 'attr.a2', sha256: hash(ATTRIBUTION_SYSTEM),
+    expect(attributed.attribution.prompt).toEqual({ version: 'attr.a3', sha256: hash(ATTRIBUTION_SYSTEM),
       schemaSha256: hash(JSON.stringify(z.toJSONSchema(AttributionWireOutputSchema))) });
   });
   it('names its fields for /api/config; the deterministic policies decide without a check', () => {
@@ -295,7 +295,7 @@ describe('the real adapter on an offline transport', () => {
     const { p, count, parse } = provider();
     const ctx = evidenceAttributionCtx(new AbortController().signal, 8000);
     const result = await p.evidenceAttribution!(input, ctx);
-    expect(result).toMatchObject({ output, model: ATTRIBUTION_MODEL, promptVersion: 'attr.a2', provider: 'anthropic' });
+    expect(result).toMatchObject({ output, model: ATTRIBUTION_MODEL, promptVersion: 'attr.a3', provider: 'anthropic' });
     const [sent, options] = (parse.mock.calls as unknown as [Record<string, any>, Record<string, any>][])[0]!;
     const [counted] = (count.mock.calls as unknown as [Record<string, any>][])[0]!;
     expect(sent).toEqual({ ...counted, max_tokens: 1200 });
@@ -335,9 +335,9 @@ describe('preflight and prompt mirror', () => {
     const rows = (await runAiPreflight(provider, async (_m, text) => Math.ceil(text.length / 4), models,
       { embeddingModel: 'text-embedding-3-small', reservationUsd, autoFilters: attributed })).filter(r => r.stage === 'attribution');
     expect(rows.map(r => [r.request, r.limit, r.ok])).toEqual([
-      ['attr.a2: fixed prompt + schema', 5000, true], ['attr.a2: cached prefix', CACHED_PREFIX_MAX, true],
-      ['attr.a2: most values, 600-character Latin question', 5000, false], ['attr.a2: most values, 600-character dense question', 5000, false],
-      ['attr.a2: output at its schema bounds', 1200, true]]);
+      ['attr.a3: fixed prompt + schema', 5000, true], ['attr.a3: cached prefix', CACHED_PREFIX_MAX, true],
+      ['attr.a3: most values, 600-character Latin question', 5000, false], ['attr.a3: most values, 600-character dense question', 5000, false],
+      ['attr.a3: output at its schema bounds', 1200, true]]);
     expect(rows.every(r => r.model === 'claude-haiku-5-5')).toBe(true);
     expect(provider.calls).toHaveLength(0);
     // The reservation must cover the check, and no other policy counts it.
@@ -346,8 +346,8 @@ describe('preflight and prompt mirror', () => {
     expect((await runAiPreflight(provider, async () => 1, models, { embeddingModel: 'text-embedding-3-small', reservationUsd: 0.0025 }))
       .some(r => r.stage === 'attribution')).toBe(false);
   });
-  it('mirrors attr.a2 with its user turn as a template', () => {
-    const mirror = MIRRORED_PROMPTS.find(p => p.name === 'aircase-attr.a2')!;
+  it('mirrors attr.a3 with its user turn as a template', () => {
+    const mirror = MIRRORED_PROMPTS.find(p => p.name === 'aircase-attr.a3')!;
     expect(mirror.prompt).toEqual([{ role: 'system', content: ATTRIBUTION_SYSTEM },
       { role: 'user', content: '<question>\n{{question}}\n</question>\nCandidates from AirCase: {{candidates_json}}' }]);
   });

@@ -855,19 +855,33 @@ automatic filters.
   after in, during, throughout, from, "of" after an event noun or first in the question, never "the
   1900s" or "the 2000s"; a portion word ("late in the 1990s"), a two-digit second year
   ("2015-18"), an operator joined to another ("in and after 2015"), a duration or offset before
-  the operator ("a year after", "shortly after") or a relative end ("at the latest", "and the
-  years since") gives no interval; only the end, punctuation, a value, an event noun or a word
-  that opens a new phrase may follow a year. A year after a word about a person, an aircraft's
-  history or a document ("aircraft built in 1981") is set aside, and no longer makes the field
-  ambiguous.
+  the operator ("a year after", "shortly after", "some time after") gives no interval. So do an
+  end word before in or during ("starting in 2015", "ending in 2015"), an approximation before a
+  range ("around 2015 to 2018"), operators joined with a comma or by "including" ("in, and after
+  2015"), and "inclusive" after an open interval ("after 2015 inclusive"). After an expression, a
+  joiner-like word or mark (to, into, through, and, or, as, but, with, including, along, plus, &, a
+  comma, colon, semicolon or dash) with a year or a temporal word (now, present, date, later,
+  since, end, years, ...) among the next three words gives no interval ("in 2015 to the present",
+  "in 2015 and the years since"), as do "at the earliest/latest" and "thereabouts" or "give or
+  take"; any other follower is fine ("in 2020 concerning landing flare"). A year or decade outside
+  every expression ("in 2015 and also 2016", "to late 2018", "from 2015 up to 2018") gives no
+  interval, except a model year ("a 1978 Cessna"). A year after a word about a person, an
+  aircraft's history or a document ("aircraft built in 1981") is set aside, and no longer makes the
+  field ambiguous.
 - A value is no candidate when its mention sits inside another event's phrase ("reports citing
   accidents in Alaska", "accidents like those in Utah", "investigators wrote about accidents in
-  Alaska"; a reading list is no other event), follows title or text wording ("the heading
-  Helicopter accidents"), or, for a category, names a person, business, part, kit, model,
-  experience or comparison ("helicopter pilots", "airplane parts", "time in gliders", "like a
-  helicopter"); another aircraft or traffic nearby ("with an aircraft nearby") is a relationship.
-  Negations include not, no, never, without, nowhere, none, n't, apart from, far from, "every state
-  but" and a non- prefix on the mention. Words that say a field does not limit the request make
+  Alaska"; a reading list or a discussion is no other event, and a reference word that opens the
+  question is its verb: "Compare ...", "Cite ..."), follows title or text wording ("the heading
+  Helicopter accidents"; a summary or abstract only before a naming verb: "whose summary mentions
+  Alaska"), or, for a category, names a person, business, part, kit, model, experience or
+  comparison ("helicopter pilots", "airplane parts", "time in gliders", "like a helicopter");
+  another aircraft or traffic nearby ("with an aircraft nearby") is a relationship. Such a mention
+  of an unsuggested value is set aside ("crashes in Nevada similar to the accident in California"
+  keeps Nevada), except in the same list as a suggested value or when it names a part
+  ("helicopter and airplane engine failures"): then the field is refused, so it never applies fewer
+  values than the question names. Negations include not, no, never, without, nowhere, none, n't,
+  apart from, far from, avoid(ed), elsewhere, leaving out, skipping, omitting, minus, "every state
+  but", a non- or ex- prefix on the mention and "aside" after it ("excepted" is an exception). Words that say a field does not limit the request make
   that field no candidate (`not_restricted`): wherever, regardless of where, no matter where,
   anywhere in the country, US or else (state); whenever, whatever year, regardless of when, no
   matter when, in any year (years); whatever aircraft, any aircraft type, regardless of (the)
@@ -876,24 +890,33 @@ automatic filters.
   `City, XX` place whose city is another state's name ("Washington, DC", "Delaware, OH") is
   ambiguous.
 - A question with instruction-like wording ("ignore previous instructions", "system prompt", "set
-  the state"), quotation marks (also ‘ ’ ‚ ‛ ‹ › 「 」 『 』), any control, format, variation-selector or
-  tag character other than tabs and line breaks, more than 600 characters, a condition or exception
-  (if, unless, except, excluding, but not), or two requests joined in one sentence (an accident,
-  crash, incident or mishap noun on both sides: "Alaska accidents and helicopter accidents",
-  "helicopter crashes at night or any accident in Alaska"; `union_of_requests`, "accidents and
-  incidents in Alaska" too) has no candidates at all. With
-  candidates in two or more fields, any alternative word (or, either, nor) outside one field's own
-  value list refuses them all; with one, only an alternative with the candidate's words among the
-  two words on either side does ("in Alaska or at night"; "fatal or serious accidents in Alaska"
-  keeps its state). Any comparison word (versus, compare, unlike, rather than, instead of, whereas)
-  refuses every candidate.
-- One check (`attr.a2`, `server/ai/prompts/attribution.a2.ts`) on Haiku 5.5, only when there is a
+  the state"), quotation marks (every initial and final quote but the apostrophe ’, low-9, corner
+  and ornament quotes, double primes), any control, format or default-ignorable character (soft
+  hyphens, joiners, Hangul fillers, variation selectors, tags) other than tabs and line breaks,
+  more than 600 characters, a condition or exception (if, unless, except, excepted, excluding,
+  but not), or two requests has no candidates at all (`union_of_requests`): values of two fields
+  in different sentences ("Find Alaska accidents. Also helicopter accidents."), or in one sentence
+  an accident, crash, incident or mishap noun before a joiner (and, or, plus, as well as, ...), a
+  marker word (also, too, then, alternatively, otherwise, else, failing that, in addition,
+  besides, separately) or a comma, semicolon or dash outside a value list, and after it such a
+  noun or, directly, a pronoun head (one, ones, those, any, anything, whatever, others) or a state
+  or category word ("Alaska accidents and helicopter accidents", "Alaska accidents, helicopter
+  accidents", "accidents in Alaska and those involving helicopters"; "accidents and incidents in
+  Alaska" too). With two or more fields named in the question (candidates or not), any alternative
+  word (or, either, nor) outside one field's own value list refuses every candidate; with one,
+  only an alternative with the candidate's words among the two words on either side does ("in
+  Alaska or at night"; "fatal or serious accidents in Alaska" keeps its state). Any comparison word
+  (versus, compare, unlike, rather than, instead of, whereas) refuses every candidate.
+- One check (`attr.a3`, `server/ai/prompts/attribution.a2.ts`) on Haiku 5.5, only when there is a
   candidate: one check per value (`state:XX` for each state, `years`, `category:CODE` for each
   category; at most twelve), thinking off, effort low, no retries, a cached system prompt, at most
   5,000 input and 1,200 output tokens, an 8-second bound, inside the scope phase. A field applies only
   as a whole, when every one of its values' checks names the field's accident class and quotes a
   span of the question holding that value's own matched words ("crashes in Nevada of aircraft
-  registered in California" cannot apply California with Nevada). A failure, timeout, invalid or
+  registered in California" cannot apply California with Nevada; a decade's words are "the
+  1990s", and one word of "blimp or airship" covers that value). attr.a3 adds that a request for
+  investigations, records, files, sources or events in a place, from years or of a category is a
+  request for those accidents. A failure, timeout, invalid or
   incomplete answer, another class or a bad quote applies nothing for that field and leaves it a
   suggestion. The uncertain allowance, a failed scope and non-search intents skip the check.
 - Money: the check's worst case is $0.001225 (5,000 input tokens all written to the cache and 1,200
@@ -969,13 +992,13 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
-| `attributed.v1` | `07031ba17ab93cac276ed87800a41eeb04978ae37e150bccbf2f7b349ef874d6` |
+| `attributed.v1` | `8aa954c0a5ba3607e81438d723cabdacaf66b84aca3efc24addf7d30b6e1cfff` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check
 settings, caps and timeout, the prompt's system text and wire schema, and `candidate-probes.v1`:
-the candidate builder's outputs on 1,495 fixed questions (every word list entry and every form the
-reviews named), the rendered check inputs and the decisions on 31 fixed check answers, so a changed
+the candidate builder's outputs on 1,836 fixed questions (every word list entry and every form the
+reviews named), the rendered check inputs and the decisions on 34 fixed check answers, so a changed
 rule, renderer or quote validator changes it too. Do not relabel older cached results with these
 identities.
 
@@ -1973,8 +1996,8 @@ tag and digest together.
    `NODE_EXTRA_CA_CERTS`; Docker uses its configured trusted endpoint. Run
    `pnpm -s worker langfuse-prompts --sync` before releasing linked generation spans.
    It only calls Langfuse, never a model provider. Run it again to verify idempotence.
-   It mirrors `aircase-scope.e3`, `aircase-rerank.r1` and `aircase-attr.a2` (Task 30; `attr.a1` was
-   never deployed); each
+   It mirrors `aircase-scope.e3`, `aircase-rerank.r1` and `aircase-attr.a3` (Task 30; `attr.a1` and
+   `attr.a2` were never deployed); each
    prompt's content hash must be the same in both runs; a modified mirror or a version other
    than 1 is a release failure. Do not edit the mirror in the Langfuse UI; resolve drift
    against the frozen code and review any deliberate prompt version change.
