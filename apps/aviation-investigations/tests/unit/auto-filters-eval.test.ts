@@ -1,6 +1,7 @@
 /** Task 30's evaluation harness, offline: probe schema, scoring, exact bounds, the decision rule, sizing and request shapes. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { sha256, stable } from '../../evals/langfuse/data.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { probeWarnings, validateProbes, type Probe } from '../../evals/auto-filters/probes.js';
@@ -230,6 +231,20 @@ describe('Task 30 per-field decision', () => {
     expect(decideField('state', inputs(traps(330, 0), precision(160, 0), dev(), 0.4))).toMatchObject({ on: true, recall: { useful: false } });
     expect(decideField('years', { enabled: true, confirmForced: null, confirmE2e: null, development: [] })).toMatchObject({ on: false, trap: { verdict: 'missing' }, recall: { useful: null } });
     expect(decideField('category', { ...inputs(traps(330, 0), precision(160, 0)), enabled: false })).toMatchObject({ on: false, why: 'not in the evaluated policy' });
+  });
+  it('keeps a field off when the end-to-end confirmation is absent or incomplete, even when the forced rules pass', () => {
+    // Codex's reproduction: 330 traps, no failure, 220 correct applications, two clean development entries, no end-to-end run.
+    const d = decideField('state', { ...inputs(traps(330, 0), precision(220, 0)), confirmE2e: null });
+    expect(d).toMatchObject({ on: false, trap: { verdict: 'pass' }, precision: { verdict: 'pass' }, review24: { verdict: 'pass' }, recall: { e2e: null, useful: null } });
+    expect(d.why).toMatch(/confirm-e2e missing or incomplete/);
+    expect(decideField('state', { ...inputs(traps(330, 0), precision(220, 0)), confirmForced: null }).why).toMatch(/confirm-forced missing or incomplete/);
+  });
+  it('keeps a field off when the join reports a problem or a development run is absent', () => {
+    expect(decideField('state', { ...inputs(traps(330, 0), precision(220, 0)), problems: ['dev-e2e (label x) ran another policy'] }))
+      .toMatchObject({ on: false, why: expect.stringContaining('ran another policy') });
+    const oneDev = decideField('state', { ...inputs(traps(330, 0), precision(220, 0)), development: [{ part: 'dev-forced', unsafe: { samples: 0, items: [] } }] });
+    expect(oneDev).toMatchObject({ on: false, review24: { verdict: 'missing' } });
+    expect(oneDev.why).toMatch(/dev-e2e review-24 results missing or incomplete/);
   });
 });
 
@@ -727,6 +742,89 @@ describe('Task 30 parallel lanes', () => {
       expect(() => mergeLanes(root, part, 2, hash, itemsOf)).toThrow(/no durable result/);
       reset(); lane({ i: 1, k: 2 }); lane({ i: 2, k: 2 }, { close: false });
       expect(() => mergeLanes(root, part, 2, hash, itemsOf)).toThrow(/^Incomplete schedule: c2 lane 2of2 is still running or not closed balanced/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+describe('Task 30 decision join', () => {
+  const identity = (sha = 'a'.repeat(64)) => ({ version: 'attributed.v1', sha256: sha });
+  const fieldFigures = (f: string) => ({ field: f, enabled: true, traps: { policy: { items: 330, failures: 0, rate: 0, upper95: exactUpper(0, 330) } },
+    questionPrecision: { applications: 220, wrong: 0, rate: 1, lower95: exactLower(220, 220) }, positives: { rate: 0.7 } });
+  const summary = () => ({ fields: { state: fieldFigures('state'), years: fieldFigures('years'), category: fieldFigures('category') },
+    review24: { state: { samples: 0, items: [] }, years: { samples: 0, items: [] }, category: { samples: 0, items: [] } } }) as never;
+  const valid = (part: string, label = 'l', policy = identity(), fields = ['state', 'years', 'category']) =>
+    ({ part, label, status: 'valid', manifestSha256: 'm'.repeat(64), policy, fields, summary: summary() }) as never;
+  const absent = (part: string, status: 'missing' | 'incomplete' | 'invalid', label = 'l') => ({ part, label, status, reason: `${part} ${status}` }) as never;
+  it('decides only when every input is valid and shares one policy identity and field set', async () => {
+    const { joinDecision } = await import('../../evals/auto-filters/run.js');
+    const ok = joinDecision(valid('confirm-forced'), valid('confirm-e2e'), [valid('dev-forced'), valid('dev-e2e')]);
+    expect(ok.problems).toEqual([]);
+    expect(ok.fields.map(f => f.on)).toEqual([true, true, true]);
+    expect(ok.inputs.map(i => i.status)).toEqual(['valid', 'valid', 'valid', 'valid']);
+  });
+  it('refuses an absent or incomplete end-to-end confirmation', async () => {
+    const { joinDecision } = await import('../../evals/auto-filters/run.js');
+    for (const status of ['missing', 'incomplete', 'invalid'] as const) {
+      const j = joinDecision(valid('confirm-forced'), absent('confirm-e2e', status), [valid('dev-forced'), valid('dev-e2e')]);
+      expect(j.fields.every(f => !f.on)).toBe(true);
+      expect(j.problems).toEqual([`confirm-e2e (label l) ${status}: confirm-e2e ${status}`]);
+    }
+  });
+  it('refuses a wrong --dev-label: no development runs under it', async () => {
+    const { joinDecision } = await import('../../evals/auto-filters/run.js');
+    const j = joinDecision(valid('confirm-forced'), valid('confirm-e2e'), [absent('dev-forced', 'missing', 'wrong'), absent('dev-e2e', 'missing', 'wrong')]);
+    expect(j.fields.every(f => !f.on && f.review24.verdict === 'missing')).toBe(true);
+    expect(j.problems).toHaveLength(2);
+  });
+  it('refuses mismatched identities or field sets and never joins the mismatched figures', async () => {
+    const { joinDecision } = await import('../../evals/auto-filters/run.js');
+    const otherPolicy = joinDecision(valid('confirm-forced'), valid('confirm-e2e', 'l', identity('b'.repeat(64))), [valid('dev-forced'), valid('dev-e2e')]);
+    expect(otherPolicy.fields.every(f => !f.on)).toBe(true);
+    expect(otherPolicy.problems[0]).toMatch(/confirm-e2e \(label l\) ran policy attributed\.v1 bbbbbbbbbbbb/);
+    expect(otherPolicy.fields[0]!.recall.e2e).toBeNull();
+    const otherFields = joinDecision(valid('confirm-forced'), valid('confirm-e2e'), [valid('dev-forced', 'd', identity(), ['state']), valid('dev-e2e', 'd')]);
+    expect(otherFields.fields.every(f => !f.on)).toBe(true);
+    expect(otherFields.problems[0]).toMatch(/dev-forced \(label d\) ran policy .* with fields state, not confirm-forced's/);
+    expect(otherFields.fields[0]!.review24.runs).toEqual(['dev-e2e']);
+  });
+  it('never joins a previously written summary whose revalidation now fails', async () => {
+    const { partEvidence, summarizePart, MANIFEST_VERSION } = await import('../../evals/auto-filters/run.js');
+    const { partData, seededOrder, attemptKey } = await import('../../evals/auto-filters/inputs.js');
+    const root = mkdtempSync(join(tmpdir(), 'task30-join-'));
+    try {
+      const label = 'conf', part = 'confirm-e2e' as const, dir = join(root, label), policy = autoFilterPolicy('attributed.v1');
+      const data = partData(part), order = seededOrder(data.items);
+      const writeRun = (manifest: object, items = order) => {
+        const hash = sha256(stable(manifest)), lane = join(dir, part, '1of1');
+        mkdirSync(lane, { recursive: true });
+        writeFileSync(join(dir, part, 'manifest.json'), stable(manifest) + '\n');
+        writeFileSync(join(lane, 'lane.json'), JSON.stringify({ part, shard: { i: 1, k: 1 }, allocation: 'eval-task30-confirm-e2e-1of1', lockKey: 1, capMicros: 1,
+          manifestSha256: hash, items: order.map(i => i.id) }));
+        writeFileSync(join(lane, 'results.jsonl'), items.flatMap(item => {
+          const key = attemptKey(label, part, item.id, 1);
+          return [{ event: 'started', key }, { event: 'result', key, part, itemId: item.id, sample: 1, observation: { policy: autoFilterIdentity(policy), failure: null, safetyFaults: [],
+            automaticFilters: null, autoFilterFields: {}, scopeOutcome: 'used', attributionOutcome: 'not_run', attributionCalled: false, scope: 'real', usage: [], actualUsd: 0 } }];
+        }).map(l => JSON.stringify(l)).join('\n') + '\n');
+        writeFileSync(join(lane, 'allocation.jsonl'), [{ event: 'open' }, { event: 'close', balanced: true }].map(l => JSON.stringify(l)).join('\n') + '\n');
+        return hash;
+      };
+      const manifest = { version: MANIFEST_VERSION, part, policy: { version: policy.version, sha256: autoFilterIdentity(policy).sha256 }, shards: 1,
+        data: { sha256: data.sha256, orderSha256: sha256(stable(order.map(i => i.id))) } };
+      const hash = writeRun(manifest);
+      expect(partEvidence(dir, part, label)).toMatchObject({ status: 'valid', manifestSha256: hash, fields: ['state', 'years', 'category'] });
+      expect(partEvidence(dir, part, 'another-label')).toMatchObject({ status: 'incomplete' });
+      // An earlier summarize wrote this summary; then one lane lost an attempt: the part is no longer evidence.
+      writeFileSync(join(dir, `summary-${part}.json`), JSON.stringify({ part, manifestSha256: hash, summary: {} }));
+      writeRun(manifest, order.slice(1));
+      expect(partEvidence(dir, part, label)).toMatchObject({ status: 'incomplete' });
+      // The server policy changed since the run: the frozen identity no longer resolves to the registered one.
+      writeRun({ ...manifest, policy: { version: policy.version, sha256: 'f'.repeat(64) } });
+      expect(partEvidence(dir, part, label)).toMatchObject({ status: 'invalid', reason: expect.stringContaining('no longer registered') });
+      expect(summarizePart(dir, part, label, dir, label)).toBe(false);
+      expect(existsSync(join(dir, `summary-${part}.json`))).toBe(false);
+      const decision = JSON.parse(readFileSync(join(dir, 'summary-decision.json'), 'utf8'));
+      expect(decision.fields.every((f: { on: boolean }) => !f.on)).toBe(true);
+      expect(decision.inputs.map((i: { part: string; status: string }) => `${i.part}:${i.status}`)).toEqual(['confirm-forced:missing', 'confirm-e2e:invalid', 'dev-forced:missing', 'dev-e2e:missing']);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

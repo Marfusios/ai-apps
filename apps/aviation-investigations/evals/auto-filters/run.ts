@@ -33,7 +33,7 @@ import { compareNarrowR20, fallbackRates, filterMatch, rowScores, type RowRankin
 import { probeWarnings, type LoadedProbes } from './probes.js';
 import { attemptKey, partData, seededOrder, type PartData, type PartItem } from './inputs.js';
 import {
-  AUTO_FIELDS, EXPECTED_MICROS, PART_BUDGET_MICROS, PART_SPECS, PARTS, ROWS30, STOP_STREAK, TASK30_FAMILY, attributedRequest, attributionRates,
+  AUTO_FIELDS, DEVELOPMENT_PARTS, EXPECTED_MICROS, MAX_SHARDS, PART_BUDGET_MICROS, PART_SPECS, PARTS, ROWS30, STOP_STREAK, TASK30_FAMILY, attributedRequest, attributionRates,
   attributionSampleMicros, autoFilters, buttonFilters, c2Verdict, chargeableSampleMicros, decideField, editRequest, expectedRetrievalQuestionMicros,
   expectedSampleMicros, fieldKey, fieldSummary, groupSummary, isPart, laneName, laneSpec, liveRequest, nextStreak30, parseShard, q0Request,
   retrievalQuestionMicros, review24Unsafe, shardItems, stageMicros30, v13Replay, V13_RECORDED, wholeObject, type AttributionPart, type AutoField,
@@ -258,39 +258,106 @@ function retrievalTable(sets: RetrievalSetSummary[]): string[] {
   }
   return lines;
 }
-function decisionTable(d: ReturnType<typeof decideField>[]): string[] {
-  return ['## Per-field decision (confirmation forced run; review-24 veto from the development runs)', '',
+function decisionTable(decision: { fields: ReturnType<typeof decideField>[]; problems?: string[]; inputs?: { part: string; label: string; status: string; reason?: string }[] }): string[] {
+  return ['## Per-field decision (confirmation forced and end-to-end runs; review-24 veto from the development runs)', '',
+    ...(decision.inputs ?? []).map(i => `- ${i.part} (label ${i.label}): ${i.status}${i.reason ? `: ${i.reason}` : ''}`),
+    ...(decision.problems?.length ? ['', `Not decidable: ${decision.problems.length} problem(s) above keep every field off.`] : []), '',
     '| Field | On | Trap rule | Precision rule | Review-24 | Recall forced / e2e | Useful |', '| --- | --- | --- | --- | --- | --- | --- |',
-    ...d.map(x => `| ${x.field} | ${x.on ? 'yes' : 'no'} (${x.why}) | ${x.trap.verdict} ${x.trap.failures ?? '-'}/${x.trap.items ?? '-'} UB ${pct(x.trap.upper95, 2)} | `
+    ...decision.fields.map(x => `| ${x.field} | ${x.on ? 'yes' : 'no'} (${x.why}) | ${x.trap.verdict} ${x.trap.failures ?? '-'}/${x.trap.items ?? '-'} UB ${pct(x.trap.upper95, 2)} | `
       + `${x.precision.verdict} ${x.precision.wrong ?? '-'}/${x.precision.applications ?? '-'} wrong LB ${pct(x.precision.lower95, 2)} | ${x.review24.verdict} | ${pct(x.recall.forced)} / ${pct(x.recall.e2e)} | ${x.recall.useful ?? 'n/a'} |`)];
 }
-/** summary.md: one short table per summarized part of the label, and the decision when its inputs exist. */
+/** A written part summary, and whether it still belongs to the part's current manifest (a stale one is never shown or joined). */
+function writtenSummary(dir: string, part: PartName): { summary: any; current: boolean } | null {
+  const path = join(dir, `summary-${part}.json`), manifestPath = join(partDirOf(dir, part), 'manifest.json');
+  if (!existsSync(path)) return null;
+  const wrapper = JSON.parse(readFileSync(path, 'utf8')) as { part?: string; manifestSha256?: string; summary: unknown };
+  const current = existsSync(manifestPath) && wrapper.part === part && wrapper.manifestSha256 === sha256(stable(JSON.parse(readFileSync(manifestPath, 'utf8'))));
+  return { summary: wrapper.summary, current };
+}
+/** summary.md: one short table per part summary that belongs to its current manifest, and the decision when one was joined. */
 function writeMarkdown(dir: string) {
   const lines = ['# Task 30 evaluation summary', ''];
   for (const part of PARTS) {
-    const path = join(dir, `summary-${part}.json`);
-    if (!existsSync(path)) continue;
-    const s = JSON.parse(readFileSync(path, 'utf8')).summary;
-    lines.push(...(part === 'retrieval' ? retrievalTable(s.sets) : attributionTable(s)), '');
+    const w = writtenSummary(dir, part);
+    if (!w) continue;
+    if (!w.current) { lines.push(`## ${part}`, '', 'Stale summary (written for another manifest): ignored.', ''); continue; }
+    lines.push(...(part === 'retrieval' ? retrievalTable(w.summary.sets) : attributionTable(w.summary)), '');
   }
   const decision = join(dir, 'summary-decision.json');
-  if (existsSync(decision)) lines.push(...decisionTable(JSON.parse(readFileSync(decision, 'utf8')).fields), '');
+  if (existsSync(decision)) lines.push(...decisionTable(JSON.parse(readFileSync(decision, 'utf8'))), '');
   writeAtomic(join(dir, 'summary.md'), lines.join('\n'));
 }
-function readSummary(dir: string, part: PartName): AttributionSummary | null {
-  const path = join(dir, `summary-${part}.json`);
-  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')).summary as AttributionSummary : null;
+
+/** A confirmation or development part's evidence for the decision: its summary recomputed from its frozen manifest and every lane, never a file read back. */
+export type PartEvidence =
+  | { part: AttributionPart; label: string; status: 'valid'; manifestSha256: string; policy: { version: string; sha256: string }; fields: string[]; summary: AttributionSummary }
+  | { part: AttributionPart; label: string; status: 'missing' | 'incomplete' | 'invalid'; reason: string };
+type ValidEvidence = Extract<PartEvidence, { status: 'valid' }>;
+/**
+ * Recomputes an attribution part from its frozen manifest (part, version, policy identity, input and order
+ * shas, shard count) and every lane; throws an EvaluationError on any refusal (`Incomplete schedule` first
+ * when it is only unfinished).
+ */
+export function recomputeAttributionPart(dir: string, part: AttributionPart, label: string) {
+  const manifest = JSON.parse(readFileSync(join(partDirOf(dir, part), 'manifest.json'), 'utf8'));
+  const hash = sha256(stable(manifest));
+  if (manifest.version !== MANIFEST_VERSION || manifest.part !== part) throw new EvaluationError(`${part}: its manifest is of another part or version`);
+  // The part's own policy, as frozen at its first run, must still be registered with the same identity.
+  const policy = resolvePolicy(String(manifest.policy?.version));
+  if (autoFilterIdentity(policy).sha256 !== manifest.policy.sha256) throw new EvaluationError(`${part}: its policy is no longer registered with the same identity`);
+  const data = partData(part);
+  if (data.sha256 !== manifest.data?.sha256) throw new EvaluationError(`${part}: its frozen input changed since the run`);
+  const order = seededOrder(data.items);
+  if (sha256(stable(order.map(i => i.id))) !== manifest.data.orderSha256) throw new EvaluationError(`${part}: its item order changed since the run`);
+  if (!Number.isInteger(manifest.shards) || manifest.shards < 1 || manifest.shards > MAX_SHARDS) throw new EvaluationError(`${part}: its manifest has no valid shard count`);
+  const journal = mergeLanes(dir, part, manifest.shards, hash, sh => shardItems(order, sh).map(i => i.id));
+  return { manifest, hash, policy, summary: summarizeAttributionPart(part, data, journal, label, policy) };
 }
-/** The pre-registered decision from this label's confirmation summaries and the development label's review-24 results. */
-function writeDecision(dir: string, devDir: string) {
-  const confirmForced = readSummary(dir, 'confirm-forced'), confirmE2e = readSummary(dir, 'confirm-e2e');
-  if (!confirmForced && !confirmE2e) return;
-  const development = (['dev-forced', 'dev-e2e'] as const).map(part => ({ part, summary: readSummary(devDir, part) }));
-  const enabled = new Set((confirmForced ?? confirmE2e)!.enabledFields);
-  const fields = AUTO_FIELDS.map(f => decideField(f, { enabled: enabled.has(f), confirmForced: confirmForced?.fields[f] ?? null,
-    confirmE2e: confirmE2e?.fields[f] ?? null, development: development.map(d => ({ part: d.part, unsafe: d.summary?.review24?.[f] ?? null })) }));
-  writeAtomic(join(dir, 'summary-decision.json'), JSON.stringify({ rule: 'spec.md Evaluation, registered 2026-11-03 22:15 CET', policy: (confirmForced ?? confirmE2e)!.policy,
-    development: development.map(d => ({ part: d.part, present: Boolean(d.summary), policy: d.summary?.policy ?? null })), fields }, null, 2) + '\n');
+export function partEvidence(dir: string, part: AttributionPart, label: string): PartEvidence {
+  if (!existsSync(join(partDirOf(dir, part), 'manifest.json'))) return { part, label, status: 'missing', reason: 'not run under this label' };
+  try {
+    const r = recomputeAttributionPart(dir, part, label);
+    return { part, label, status: 'valid', manifestSha256: r.hash, policy: autoFilterIdentity(r.policy), fields: [...automaticFieldsOf(r.policy)], summary: r.summary };
+  } catch (e) {
+    if (!(e instanceof EvaluationError)) throw e;
+    return { part, label, status: /^Incomplete schedule/.test(e.message) ? 'incomplete' : 'invalid', reason: e.message };
+  }
+}
+/**
+ * The decision join. Every prescribed input (the confirmation forced and end-to-end runs, both development
+ * runs) must be recomputed and valid, and all must share one policy identity and field set; any absent,
+ * incomplete, refused or mismatched input is a problem that keeps every field off. A mismatched input's
+ * figures are not joined.
+ */
+export function joinDecision(confirmForced: PartEvidence, confirmE2e: PartEvidence, development: readonly PartEvidence[]) {
+  const inputs = [confirmForced, confirmE2e, ...development];
+  const problems = inputs.flatMap(i => i.status === 'valid' ? [] : [`${i.part} (label ${i.label}) ${i.status}: ${i.reason}`]);
+  const valid = inputs.filter((i): i is ValidEvidence => i.status === 'valid');
+  const reference = valid.find(v => v.part === 'confirm-forced') ?? valid.find(v => v.part === 'confirm-e2e') ?? valid[0];
+  const same = (v: ValidEvidence) => !!reference && v.policy.version === reference.policy.version && v.policy.sha256 === reference.policy.sha256
+    && stable(v.fields) === stable(reference.fields);
+  for (const v of valid) {
+    if (!same(v)) problems.push(`${v.part} (label ${v.label}) ran policy ${v.policy.version} ${v.policy.sha256.slice(0, 12)} with fields ${v.fields.join(',') || 'none'}, `
+      + `not ${reference!.part}'s ${reference!.policy.version} ${reference!.policy.sha256.slice(0, 12)} with fields ${reference!.fields.join(',') || 'none'}`);
+  }
+  const usable = (e: PartEvidence) => e.status === 'valid' && same(e) ? e.summary : null;
+  const enabled = new Set(reference?.fields ?? []);
+  const fields = AUTO_FIELDS.map(f => decideField(f, { enabled: enabled.has(f), problems,
+    confirmForced: usable(confirmForced)?.fields[f] ?? null, confirmE2e: usable(confirmE2e)?.fields[f] ?? null,
+    development: development.filter(d => (DEVELOPMENT_PARTS as readonly string[]).includes(d.part))
+      .map(d => ({ part: d.part as typeof DEVELOPMENT_PARTS[number], unsafe: usable(d)?.review24?.[f] ?? null })) }));
+  return { policy: reference?.policy ?? null, enabledFields: [...enabled],
+    inputs: inputs.map(i => i.status === 'valid' ? { part: i.part, label: i.label, status: i.status, manifestSha256: i.manifestSha256, policy: i.policy, fields: i.fields }
+      : { part: i.part, label: i.label, status: i.status, reason: i.reason }), problems, fields };
+}
+/** The pre-registered decision from this label's confirmation runs and the development label's runs, each recomputed at the join. */
+function writeDecision(dir: string, label: string, devDir: string, devLabel: string) {
+  const path = join(dir, 'summary-decision.json');
+  const confirmForced = partEvidence(dir, 'confirm-forced', label), confirmE2e = partEvidence(dir, 'confirm-e2e', label);
+  // No confirmation run under this label: no decision, and none left from an earlier join.
+  if (confirmForced.status === 'missing' && confirmE2e.status === 'missing') { rmSync(path, { force: true }); return; }
+  const joined = joinDecision(confirmForced, confirmE2e, DEVELOPMENT_PARTS.map(part => partEvidence(devDir, part, devLabel)));
+  writeAtomic(path, JSON.stringify({ rule: 'spec.md Evaluation, registered 2026-11-03 22:15 CET', label, devLabel, ...joined }, null, 2) + '\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -382,7 +449,8 @@ export async function main() {
   const codeCommit = codeIdentity();
   const root = resolve(values.out!), dir = join(root, label);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (values.mode === 'summarize') return summarize(dir, join(root, values['dev-label'] ?? label), parts, label);
+  const devLabel = values['dev-label'] ?? label;
+  if (values.mode === 'summarize') return summarize(dir, parts, label, join(root, devLabel), devLabel);
 
   const needsTarget = parts.includes('retrieval');
   const settings = evaluationSettings(values['env-files']!, values['keys-file'], needsTarget);
@@ -416,7 +484,7 @@ export async function main() {
     if (part === 'retrieval') await runRetrieval(settings, db!, es!, target!, dir, label, codeCommit, policy, s);
     else await runAttributionLane(settings, dir, label, codeCommit, policy, s, part, shard);
     // The last lane of a part to close finds every lane closed and writes the part's summary.
-    summarizePart(dir, dir, part, label);
+    summarizePart(dir, part, label, dir, label);
   } finally {
     await es?.close(); if (db) await closeDb(db);
   }
@@ -629,48 +697,48 @@ async function runRetrieval(settings: EvaluationSettings, db: Db, es: Client, ta
 
 /**
  * Scores one part from all its lanes, or reports why not: a part not started, a lane missing, running or
- * unreconciled, or an incomplete schedule is reported and never scored (nor used for decisions).
+ * unreconciled, or an incomplete schedule is reported and never scored (nor used for decisions). A part
+ * refused for any other reason loses its written summary: it is no longer evidence.
  */
-function summarizePart(dir: string, devDir: string, part: PartName, label: string): boolean {
+export function summarizePart(dir: string, part: PartName, label: string, devDir: string, devLabel: string): boolean {
   const manifestPath = join(partDirOf(dir, part), 'manifest.json');
-  if (!existsSync(manifestPath)) { console.log(JSON.stringify({ event: 'not_started', part })); return false; }
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  const hash = sha256(stable(manifest));
   try {
-    // The part's own policy, as frozen at its first run.
-    const policy = resolvePolicy(manifest.policy.version);
-    if (autoFilterIdentity(policy).sha256 !== manifest.policy.sha256) throw new EvaluationError(`${part}: its policy is no longer registered with the same identity`);
-    if (part === 'retrieval') {
-      const journal = mergeLanes(dir, part, manifest.shards, hash);
-      const sets = JSON.parse(readFileSync(join(partDirOf(dir, part), 'questions.json'), 'utf8')) as QuestionSet[];
-      const done: RetrievalSetSummary[] = [];
-      for (const set of sets) {
-        try { done.push(summarizeRetrievalSet(set, journal, label, policy)); }
-        catch (e) { if (!(e instanceof EvaluationError && /^Incomplete schedule/.test(e.message))) throw e; console.log(JSON.stringify({ event: 'incomplete', part, set: set.name })); }
+    if (!existsSync(manifestPath)) { console.log(JSON.stringify({ event: 'not_started', part })); return false; }
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const hash = sha256(stable(manifest));
+    try {
+      if (part === 'retrieval') {
+        // The part's own policy, as frozen at its first run.
+        const policy = resolvePolicy(String(manifest.policy?.version));
+        if (autoFilterIdentity(policy).sha256 !== manifest.policy.sha256) throw new EvaluationError(`${part}: its policy is no longer registered with the same identity`);
+        const journal = mergeLanes(dir, part, manifest.shards, hash);
+        const sets = JSON.parse(readFileSync(join(partDirOf(dir, part), 'questions.json'), 'utf8')) as QuestionSet[];
+        const done: RetrievalSetSummary[] = [];
+        for (const set of sets) {
+          try { done.push(summarizeRetrievalSet(set, journal, label, policy)); }
+          catch (e) { if (!(e instanceof EvaluationError && /^Incomplete schedule/.test(e.message))) throw e; console.log(JSON.stringify({ event: 'incomplete', part, set: set.name })); }
+        }
+        if (done.length) writeSummary(dir, part, manifest, hash, { sets: done });
+      } else {
+        writeSummary(dir, part, manifest, hash, recomputeAttributionPart(dir, part, label).summary);
       }
-      if (done.length) writeSummary(dir, part, manifest, hash, { sets: done });
-    } else {
-      const data = partData(part);
-      if (data.sha256 !== manifest.data.sha256) throw new EvaluationError(`${part}: its frozen input changed since the run`);
-      const order = seededOrder(data.items);
-      if (sha256(stable(order.map(i => i.id))) !== manifest.data.orderSha256) throw new EvaluationError(`${part}: its item order changed since the run`);
-      const journal = mergeLanes(dir, part, manifest.shards, hash, sh => shardItems(order, sh).map(i => i.id));
-      writeSummary(dir, part, manifest, hash, summarizeAttributionPart(part as AttributionPart, data, journal, label, policy));
+    } catch (e) {
+      // An incomplete or failed part is reported, never scored.
+      if (!(e instanceof EvaluationError)) throw e;
+      const unfinished = /^Incomplete schedule/.test(e.message);
+      if (!unfinished) rmSync(join(dir, `summary-${part}.json`), { force: true });
+      console.log(JSON.stringify({ event: 'not_scored', part, reason: e.message, ...(unfinished ? {} : { summaryRemoved: true }) }));
+      return false;
     }
-  } catch (e) {
-    // An incomplete or failed part is reported, never scored.
-    if (!(e instanceof EvaluationError)) throw e;
-    console.log(JSON.stringify({ event: 'not_scored', part, reason: e.message }));
-    return false;
+    return true;
   } finally {
-    writeDecision(dir, devDir);
+    writeDecision(dir, label, devDir, devLabel);
     writeMarkdown(dir);
   }
-  return true;
 }
 /** Free: scores whatever each selected part's lanes completed; incomplete parts are reported, never scored. */
-function summarize(dir: string, devDir: string, parts: PartName[], label: string) {
-  for (const part of parts) summarizePart(dir, devDir, part, label);
+function summarize(dir: string, parts: PartName[], label: string, devDir: string, devLabel: string) {
+  for (const part of parts) summarizePart(dir, part, label, devDir, devLabel);
   const path = join(dir, 'summary.md');
   if (existsSync(path)) console.log(readFileSync(path, 'utf8'));
 }
