@@ -56,13 +56,13 @@ describe('the attributed.v1 policy', () => {
       attribution: { stage: 'attribution', model: 'claude-haiku-5-5', prompt: { version: 'attr.a3' }, caps: { input: 5000, output: 1200 },
         timeoutMs: 8000, settings: { thinking: 'off', effort: 'low', retries: 0, cache: 'system-5m' } },
       behaviour: { version: 'candidate-probes.v1' }, appliesTo: 'question-case-search' });
-    expect(autoFilterIdentity(attributed).sha256).toBe('5c0448bfc72e3d0c425ee1b54766074fdb643634dd2c257085557487e464ec76');
+    expect(autoFilterIdentity(attributed).sha256).toBe('e96a2903c3a01203fdb59d996a370e38bdb7364c9182f2a942d869332855029c');
     expect(autoFilterIdentity(autoFilterPolicy('none')).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
     expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.3')).sha256).toBe('8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de');
   });
   it('registers the confirmed subsets, which differ from attributed.v1 only in their fields, and pins them', () => {
-    const pins = { 'attributed.v1-state': '535b846bc484d34be85f4d2943f3d884f6df11f610fa2c8b612671e85cce4a96',
-      'attributed.v1-state-years': 'ad44e703077c41524057d5b3a1c93e253ba26ce82d4e53bcfd0d38b30c4ce02d' } as const;
+    const pins = { 'attributed.v1-state': 'd1d5f480a6c1ad175475dc8e6fe66031366aad07e84ce0808f398220d4ebc018',
+      'attributed.v1-state-years': '65955d51f614724e4aac54e388fb09e3a0442aac28160132a0d7b5323c8ae61d' } as const;
     const fields = { 'attributed.v1-state': ['state'], 'attributed.v1-state-years': ['state', 'years'] } as const;
     for (const version of ['attributed.v1-state', 'attributed.v1-state-years'] as const) {
       const variant = autoFilterPolicy(version);

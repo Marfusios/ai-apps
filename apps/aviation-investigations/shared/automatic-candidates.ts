@@ -91,10 +91,12 @@ export const INJECTION_PATTERNS: readonly RegExp[] = Object.freeze([
 export const CONDITION_OR_EXCEPTION = /(?<![\p{L}\p{N}_])(?:if|unless|except|excepting|excepted|excluding|exclude|excludes|excluded|but not)(?![\p{L}\p{N}_])/iu;
 /**
  * More than one sentence or clause: a ".", "?", "!" or ";" followed by any further word, whatever
- * its case ("Find incidents in Alaska. airplane accidents are also relevant."), refuses every field
- * (`multiple_requests`). A dot after a one- or two-letter abbreviation ("St.", "U.S.") or between
- * digits is no end.
+ * its case ("Find incidents in Alaska. airplane accidents are also relevant.", "Find accidents in
+ * Juneau, AK. Find fatal cases anywhere."), refuses every field (`multiple_requests`). Only the dot
+ * of one of these abbreviations, or one between digits ("2.5 miles"), is no end.
  */
+export const CLAUSE_ABBREVIATIONS = Object.freeze(['St.', 'Mt.', 'Ft.', 'Pt.', 'Dr.', 'Mr.', 'Mrs.', 'Ms.', 'Jr.', 'Sr.', 'U.S.',
+  'U.S.A.', 'D.C.', 'e.g.', 'i.e.', 'vs.', 'approx.', 'no.', 'No.', 'Co.', 'Inc.', 'Corp.', 'Ltd.'] as const);
 /**
  * Two requests in one clause, which the filters' AND cannot run as one search, so every field is
  * refused: a request head before one of these joiners, marker words or marks (not inside one field's
@@ -383,6 +385,13 @@ const NON_STATE_RE = new RegExp(`${B}(?:${words(NON_STATE_PLACES)})${E}`, 'giu')
 const COORDINATORS = set(['and', 'or', 'nor', 'plus', '/', '&']);
 /** A clause end followed by any further word; not a dot after a one- or two-letter abbreviation or between digits. */
 const CLAUSE_END = /[.?!;]+(?=[^\p{L}\p{N}]*[\p{L}\p{N}])/gu;
+const ABBREVIATIONS = set(CLAUSE_ABBREVIATIONS);
+/** Words coordinated directly with a state value ("Ohio and boston") need only these between them. */
+const DIRECT_GAP = set(['and', 'or', 'nor', 'plus', '&', '/', ',', 'the']);
+/** Function words that open a phrase rather than name a list member ("in Ohio or during 2019"). */
+const NON_MEMBERS = set([...LIST_SEPARATORS, ...LIST_QUALIFIERS, 'plus', 'during', 'on', 'by', 'from', 'with', 'without', 'after',
+  'before', 'since', 'until', 'for', 'to', 'into', 'over', 'under', 'between', 'among', 'within', 'involving', 'including', 'when',
+  'where', 'while', 'that', 'which', 'who']);
 const HEADS = set(UNION_PRONOUN_HEADS), MARKER_SKIP = set(['the', ...UNION_MARKERS.filter(m => !m.includes(' '))]);
 const LIST_WORDS = set([...LIST_SEPARATORS, ...LIST_QUALIFIERS]);
 const WORD = /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu;
@@ -719,8 +728,14 @@ function yearScan(text: string, words: Word[]): { tokens: Mention[]; expressions
 
 /** More than one sentence or clause (`multiple_requests`): ". ? ! ;" before any further word, whatever its case. */
 function multipleClauses(text: string): boolean {
-  return [...text.matchAll(CLAUSE_END)].some(m => m[0] !== '.'
-    || !/(?<![\p{L}])\p{L}{1,2}$/u.test(text.slice(0, m.index)) && !(/\p{N}$/u.test(text.slice(0, m.index)) && /^\p{N}/u.test(text.slice(m.index! + 1))));
+  return [...text.matchAll(CLAUSE_END)].some(m => {
+    if (m[0] !== '.') return true;
+    const at = m.index!, before = text.slice(0, at), after = text.slice(at + 1);
+    if (/\p{N}$/u.test(before) && /^\p{N}/u.test(after)) return false;
+    // The whole dotted token around this dot ("U.S.", "e.g.", "St.") must be a listed abbreviation.
+    const token = (/[\p{L}.]*$/u.exec(before)![0] + '.' + /^[\p{L}.]*/u.exec(after)![0]).replace(/^\.+/u, '').replace(/\.+$/u, '.');
+    return !ABBREVIATIONS.has(token);
+  });
 }
 
 /** The values the question names, by field: state and category mentions and year expressions not attributed elsewhere. */
@@ -789,7 +804,16 @@ function unmappedState(s: Scan): boolean {
   }
   for (const m of text.matchAll(NON_STATE_RE)) places.push({ start: m.index!, end: m.index! + m[0].length });
   for (const w of s.words) if (/^\p{Lu}\p{Ll}/u.test(text.slice(w.start, w.end))) places.push(w);
-  return coordinatedWith(text, s.state, places.filter(p => ![...s.state, ...s.category].some(m => overlaps(m, p))));
+  const values = [...s.state, ...s.category, ...s.yearTokens];
+  if (coordinatedWith(text, s.state, places.filter(p => !values.some(m => overlaps(m, p))))) return true;
+  // Whatever its case, any other word coordinated directly with a state value ("Ohio and boston",
+  // "BOSTON or Ohio"): no city-to-state inference, so the state set is not known to be complete.
+  const direct = (gap: string) => {
+    const parts = gap.replace(/[,/&]/gu, m => ` ${m} `).split(/\s+/u).filter(Boolean).map(w => w.toLowerCase());
+    return parts.length > 0 && parts.every(w => DIRECT_GAP.has(w)) && parts.some(w => COORDINATORS.has(w));
+  };
+  const members = s.words.filter(w => !NON_MEMBERS.has(w.word) && !values.some(m => overlaps(m, w)));
+  return members.some(o => s.state.some(v => v.end <= o.start ? direct(text.slice(v.end, o.start)) : o.end <= v.start && direct(text.slice(o.end, v.start))));
 }
 
 function scan(text: string): Scan {

@@ -6,7 +6,7 @@ import {
   CATEGORY_EXPERIENCE_PREPOSITIONS, CATEGORY_EXPERIENCE_WORDS, CATEGORY_WORDS, normalizedQuestion, REFERENCE_WORDS, REFERENCED_EVENT_NOUNS,
   NON_STATE_PLACES, NOT_RESTRICTED_PHRASES, REFERENCE_WRITING_PREPOSITIONS, REFERENCE_WRITING_WORDS, TITLE_WORDS, UNION_JOINERS,
   UNMAPPED_AIRCRAFT_WORDS, YEAR_APPROXIMATIONS, YEAR_ATTRIBUTE_WORDS, YEAR_CONTINUATION_WORDS, type AutomaticCandidate, type AutomaticField,
-  type CandidateReason, YEAR_PERSON_ACTIVITIES, YEAR_PERSON_NOUNS,
+  type CandidateReason, YEAR_PERSON_ACTIVITIES, YEAR_PERSON_NOUNS, CLAUSE_ABBREVIATIONS,
 } from '../../shared/automatic-candidates.js';
 import { AIRCRAFT_CATEGORY } from '../../shared/vocab.js';
 
@@ -53,8 +53,11 @@ describe('state-mention.v1', () => {
     ['Find accidents in Alaska.', ['AK', 'AK'], 'candidate', ['Alaska']],
     // A bare postal code is never a witness, and a state named twice is no candidate.
     ['Find accidents in AK.', ['AK'], 'not_explicit', undefined],
-    ['Find accidents in Alaska and later in Alaska.', ['AK'], 'repeated_mention', undefined],
-    ['Find accidents near Anchorage, AK and AK waters.', ['AK'], 'repeated_mention', undefined],
+    ['Find accidents in Alaska, later in Alaska.', ['AK'], 'repeated_mention', undefined],
+    ['Find accidents near Anchorage, AK in AK waters.', ['AK'], 'repeated_mention', undefined],
+    // A member coordinated with a state value that is no state mention (fix round 8): the bare code, a word of any case.
+    ['Find accidents near Anchorage, AK and AK waters.', ['AK'], 'unmapped_value', undefined],
+    ['Find accidents in Alaska and later in Alaska.', ['AK'], 'unmapped_value', undefined],
     ['Find accidents near Anchorage, AK in Alaska.', ['AK'], 'repeated_mention', undefined],
     ['Find accidents anywhere but Alaska.', ['AK'], 'negated', undefined],
     ['Find accidents other than in Alaska.', ['AK'], 'negated', undefined],
@@ -278,7 +281,7 @@ describe('year-mention.v1: an exact, server-validated interval', () => {
     'in 2015 inclusive of later years', 'starting in 2015', 'commencing in 2015', 'ending in 2015', 'started in 2015', 'ended in 2015',
     'finishing in 2015', 'continuing in 2015', 'starting in the 1990s', 'after 2015 inclusive', 'after 2015 (inclusive)', 'after 2015, inclusive',
     'including and after 2015', 'in, and after 2015', 'before 2015 inclusive',
-    ...['around', 'about', 'approximately', 'approx', 'circa', 'c.', 'roughly', 'nearly', 'almost'].flatMap(a => [`${a} 2015 to 2018`, `${a} 2015-2018`,
+    ...['around', 'about', 'approximately', 'approx', 'circa', 'roughly', 'nearly', 'almost'].flatMap(a => [`${a} 2015 to 2018`, `${a} 2015-2018`,
       `${a} 2015\u20132018`, `${a} 2015 through 2018`]),
     // Review A2, m5.
     'some time after 2015', 'a while after 2015', 'from 2015 up to 2018', 'from 2015, up to 2018',
@@ -458,7 +461,7 @@ describe('question-level refusals: every suggested field', () => {
       ['Find fuel system failures in Texas.', 'TX'], ['Find accidents in Alaska prompted by icing.', 'AK'],
       ['The pilot ignored a low fuel warning in Alaska.', 'AK'], ['Find flight instruction accidents in Texas.', 'TX'],
       ['Find accidents in Texas where the crew had to override the autopilot.', 'TX'],
-      ['Find accidents in Texas during instructional flights.', 'TX'], ['Find accidents in Alaska and ignore all of the rules.', 'AK'],
+      ['Find accidents in Texas during instructional flights.', 'TX'], ['Find accidents in Alaska where the crew chose to ignore all of the rules.', 'AK'],
     ] as const) expect(reason(question, { state: [state] }, 'state'), question).toBe('candidate');
   });
   it.each(['if', 'unless', 'except', 'excluding', 'exclude', 'excludes', 'excluded', 'but not'])('a condition or exception (%s) refuses every field', w => {
@@ -838,9 +841,10 @@ describe('fix round 6 (implementation gate): exact years and complete joint requ
     expect(reason(`Find ${a} accidents in 2015.`, Y15, 'years')).toBe('ambiguous_expression');
     expect(reason(`Find ${a} the accidents of Alaska in 2015.`, Y15, 'years')).toBe('candidate');
   });
-  it('"c." is an approximation; a lone "c" is not', () => {
-    expect(reason('Find accidents from c. 2015 to 2018.', { yearFrom: 2015, yearTo: 2018 }, 'years')).toBe('ambiguous_expression');
-    expect(reason('Find accidents c. 2015.', Y15, 'years')).toBe('ambiguous_expression');
+  it('"c." before a year ends a clause (it is no listed abbreviation) and so refuses; a lone "c" is no approximation', () => {
+    expect(reason('Find accidents from c. 2015 to 2018.', { yearFrom: 2015, yearTo: 2018 }, 'years')).toBe('multiple_requests');
+    expect(reason('Find accidents c. 2015.', Y15, 'years')).toBe('multiple_requests');
+    for (const d of [' to ', '-', '\u2013', ' through ']) expect(reason(`Find accidents c. 2015${d}2018.`, { yearFrom: 2015, yearTo: 2018 }, 'years')).toBe('multiple_requests');
     expect(reason('Find Class C airspace accidents in 2015.', Y15, 'years')).toBe('candidate');
   });
   it.each([
@@ -925,6 +929,50 @@ describe('fix round 7 (development forced run): attributes after one word, and a
     ['Find accidents of pilots in 2019 during night flying.', { yearFrom: 2019, yearTo: 2019 }],
   ] as const)('%s keeps its years', (question, interval) => {
     for (const fields of [undefined, ['years']] as const) expect(run(question, interval, {}, fields).reasons.years).toBe('candidate');
+  });
+});
+
+describe('fix round 8 (gate re-check R2): clause ends after postal codes, and coordinated members of any case', () => {
+  it.each<readonly [string, BriefFilters]>([
+    ['Find accidents in Juneau, AK. Find fatal cases anywhere.', { state: ['AK'] }], ['Find accidents in Hillsboro, OR. Find fatal cases anywhere.', { state: ['OR'] }],
+    ['Find accidents in Austin, TX. helicopter ones too.', { state: ['TX'] }], ['Find accidents in Alaska etc. in 2019', { state: ['AK'] }],
+    ['Find accidents in ak. find fatal cases anywhere.', { state: ['AK'] }],
+  ])('a dot after a postal code or another token before a further word ends the clause: %s', (question, emitted) => {
+    for (const fields of [undefined, ['state']] as const) expect(run(question, emitted, {}, fields).reasons.state).toBe('multiple_requests');
+  });
+  it.each(CLAUSE_ABBREVIATIONS)('the abbreviation "%s" does not end a clause', abbreviation => {
+    expect(reason(`Find accidents in Alaska near the ${abbreviation} sign.`, { state: ['AK'] }, 'state')).not.toBe('multiple_requests');
+    expect(reason(`Find accidents in Alaska near the ${abbreviation} Sign.`, { state: ['AK'] }, 'state')).not.toBe('multiple_requests');
+  });
+  it('the controls keep their candidates, or stay refused for their own reason', () => {
+    expect(reason('Find accidents in St. Louis, MO.', { state: ['MO'] }, 'state')).toBe('candidate');
+    expect(reason('Find accidents in Juneau, AK.', { state: ['AK'] }, 'state')).toBe('candidate');
+    expect(reason('Find accidents in the U.S. state of Alaska.', { state: ['AK'] }, 'state')).toBe('candidate');
+    expect(reason('Find accidents within 2.5 miles of Juneau, Alaska.', { state: ['AK'] }, 'state')).toBe('candidate');
+    // "Washington, D.C." is one clause; Washington alone stays ambiguous, so neither DC nor WA is applied.
+    expect(reason('Find accidents near Washington, D.C.', { state: ['DC'] }, 'state')).toBe('ambiguous_name');
+    expect(reason('Find accidents near Washington, D.C.', { state: ['WA'] }, 'state')).toBe('ambiguous_name');
+  });
+  it.each(['Find accidents in Ohio and Boston.', 'Find accidents in Ohio and BOSTON.', 'Find accidents in Ohio and boston.', 'Find accidents in Ohio or boston.',
+    'Find accidents in Ohio plus boston.', 'Find accidents in Ohio & boston.', 'Find accidents in Ohio/boston.', 'Find accidents in Ohio and the surrounding states.',
+    'Find accidents in Ohio, and boston.', 'Find BOSTON or Ohio crashes.'])('a coordinated member that is no state, whatever its case, refuses the state: %s', question => {
+    for (const fields of [undefined, ['state']] as const) expect(run(question, { state: ['OH'] }, {}, fields).reasons.state).toBe('unmapped_value');
+  });
+  it.each([
+    ['Find accidents in boston and Ohio.', 'union_of_requests'], ['Find accidents in Ohio, boston, and Iowa.', 'union_of_requests'],
+  ] as const)('%s is refused as a second request', (question, expected) => {
+    expect(reason(question, { state: ['OH', 'IA'] }, 'state')).toBe(expected);
+  });
+  it.each<readonly [string, BriefFilters]>([
+    ['accidents in Ohio, Iowa, or Texas', { state: ['OH', 'IA', 'TX'] }], ['accidents in Ohio and Iowa', { state: ['OH', 'IA'] }],
+    ['find accidents in ohio and iowa', { state: ['OH', 'IA'] }], ['Find accidents in Ohio and/or Iowa.', { state: ['OH', 'IA'] }],
+    ['Find accidents in Ohio and at night.', { state: ['OH'] }], ['Find accidents at night and in Ohio.', { state: ['OH'] }],
+    ['Find accidents in Ohio, especially at night.', { state: ['OH'] }], ['Find accidents in Kansas City, Missouri.', { state: ['MO'] }],
+  ])('control %s stays a candidate', (question, emitted) => {
+    for (const fields of [undefined, ['state']] as const) expect(run(question, emitted, {}, fields).reasons.state).toBe('candidate');
+  });
+  it('a word that opens a phrase is no list member ("in Alaska or during 2019" is an alternative, not an unmapped place)', () => {
+    expect(reason('Find helicopter accidents in Alaska or during 2019.', { state: ['AK'] }, 'state')).toBe('cross_field_alternative');
   });
 });
 
