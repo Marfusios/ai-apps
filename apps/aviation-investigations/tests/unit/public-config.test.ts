@@ -21,12 +21,13 @@ async function config(policy: EvidenceAutoFilterVersion | null, etag?: string) {
 describe('public automatic-filter policy', () => {
   it.each([
     [null, []], ['none', []], ['state-explicit.v1.3', ['state']], ['attributed.v1', ['state', 'years', 'category']],
+    ['attributed.v1-state', ['state']], ['attributed.v1-state-years', ['state', 'years']],
   ] as const)('reports the fields of the active %s policy', async (policy, expected) => {
     const response = await config(policy);
     expect(response.statusCode).toBe(200);
     expect(ConfigResponseSchema.parse(response.json()).aiAutomaticFilters).toEqual(expected);
   });
-  it.each(['state-explicit.v1.3', 'attributed.v1'] as const)('changes the ETag when the %s policy rolls back on an unchanged dataset', async policy => {
+  it.each(['state-explicit.v1.3', 'attributed.v1', 'attributed.v1-state', 'attributed.v1-state-years'] as const)('changes the ETag when the %s policy rolls back on an unchanged dataset', async policy => {
     const active = await config(policy);
     const rollback = await config('none', String(active.headers.etag));
     expect(rollback.statusCode).toBe(200);

@@ -60,6 +60,26 @@ describe('the attributed.v1 policy', () => {
     expect(autoFilterIdentity(autoFilterPolicy('none')).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
     expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.3')).sha256).toBe('8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de');
   });
+  it('registers the confirmed subsets, which differ from attributed.v1 only in their fields, and pins them', () => {
+    const pins = { 'attributed.v1-state': '535b846bc484d34be85f4d2943f3d884f6df11f610fa2c8b612671e85cce4a96',
+      'attributed.v1-state-years': 'ad44e703077c41524057d5b3a1c93e253ba26ce82d4e53bcfd0d38b30c4ce02d' } as const;
+    const fields = { 'attributed.v1-state': ['state'], 'attributed.v1-state-years': ['state', 'years'] } as const;
+    for (const version of ['attributed.v1-state', 'attributed.v1-state-years'] as const) {
+      const variant = autoFilterPolicy(version);
+      expect(Object.isFrozen(variant)).toBe(true);
+      expect(autoFilterIdentity(variant).sha256).toBe(pins[version]);
+      expect(variant.fields).toEqual(fields[version]);
+      expect(automaticFieldsOf(variant)).toEqual(fields[version]);
+      // The same rules, prompt, caps, timeout and settings; the behaviour fingerprint is the field set's own.
+      const { version: _v, fields: _f, behaviour, ...rest } = variant;
+      const { version: _av, fields: _af, behaviour: base, ...same } = attributed;
+      expect(rest).toEqual(same);
+      expect(behaviour).toEqual({ version: base.version, sha256: candidateFingerprint(fields[version]) });
+      expect(behaviour.sha256).not.toBe(base.sha256);
+      expect(attributionStage(variant)).toEqual(attributed.attribution);
+      expect(evidenceReservation('claude-haiku-5-5', 'text-embedding-3-small', evidenceRankingConfig('er-q-v1'), variant).reservationUsd).toBe(0.0037);
+    }
+  });
   it('binds the prompt text and wire schema it sends', async () => {
     const { createHash } = await import('node:crypto');
     const { z } = await import('zod');

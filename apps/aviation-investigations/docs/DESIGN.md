@@ -972,8 +972,9 @@ hashes; automatic filters are an independent, frozen
 policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
 identity includes the outputs of a fixed, versioned guard-probe set; a changed response
 to any probe changes the hash even without a guard version bump. Live accepts
-`none` and `attributed.v1` (Task 30); `state-explicit.v1.3` is dev-only since the
-2026-10-25 security re-check. The default stays `none` and an operator must explicitly
+`none` and the confirmed subsets `attributed.v1-state` and `attributed.v1-state-years`
+(Task 30); `attributed.v1` (with the category, which failed confirmation) is dev-only, and
+`state-explicit.v1.3` is dev-only since the 2026-10-25 security re-check. The default stays `none` and an operator must explicitly
 enable automatic filters in the environment settings. The independent live
 ranking allowlist is `er-q-v1` and `er-q-h50-v1`. `state-explicit.v1.3` uses
 only a valid scope.e3 case-search result's state set, on original question searches.

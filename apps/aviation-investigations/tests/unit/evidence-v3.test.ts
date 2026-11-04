@@ -1,6 +1,7 @@
 /** Server-only v3 disclosure, policy and free-undo rules. No provider network. */
 import { describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../shared/config.js';
+import { LIVE_EVIDENCE_AUTO_FILTERS } from '../../shared/evidence-auto-filters.js';
 import { EVIDENCE_RANKING_VERSIONS, LIVE_EVIDENCE_RANKINGS } from '../../shared/evidence-ranking.js';
 import { CreateEvidenceRequestSchema, EvidencePageSchema, type CreateEvidenceRequest } from '../../shared/contracts/evidence.js';
 import { autoFilterIdentity, autoFilterPolicy, automaticState } from '../../server/evidence/auto-filters.js';
@@ -39,11 +40,17 @@ describe('independent automatic state policy', () => {
   it.each(['dev', 'live'] as const)('%s defaults to none, accepts its cleared policies and rejects unknown values', APP_ENV => {
     expect(loadConfig({ files: [], env: { APP_ENV } }).ai.evidenceAutoFilters).toBe('none');
     expect(loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: '' } }).ai.evidenceAutoFilters).toBe('none');
-    // v1.3 failed the 2026-10-25 security re-check: dev only.
-    for (const policy of APP_ENV === 'dev' ? ['none', 'state-explicit.v1.3', 'attributed.v1'] : ['none', 'attributed.v1']) {
+    // v1.3 failed the 2026-10-25 security re-check, and attributed.v1's category failed the Task 30 confirmation: dev only.
+    const live = ['none', 'attributed.v1-state', 'attributed.v1-state-years'];
+    for (const policy of APP_ENV === 'dev' ? [...live, 'state-explicit.v1.3', 'attributed.v1'] : live) {
       expect(loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } }).ai.evidenceAutoFilters).toBe(policy);
     }
-    if (APP_ENV === 'live') expect(() => loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.3' } })).toThrow('not cleared for live');
+    if (APP_ENV === 'live') {
+      for (const policy of ['state-explicit.v1.3', 'attributed.v1']) {
+        expect(() => loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } }), policy).toThrow('not cleared for live');
+      }
+      expect(LIVE_EVIDENCE_AUTO_FILTERS).toEqual(live);
+    }
     for (const policy of ['state-explicit.v1', 'state-explicit.v1.1', 'state-explicit.v1.2', 'attributed.v0', 'unknown']) {
       expect(() => loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } })).toThrow('AVIATION_EVIDENCE_AUTO_FILTERS');
     }
@@ -51,7 +58,7 @@ describe('independent automatic state policy', () => {
   it('enabling automatic filters on live still permits only the live ranking allowlist', () => {
     for (const version of EVIDENCE_RANKING_VERSIONS) {
       const live = () => loadConfig({ files: [], env: { APP_ENV: 'live',
-        AVIATION_EVIDENCE_AUTO_FILTERS: 'attributed.v1', AVIATION_EVIDENCE_RANKING: version } });
+        AVIATION_EVIDENCE_AUTO_FILTERS: 'attributed.v1-state-years', AVIATION_EVIDENCE_RANKING: version } });
       if (LIVE_EVIDENCE_RANKINGS.includes(version)) expect(live().ai.evidenceRanking).toBe(version);
       else expect(live).toThrow('AVIATION_EVIDENCE_RANKING is not cleared for live');
     }

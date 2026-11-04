@@ -320,8 +320,9 @@ backup exclusion and 24-hour expiry.
 The automatic-state policy is frozen/hashed separately from the evaluated rankings.
 Live allows `none` (the default and rollback) and `state-explicit.v1.3`; v1.1 and
 v1.2 were never deployed and are no longer accepted. (Superseded in Task 30: live allows
-`none` and `attributed.v1`; `state-explicit.v1.3` did not clear the 2026-10-25 re-check and is
-dev-only.) The guard requires the complete
+`none`, `attributed.v1-state` and `attributed.v1-state-years`; `attributed.v1`, whose category
+field failed confirmation, and `state-explicit.v1.3`, which did not clear the 2026-10-25
+re-check, are dev-only.) The guard requires the complete
 explicit model-emitted state set. v1.3 is built on v1.1 with five rejection rules
 after NFKC: bounded other-event wording, references before the first state mention,
 title/text language, destinations/departures/attributes at each mention, and a definite
