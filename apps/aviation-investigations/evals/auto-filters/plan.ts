@@ -431,11 +431,22 @@ export const DECISION_RULE = Object.freeze({ trapUpper: 0.01, precisionLower: 0.
 export type Verdict = 'pass' | 'fail' | 'straddles' | 'insufficient' | 'missing';
 export interface DecisionInputs {
   enabled: boolean;
+  /** The confirmation forced run's figures for the field; null when that run is absent, incomplete or refused at the join. */
   confirmForced: Pick<FieldSummary, 'traps' | 'questionPrecision' | 'positives'> | null;
+  /** The confirmation end-to-end run's figures; null as above. */
   confirmE2e: Pick<FieldSummary, 'positives'> | null;
-  /** Every development run's review-24 result for the field; null when that run has no complete summary. */
+  /** The development runs' review-24 results for the field; `unsafe` null when that run cannot be joined. */
   development: { part: 'dev-forced' | 'dev-e2e'; unsafe: { samples: number; items: string[] } | null }[];
+  /** Why the join refused an input (absent, incomplete, stale, another policy or field set); any entry keeps the field off. */
+  problems?: readonly string[];
 }
+export const DEVELOPMENT_PARTS = ['dev-forced', 'dev-e2e'] as const;
+/**
+ * The registered per-field rule. A field is on only when it is enabled, every prescribed input is present
+ * and valid (the confirmation forced and end-to-end runs, and both development runs' review-24 results),
+ * the join found no problem, and the trap, precision and review-24 rules pass. "Not useful" (end-to-end
+ * recall below 50%) is reported only.
+ */
 export function decideField(field: AutoField, d: DecisionInputs) {
   const t = d.confirmForced?.traps?.policy, p = d.confirmForced?.questionPrecision;
   const trap: Verdict = !t ? 'missing' : t.items < DECISION_RULE.minTrapItems ? 'insufficient'
@@ -444,12 +455,17 @@ export function decideField(field: AutoField, d: DecisionInputs) {
     : p.lower95 !== null && p.lower95 >= DECISION_RULE.precisionLower ? 'pass' : (p.rate ?? 0) >= DECISION_RULE.precisionLower ? 'straddles' : 'fail';
   const runs = d.development.filter(r => r.unsafe !== null);
   const unsafeItems = [...new Set(runs.flatMap(r => r.unsafe!.items))].sort();
-  const review24: 'pass' | 'veto' | 'missing' = unsafeItems.length ? 'veto' : runs.length < 2 ? 'missing' : 'pass';
+  const devMissing = DEVELOPMENT_PARTS.filter(part => !runs.some(r => r.part === part));
+  const review24: 'pass' | 'veto' | 'missing' = unsafeItems.length ? 'veto' : devMissing.length ? 'missing' : 'pass';
   const e2eRecall = d.confirmE2e?.positives?.rate ?? null;
   const useful = e2eRecall === null ? null : e2eRecall >= DECISION_RULE.usefulRecall;
-  const on = d.enabled && trap === 'pass' && precision === 'pass' && review24 === 'pass';
+  const absent = [...(d.confirmForced ? [] : ['confirm-forced missing or incomplete']), ...(d.confirmE2e ? [] : ['confirm-e2e missing or incomplete']),
+    ...devMissing.map(part => `${part} review-24 results missing or incomplete`)];
+  const blocked = [...absent, ...(d.problems ?? [])];
+  const on = d.enabled && !blocked.length && trap === 'pass' && precision === 'pass' && review24 === 'pass';
   const why = !d.enabled ? 'not in the evaluated policy' : on ? 'all safety rules pass'
-    : [trap !== 'pass' ? `trap ${trap}` : '', precision !== 'pass' ? `precision ${precision}` : '', review24 !== 'pass' ? `review-24 ${review24}` : ''].filter(Boolean).join(', ');
+    : [...blocked, trap !== 'pass' ? `trap ${trap}` : '', precision !== 'pass' ? `precision ${precision}` : '', review24 !== 'pass' ? `review-24 ${review24}` : '']
+      .filter(Boolean).join('; ');
   return { field, enabled: d.enabled, on, why,
     trap: { verdict: trap, items: t?.items ?? null, failures: t?.failures ?? null, rate: t?.rate ?? null, upper95: t?.upper95 ?? null },
     precision: { verdict: precision, applications: p?.applications ?? null, wrong: p?.wrong ?? null, rate: p?.rate ?? null, lower95: p?.lower95 ?? null },
