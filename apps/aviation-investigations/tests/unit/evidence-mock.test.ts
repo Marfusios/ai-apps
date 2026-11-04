@@ -17,6 +17,7 @@ import { autoFilterPolicy, automaticFieldsOf as registeredFields } from '../../s
 import casesJson from '../../web/mock/cases.json' with { type: 'json' };
 import {
   MOCK_EVIDENCE_BASELINE,
+  MOCK_EVIDENCE_FIELDS_POLICY,
   MOCK_EVIDENCE_QUESTIONS,
   MOCK_EVIDENCE_RELEASE,
   MOCK_EVIDENCE_STATE_POLICY,
@@ -84,11 +85,12 @@ function undo(server: MockEvidence, from: EvidencePage, filters: BriefFilters, r
   return undoReply(server, from, filters, restore, n).search;
 }
 
-/** The configurations the tests use: the server's defaults, what live runs, and the others the evaluation may pick. */
+/** The configurations the tests use: the server's defaults, what live runs, the attributed policy, and the others the evaluation may pick. */
 const CONFIGS: Record<string, MockEvidenceConfig> = {
   baseline: MOCK_EVIDENCE_BASELINE,
   release: MOCK_EVIDENCE_RELEASE,
   statePolicy: MOCK_EVIDENCE_STATE_POLICY,
+  fieldsPolicy: MOCK_EVIDENCE_FIELDS_POLICY,
   questionTermsAiOrderState: { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.3' },
   termsState: { ranking: 'er-t-v1', autoFilters: 'state-explicit.v1.3' },
   questionAiOrder: { ranking: 'er-q-h100-v1', autoFilters: 'none' },
@@ -438,6 +440,28 @@ describe('the reviewed state policy, off on live: the question alone, in match o
     expect(server.quotaExempt(again)).toBe(false);
     const charged = server.create(again);
     expect([charged.status, charged.quotaExempt, CreateEvidenceResponseSchema.parse(charged.body).search.freeUndo]).toEqual([201, false, false]);
+  });
+});
+
+describe('the attributed policy, not on live: live’s ranking with the state, years and aircraft category the question names applied', () => {
+  it('discloses the three, keeps the rest suggested, and takes out any whole one for free, once', () => {
+    const server = new MockEvidence({ config: MOCK_EVIDENCE_FIELDS_POLICY });
+    const page = results(server, MOCK_EVIDENCE_QUESTIONS.fields);
+    const automatic = { state: ['TX'], yearFrom: 2008, category: ['HELI'] };
+    expect([page.automaticFilters, page.appliedFilters, page.query]).toEqual([automatic, automatic, { source: 'question', keywords: { kind: 'question' } }]);
+    expect([page.order, page.marks, page.freeUndo, page.undo]).toEqual(['ai_relevance', 'search_words', false, 'available']);
+    // The phase and the terms stay a suggestion; what was applied is not suggested again.
+    expect(page.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'power loss' });
+    // Every case meets the three, and its relevance facts say so.
+    const cases = readAll(server, page);
+    expect(cases.map((c) => c.case.ntsbNo).sort()).toEqual(['CEN19FA024', 'DFW08TA066']);
+    expect(cases.map((c) => [...c.relevance.filters].sort())).toEqual([['category', 'state', 'years'], ['category', 'state', 'years']]);
+    // A question naming a state alone gets the state alone.
+    expect(results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms, 2).automaticFilters).toEqual({ state: ['TX'] });
+    // Taking the years out is the free undo, once.
+    const undone = undoReply(server, page, { state: ['TX'], category: ['HELI'] }, false, 3);
+    expect([undone.exempt, undone.reply.quotaExempt, undone.search.freeUndo, undone.search.automaticFilters]).toEqual([true, true, true, null]);
+    expect((server.read(page.id, 1).body as EvidencePage).undo).toBe('used');
   });
 });
 
