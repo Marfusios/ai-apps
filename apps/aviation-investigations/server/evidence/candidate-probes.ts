@@ -495,6 +495,21 @@ const probes: Probe[] = [
     'Find accidents at night and in Ohio.', 'Find accidents in Ohio, especially at night.'].map(q => [q, { state: ['OH'] }] satisfies Probe),
   ['Find accidents in Ohio, boston, and Iowa.', { state: ['OH', 'IA'] }], ['accidents in Ohio and Iowa', { state: ['OH', 'IA'] }],
   ['find accidents in ohio and iowa', { state: ['OH', 'IA'] }], ['Find accidents in Ohio and/or Iowa.', { state: ['OH', 'IA'] }],
+  // Fix round 9 (final gate R2): blunt clause ends, and list members after a state value whatever their case.
+  ...['Find accidents in Ohio in the U.S. Find fatal cases anywhere.', 'Find accidents in Ohio in the U.S. fatal cases anywhere are also relevant.',
+    'Find accidents in Ohio in 2019 caused by 1.5 inches of ice', 'Find accidents in Ohio and in boston.', 'Find accidents in Ohio, boston.',
+    'Find accidents in Ohio, BOSTON.', 'Find accidents in Ohio, Boston.', 'Find accidents in Ohio and in Boston.', 'Find accidents in Ohio or the yukon.',
+    'Find accidents in Ohio and near columbus.', 'Find accidents in Ohio and at boston.', 'Find accidents in Ohio, the deadliest.', 'Find Ohio and any other state.',
+    'Find accidents in Ohio or the state of confusion.', 'Find accidents in Ohio and at night.', 'Find accidents in Ohio and in 2019.',
+    'Find accidents in Ohio, especially at night.', 'Find accidents in Ohio, fatal ones only.', 'Find accidents in boston, Ohio.', 'Find accidents in Boston, Ohio.']
+    .map(q => [q, { state: ['OH'] }] satisfies Probe),
+  ...['U.S.', 'U.S.A.', 'D.C.', 'e.g.', 'i.e.', 'vs.', 'approx.', 'no.', 'No.', 'Co.', 'Inc.', 'Corp.', 'Ltd.', 'Dr.', 'Mr.', 'Jr.', 'etc.']
+    .flatMap(a => [`Find accidents in Ohio in the ${a} Find fatal cases anywhere.`, `Find accidents in Ohio near the ${a}`].map(q => [q, { state: ['OH'] }] satisfies Probe)),
+  ...['St', 'Mt', 'Ft', 'Pt'].flatMap(a => [`Find accidents in Alaska near ${a}. Lawrence.`, `Find accidents in Alaska near ${a}. lawrence.`].map(q => [q, AK] satisfies Probe)),
+  ['Find accidents in Ohio and in Iowa.', { state: ['OH', 'IA'] }], ['Find accidents in Ohio or the state of Iowa.', { state: ['OH', 'IA'] }],
+  ['Which investigations in Florida, from 2008 through 2026, have a finding concerning microburst?', { state: ['FL'], yearFrom: 2008, yearTo: 2026 }],
+  ['in Alabama, Illinois, New Mexico, or Ohio, from 2008 through 2020', { state: ['AL', 'IL', 'NM', 'OH'], yearFrom: 2008, yearTo: 2020 }],
+  ['Find accidents in the U.S. state of Alaska.', AK], ['Find accidents in Washington D.C. in 2019.', { state: ['DC'], ...Y2019 }],
   // Nested punctuation.
   ['Find ((helicopter)) accidents ((in [Alaska])), during 2019.', { state: ['AK'], category: ['HELI'], ...Y2019 }],
   ['Find helicopter accidents in Alaska (or Hawaii) during 2019.', { state: ['AK', 'HI'], category: ['HELI'], ...Y2019 }],
