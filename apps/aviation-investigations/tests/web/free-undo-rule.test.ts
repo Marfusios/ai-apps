@@ -1,7 +1,7 @@
 /**
  * The one free undo's rule as the web client applies it (web/src/features/evidence/undo.ts
- * `freeUndoRule`; Task 30 spec §6, the server's `canUndo` is the same rule, held to it by
- * tests/unit/evidence-undo.test.ts): an edit is free when the page says its undo is there, it sends
+ * `freeUndoRule`; DESIGN "Evidence.v3": the server's `canUndo`, server/evidence/undo.ts, is the same
+ * rule, held to it by tests/unit/evidence-undo.test.ts): an edit is free when the page says its undo is there, it sends
  * no words, and its filters are the applied ones with one or more whole automatic filters taken out
  * (the state set, both year bounds as one, the aircraft category set, each counted only while the
  * applied value is the automatic one) and/or the added terms taken out, and nothing else changed.

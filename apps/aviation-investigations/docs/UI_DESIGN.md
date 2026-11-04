@@ -1075,8 +1075,8 @@ note above them; counting and comparison questions get results with a hint.
    `web/src/features/evidence/undo.ts`): no words of the reader's own, one or more whole automatic
    filters removed (the whole state set, both year bounds, the whole aircraft category set, each only
    while it is as AirCase applied it; removing one of several states or categories narrows the search
-   and uses one) and/or the added terms removed, at least one removal, nothing else changed (Task 30
-   spec §6; before Task 30 the state was the only automatic filter). Once a free undo is made, the
+   and uses one) and/or the added terms removed, at least one removal, nothing else changed
+   (`server/evidence/undo.ts` `canUndo`; before Task 30 the state was the only automatic filter). Once a free undo is made, the
    search's pages say "used". It runs
    while the visitor's own searches are used up (the trial's, or an account's day or month), through
    the usual check; anything charged stays off then. Right before sending a free undo the interface
@@ -1138,8 +1138,8 @@ note above them; counting and comparison questions get results with a hint.
    anything the reranker wrote. Then the key to the marks, from the server's `marks`: "Marked in the
    excerpts: the suggested terms · their synonyms" (`suggested_terms`), "your words" (`search_words`
    for the question alone or the reader's own words) or "the words searched" (`search_words` when
-   AirCase added terms). A state applied on its own changes no marks: with the state policy alone, as
-   live runs, the key says "the suggested terms". The cards' relevance lines, the drawer, Compare and
+   AirCase added terms). A filter applied on its own changes no marks: with the reviewed state policy
+   (`er-q-v1`), the key says "the suggested terms". The cards' relevance lines, the drawer, Compare and
    print say the same.
 8. **Cards**, in rank order:
    - the case facts exactly as Explore's rows show them (case number, date, aircraft, place,
@@ -1207,7 +1207,7 @@ question are never shown), and AI's order is said in fixed words, never with its
 | --- | --- |
 | Empty | "No investigations were retrieved for this search." with "Filters: …" in words, the words searched ("Your question, as asked" or "Search words: “…”"), and "Keyword search for “…”, without filters" (free) |
 | Tiny (1–2) | The cards, then "Only two investigations were retrieved." with the same filters and way out (no paging line) |
-| No suggestion | The results, the "Your search" box and no suggestion block (the scope stage failed, the search is an edit, or everything it suggested was used: an applied state and terms keyword search read); the marks follow `marks` and the keywords: the reader's words, or "the words searched" when AirCase added terms |
+| No suggestion | The results, the "Your search" box and no suggestion block (the scope stage failed, the search is an edit, or everything it suggested was used: an applied state, years or aircraft category and terms keyword search read); the marks follow `marks` and the keywords: the reader's words, or "the words searched" when AirCase added terms |
 | Gone or unknown | "This AI search is no longer available." / "AirCase deletes AI searches after 24 hours, and each one opens only for the person who asked it." with an empty box (Search, Ask AI) and [Ask again] from this page's memory only; tab "AI search expired · AirCase" |
 | Load failure | "This AI search didn't load." with Try again; a page that fails "The next investigations didn't load." |
 | Not finished | A search the server could not finish (503 `unavailable`, before or after it was admitted; no search is used either way): "AirCase couldn't finish this AI search." / "It didn't use one of your searches. Try again in a moment." with [Try again · uses 1] and the keyword way out; for a free undo, whose claim the server keeps once admitted, the second line is "The free undo may be used up now, so trying again can use one of your AI searches." |

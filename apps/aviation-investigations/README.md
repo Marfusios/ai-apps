@@ -1184,8 +1184,11 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   reader's own words and filters. The page shows the question, then "Your search" (the question as
   asked or the reader's words; the terms the AI added to keyword search, `query.keywords`, under
   "Also searched" or "Keywords searched" with a magenta "AI" tag; and the applied filters from
-  `appliedFilters`, each a removable chip, a state applied because the question names it,
-  `automaticFilters`, tagged "from your question"), then what is left of the AI's suggestion,
+  `appliedFilters`, each a removable chip, those applied because the question names them,
+  `automaticFilters`, tagged "from your question": a state, and with `attributed.v1` years and an
+  aircraft category too, a chip per state or category value and one for the years, with a fixed
+  note under them that AI applied them and, while the free undo is there, that taking out
+  everything AI added is free once), then what is left of the AI's suggestion,
   magenta and dashed under the contract's label "Suggested filters and terms — not applied" (its
   terms only while keyword search has not read them): "Apply these filters · uses 1" sends an
   edited search with the search's filters plus those and no `terms`, so the query stays, and only
@@ -1215,13 +1218,14 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   removed the added terms. While the page says the search's one free undo is there (`undo:
   "available"`), a draft that only removes what AirCase added (one or more whole automatic
   facets: the state, both year bounds, the aircraft category; the added terms; or both) reads
-  "Search again · free", by the server's rule
+  "Search again · free" (one state or category of several left, or one year bound, narrows the
+  search and uses one), by the server's rule
   (`web/src/features/evidence/undo.ts`, held to `server/evidence/undo.ts` by
   `tests/unit/evidence-undo.test.ts`); it runs with the visitor's own searches used up and through
   the usual check, and the searches it came from then say `used`. The created page's `freeUndo`
   decides: a page that says it was not free says "This search used one of your AI searches.". "Show keyword
   results" opens Explore with the draft's words (or the question) and filters, free. An empty or
-  tiny result shows its filters (an automatic state tagged, the added terms said) and a free
+  tiny result shows its filters (the automatic state, years and category tagged, the added terms said) and a free
   keyword search without them; a gone search (a 404) says so
   and offers to ask again. The drawer, Compare (`?evidence=:id&pages=n`) and print show
   the same projection under the heading and notice. Nothing on these surfaces is written
@@ -1347,13 +1351,20 @@ The evidence routes are answered by `web/mock/evidence.ts` (`evidence.v3`), stan
 ranking configuration and automatic-filter policy, like a server (`createHandlers({ evidence })`;
 in the dev mock mode and the end-to-end tests, session storage `casebook-mock-evidence` as JSON
 `{"ranking": "er-qt-h50-v1", "autoFilters": "state-explicit.v1.3"}`; the server's defaults,
-`er-q-v1` and `none`, otherwise; `MOCK_EVIDENCE_RELEASE` is what live runs, `er-q-v1` with
-`state-explicit.v1.3`):
+`er-q-v1` and `none`, otherwise; `MOCK_EVIDENCE_RELEASE` is what live runs, `er-q-h50-v1` with
+`none`; `MOCK_EVIDENCE_STATE_POLICY` the reviewed state policy, `er-q-v1` with
+`state-explicit.v1.3`; `MOCK_EVIDENCE_FIELDS_POLICY` the attributed policy of Task 30,
+`er-q-h50-v1` with `attributed.v1`):
 retrieval over the fixture index from the question's own words, plus or instead of the suggested
-terms as the configuration says, with a state the question names applied through the server's own
-guard and the leading cases put in order by a fixed stand-in for a reranker's grades (an edit:
-exactly the filters sent, with the real filter rules, and the reader's words when sent, the
-question's when it restores them, else the earlier query), the one free undo by the server's rule
+terms as the configuration says, with what the policy applies on its own, only ever of its fields
+(`shared/evidence-auto-filter-fields.ts`, which a unit test holds to the server's registry): a
+state the question names through the server's own guard (`state-explicit.v1.3`), or the suggested
+state, years and aircraft category (`attributed.v1`, standing in for the server's candidate rules
+and attribution check, which the mock does not run); the leading cases put in order by a fixed
+stand-in for a reranker's grades (an edit: exactly the filters sent, with the mock search engine's
+filter rules, Explore's, where an aircraft filter such as the category is met when one aircraft of
+an event meets it, though the server's evidence search needs every aircraft; and the reader's
+words when sent, the question's when it restores them, else the earlier query), the one free undo by the server's rule
 (it uses none of the visitor's searches and passes a used-up quota; every page says whether it is
 still there, `undo`, as the server computes it from its claim), a stand-in scope
 stage that suggests filters and terms (rules for a few words, phases and states), hints for
@@ -1370,15 +1381,19 @@ retrieves none, one with "expire" makes a search that is gone at once, one with 
 a search whose first free undo is admitted, takes the undo's one-use claim and then fails (a 503,
 the claim kept, as the server keeps it), and the brief's failure keywords work here too; "Carb icing
 on approach in Texas", "Carb icing on approach in Missouri" (whose cases hold the suggested terms)
-and "Engine power loss in California or Nevada" name states. Every answer, in each configuration, is checked against the contract in
+and "Engine power loss in California or Nevada" name states, and "Helicopter power loss on
+approach in Texas since 2008" (`fields`) names a state, years and an aircraft type (the attributed
+policy applies all three, which leaves 2 cases). Every answer, in each configuration, is checked against the contract in
 `tests/unit/evidence-mock.test.ts`, which also checks that an unapplied suggestion changes no
-ranking, filter or excerpt, what each configuration discloses, and the free-undo rule.
+ranking, filter or excerpt, what each configuration discloses, that each policy applies only its
+fields, and the free-undo rule.
 `/api/config` reports `aiLimits` (`MOCK_AI_LIMITS` in `web/mock/ai-status.ts`: 10 a day
 anonymous, 50 per account, 20 in an account's first 3 days, 600 a month; briefs on, so the
 brief pages stay testable; `createHandlers({ aiLimits })` changes them) and `aiAutomaticFilters`
-(`["state"]` when the mock's evidence policy applies states, else `[]`; `createHandlers({
-aiAutomaticFilters })` sets it, and `null` leaves it out as a server without the field would), which
-words Explore's AI nudge and the About page's AI line (a missing field reads as nothing applied).
+(the mock's evidence policy's fields: `["state"]` for `state-explicit.v1.3`, `["state", "years",
+"category"]` for `attributed.v1`, else `[]`; `createHandlers({ aiAutomaticFilters })` sets it, and
+`null` leaves it out as a server without the field would), which words Explore's AI nudge and the
+About page's AI line, naming only the fields reported (a missing field reads as nothing applied).
 A unit test fails when the committed mock files are out of date.
 
 An AI search's progress (`GET /api/evidence/progress/:key`) is answered by
@@ -1665,7 +1680,11 @@ through the stand-in below and `AIRCASE_ADMIN_EMAILS` naming its `e2e-admin@exam
 search checklist, ratings and the admin page (`tests/e2e-real/search-checklist.spec.ts`,
 `admin.spec.ts`): its fake scope stage and reranker each take about a second and its search
 answers wait a little longer, so the checklist's reads see each stage under way and then the
-finished search. The admin tests run after the rest (project `chromium-real-admin`), since their
+finished search. A fourth app on `E2E_REAL_FIELDS_PORT` (default `E2E_REAL_PORT` + 5) runs the
+attributed policy (`er-q-h50-v1` with `attributed.v1`) with a scripted scope answer and attribution
+check, for `tests/e2e-real/evidence-attributed.spec.ts`: a state, years and an aircraft type
+applied, tagged and noted, the years taken out for free, and the stored search read again with
+its automatic filters. The admin tests run after the rest (project `chromium-real-admin`), since their
 sign-ins add sessions that `sign-in-out.spec.ts` counts. It also starts a
 second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.0.0.1 at
 `E2E_AUTH_PORT`, default 5182) and an offline stand-in for Google on another site
