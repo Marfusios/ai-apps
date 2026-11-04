@@ -4,7 +4,8 @@ import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import {
   AUTOMATIC_FIELDS, AUTOMATIC_MAX_CATEGORIES, AUTOMATIC_MAX_STATES, automaticCandidates, CATEGORY_ATTRIBUTE_NOUNS, CATEGORY_COMPARISON_PHRASES,
   CATEGORY_EXPERIENCE_PREPOSITIONS, CATEGORY_EXPERIENCE_WORDS, CATEGORY_WORDS, normalizedQuestion, REFERENCE_WORDS, REFERENCED_EVENT_NOUNS,
-  TITLE_WORDS, UNION_JOINERS, YEAR_ATTRIBUTE_WORDS, type AutomaticCandidate, type AutomaticField, type CandidateReason,
+  NOT_RESTRICTED_PHRASES, REFERENCE_WRITING_PREPOSITIONS, REFERENCE_WRITING_WORDS, TITLE_WORDS, UNION_JOINERS,
+  YEAR_ATTRIBUTE_WORDS, type AutomaticCandidate, type AutomaticField, type CandidateReason,
 } from '../../shared/automatic-candidates.js';
 import { AIRCRAFT_CATEGORY } from '../../shared/vocab.js';
 
@@ -33,8 +34,9 @@ describe('state-mention.v1', () => {
     ['Find accidents near Delaware, OH.', ['DE'], 'ambiguous_name', undefined],
     ['Find accidents near Portland, OR.', ['OR'], 'candidate', ['Portland, OR']],
     ['Find accidents near Portland, OR, in 2019.', ['OR'], 'candidate', ['Portland, OR']],
-    // OR before a word reads as the conjunction, never as Oregon.
-    ['Find accidents near Portland, OR during 2019.', ['OR'], 'not_explicit', undefined],
+    // After a city, OR is Oregon whatever follows; after a state name it is the conjunction (fix round 4).
+    ['Find accidents near Portland, OR during 2019.', ['OR'], 'candidate', ['Portland, OR']],
+    ['Show investigation sources near Hillsboro, OR associated with engine failures.', ['OR'], 'candidate', ['Hillsboro, OR']],
     ['Find accidents in Alaska, OR Hawaii.', ['AK', 'HI'], 'candidate', ['Alaska', 'Hawaii']],
     ['Find accidents in Alaska, OR Hawaii.', ['OR'], 'set_mismatch', undefined],
     ['Find accidents in West Virginia.', ['WV'], 'candidate', ['West Virginia']],
@@ -483,6 +485,18 @@ describe('question-level refusals: every suggested field', () => {
     const glue = joiner === '/' ? '/' : ` ${joiner} `;
     everyField(`Find Alaska accidents${glue}helicopter accidents during 2019.`, 'union_of_requests');
   });
+  it.each(['investigation', 'investigations', 'event', 'events', 'record', 'records', 'report', 'reports', 'case', 'cases', 'occurrence', 'occurrences'])(
+    '"%s" is no event noun of a union (fix round 4)', noun => {
+      expect(run(`Find Alaska ${noun} and helicopter ${noun}.`, { state: ['AK'], category: ['HELI'] }).reasons)
+        .toEqual({ state: 'candidate', years: 'empty', category: 'candidate' });
+    });
+  it('one request about an archive and an event location is no union (fix round 4)', () => {
+    expect(reason('Search the investigation archive for gusts and aircraft control, restricting the event location in the state of Iowa.', { state: ['IA'] }, 'state'))
+      .toBe('candidate');
+    for (const noun of ['accident', 'accidents', 'crash', 'crashes', 'incident', 'incidents', 'mishap', 'mishaps']) {
+      expect(reason(`Find Alaska ${noun} and helicopter ${noun}.`, { state: ['AK'], category: ['HELI'] }, 'state')).toBe('union_of_requests');
+    }
+  });
   it('a sentence end separates two requests; two values of one request are no union', () => {
     const r = run('Find helicopter accidents in Alaska involving icing. Also crashes at night during 2019.', all);
     expect(r.reasons).toEqual({ state: 'candidate', years: 'candidate', category: 'candidate' });
@@ -505,9 +519,13 @@ describe('question-level refusals: every suggested field', () => {
   ])('an alternative inside one value list, or a year written "or later", is no refusal: %s', (question, emitted) => {
     expect(run(question, emitted).candidates.map(c => c.field)).toEqual(['state', 'years', 'category']);
   });
-  it('a capitalised OR before a word is an alternative, not Oregon (review M3)', () => {
+  it('OR is Oregon after a city and the conjunction after a state name (review M3, fix round 4)', () => {
     expect(run('Find helicopter accidents in Portland, OR during 2019.', { state: ['OR'], category: ['HELI'], yearFrom: 2019, yearTo: 2019 }).reasons)
-      .toEqual({ state: 'not_explicit', years: 'cross_field_alternative', category: 'cross_field_alternative' });
+      .toEqual({ state: 'candidate', years: 'candidate', category: 'candidate' });
+    expect(run('Find helicopter accidents in Alaska, OR at night.', { state: ['AK'], category: ['HELI'] }).reasons)
+      .toEqual({ state: 'cross_field_alternative', years: 'empty', category: 'cross_field_alternative' });
+    expect(run('Find accidents in Alaska, OR helicopter accidents anywhere.', { state: ['AK'], category: ['HELI'] }).reasons)
+      .toEqual({ state: 'union_of_requests', years: 'empty', category: 'union_of_requests' });
   });
   it('an or-joined year list is the years field only: the state is still a candidate', () => {
     expect(run('Find helicopter accidents in Alaska in 2015 or 2018.', { state: ['AK'], category: ['HELI'], yearFrom: 2015, yearTo: 2018 }).reasons)
@@ -543,6 +561,23 @@ describe('other events, titles and attributes: a value named for something else 
   it.each(REFERENCE_WORDS)('"%s" before an event noun makes a following value another event\'s', w => {
     expect(reason(`Find reports that ${w} accidents in Alaska.`, { state: ['AK'] }, 'state')).toBe('referenced_event');
   });
+  it('a reading list is no other event (fix round 4)', () => {
+    const q = 'For a historical reading list, retrieve cases near Dover, DE involving icing.';
+    expect(reason(q, { state: ['DE'] }, 'state')).toBe('candidate');
+    expect(witnesses(q, only(q, { state: ['DE'] }, 'state'))).toEqual(['Dover, DE']);
+    for (const w of ['list', 'lists', 'listing']) expect(reason(`Find reports that ${w} accidents in Alaska.`, { state: ['AK'] }, 'state')).toBe('candidate');
+  });
+  it.each(REFERENCE_WRITING_WORDS.flatMap(w => REFERENCE_WRITING_PREPOSITIONS.map(p => [w, p] as const)))(
+    'writing "%s %s" another event makes its value that event\'s (fix round 4)', (w, p) => {
+      expect(reason(`Find cases in which investigators ${w} ${p} accidents in Alaska.`, { state: ['AK'] }, 'state')).toBe('referenced_event');
+    });
+  it('the writing word: its about/on/of within two words, then the event noun as for a reference word', () => {
+    expect(reason('Find cases in which investigators wrote about accidents in Alaska.', { state: ['AK'] }, 'state')).toBe('referenced_event');
+    expect(reason('Find cases in which investigators wrote extensively about accidents in Alaska.', { state: ['AK'] }, 'state')).toBe('referenced_event');
+    expect(reason('Find cases in which investigators wrote very extensively about accidents in Alaska.', { state: ['AK'] }, 'state')).toBe('candidate');
+    expect(reason('Find cases in which investigators wrote about Alaska accidents.', { state: ['AK'] }, 'state')).toBe('referenced_event');
+    expect(reason('Find accidents in Alaska where the pilot wrote a note.', { state: ['AK'] }, 'state')).toBe('candidate');
+  });
   it.each(REFERENCED_EVENT_NOUNS)('the event noun or pronoun "%s" after a reference word', n => {
     expect(reason(`Find reports citing the ${n} in Alaska.`, { state: ['AK'] }, 'state')).toBe('referenced_event');
   });
@@ -568,6 +603,21 @@ describe('other events, titles and attributes: a value named for something else 
     expect(reason('Find the summary of fatal winter night accidents in Alaska.', { state: ['AK'] }, 'state')).toBe('candidate');
     expect(reason('Find accidents whose summary mentions Alaska.', { state: ['AK'] }, 'state')).toBe('title_text');
     expect(reason('Find reports with the heading Helicopter accidents.', { category: ['HELI'] }, 'category')).toBe('title_text');
+  });
+});
+
+describe('not_restricted: words that say a field does not limit the request (fix round 4)', () => {
+  const all = { state: ['AK'], category: ['HELI'], yearFrom: 2019, yearTo: 2019 };
+  it.each(AUTOMATIC_FIELDS.flatMap(field => NOT_RESTRICTED_PHRASES[field]!.map(phrase => [field, phrase] as const)))('%s: "%s"', (field, phrase) => {
+    const r = run(`Find helicopter accidents in Alaska in 2019; ${phrase}.`, all).reasons;
+    expect(r).toEqual({ state: 'candidate', years: 'candidate', category: 'candidate', [field]: 'not_restricted' });
+  });
+  it('the controller\'s examples', () => {
+    expect(reason('Find cases in which investigators wrote about accidents in Alaska, wherever the investigated event occurred.', { state: ['AK'] }, 'state'))
+      .toBe('not_restricted');
+    expect(reason('Find investigations completed in 2015, whatever year the accident happened.', { yearFrom: 2015, yearTo: 2015 }, 'years')).toBe('not_restricted');
+    // Plain "anywhere" says nothing about the state.
+    expect(run('Find helicopter accidents anywhere in Alaska in 2019.', all).reasons).toEqual({ state: 'candidate', years: 'candidate', category: 'candidate' });
   });
 });
 

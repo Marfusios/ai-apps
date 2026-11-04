@@ -33,7 +33,7 @@ export const AUTOMATIC_MAX_CATEGORIES = 3;
  * value whose mention describes something other than the requested accidents.
  */
 export type CandidateReason = 'candidate' | 'disabled' | 'requested' | 'empty' | 'unsupported_value' | 'too_many_values'
-  | 'unsafe_text' | 'conditional_or_exception' | 'union_of_requests' | 'cross_field_alternative' | 'not_explicit'
+  | 'unsafe_text' | 'conditional_or_exception' | 'union_of_requests' | 'not_restricted' | 'cross_field_alternative' | 'not_explicit'
   | 'set_mismatch' | 'negated' | 'relationship' | 'ambiguous_name' | 'referenced_event' | 'title_text' | 'attribute_word'
   | 'range_mismatch' | 'ambiguous_expression' | 'repeated_mention';
 
@@ -86,11 +86,11 @@ export const CONDITION_OR_EXCEPTION = /(?<![\p{L}\p{N}_])(?:if|unless|except|exc
 /**
  * Two requests in one question ("Alaska accidents and helicopter accidents", "crashes at night or
  * any accident in Alaska"): an event noun before and after one of these joiners in one sentence.
- * The filters' AND cannot run them as one search, so every field is refused.
+ * The filters' AND cannot run them as one search, so every field is refused. Only these nouns:
+ * "the investigation archive for gusts and ... the event location" is one request.
  */
-export const UNION_EVENT_NOUNS = Object.freeze(['accident', 'accidents', 'crash', 'crashes', 'incident', 'incidents', 'event',
-  'events', 'occurrence', 'occurrences', 'mishap', 'mishaps', 'case', 'cases', 'investigation', 'investigations', 'record',
-  'records', 'report', 'reports'] as const);
+export const UNION_EVENT_NOUNS = Object.freeze(['accident', 'accidents', 'crash', 'crashes', 'incident', 'incidents', 'mishap',
+  'mishaps'] as const);
 export const UNION_JOINERS = Object.freeze(['and', 'or', 'as well as', 'plus', 'along with', 'together with', '&', '/'] as const);
 /**
  * Alternative words. AirCase joins different filters with AND, so an alternative that touches a
@@ -174,13 +174,17 @@ export const CATEGORY_ATTRIBUTE_WINDOW_WORDS = 3;
 /**
  * Another event: a reference word followed within six words by an event noun or pronoun, with the
  * value between them or within four words after the noun ("investigations citing accidents in
- * Alaska", "accidents like those in Alaska"). "like to" and "list of" are no reference.
+ * Alaska", "accidents like those in Alaska"). "like to" is no reference, and a reading list is no
+ * other event.
  */
 export const REFERENCE_WORDS = Object.freeze(['cite', 'cites', 'cited', 'citing', 'citation', 'mention', 'mentions', 'mentioned',
   'mentioning', 'reference', 'references', 'referenced', 'referencing', 'refer', 'refers', 'referred', 'referring', 'discuss',
-  'discusses', 'discussed', 'discussing', 'list', 'lists', 'listing', 'compare', 'compared', 'comparing', 'comparable',
-  'resemble', 'resembles', 'resembled', 'resembling', 'similar', 'like', 'unlike', 'follow', 'follows', 'followed', 'following',
-  'lesson', 'lessons'] as const);
+  'discusses', 'discussed', 'discussing', 'compare', 'compared', 'comparing', 'comparable', 'resemble', 'resembles', 'resembled',
+  'resembling', 'similar', 'like', 'unlike', 'follow', 'follows', 'followed', 'following', 'lesson', 'lessons'] as const);
+/** Writing about another event: one of these words with about/on/of within the next two words acts as a reference word there. */
+export const REFERENCE_WRITING_WORDS = Object.freeze(['wrote', 'write', 'writes', 'written', 'writing'] as const);
+export const REFERENCE_WRITING_PREPOSITIONS = Object.freeze(['about', 'on', 'of'] as const);
+export const REFERENCE_WRITING_WINDOW_WORDS = 2;
 export const REFERENCED_EVENT_NOUNS = Object.freeze(['accident', 'accidents', 'crash', 'crashes', 'incident', 'incidents', 'event',
   'events', 'mishap', 'mishaps', 'occurrence', 'occurrences', 'case', 'cases', 'one', 'ones', 'those', 'that'] as const);
 export const REFERENCE_NOUN_WINDOW_WORDS = 6;
@@ -190,6 +194,17 @@ export const TITLE_WORDS = Object.freeze(['title', 'titles', 'titled', 'heading'
   'headlines', 'caption', 'captions', 'summary', 'summaries', 'abstract', 'abstracts', 'wording', 'words', 'phrase', 'phrases',
   'text'] as const);
 export const TITLE_WINDOW_WORDS = 6;
+/**
+ * Words that say a field does not limit the request ("wherever the investigated event occurred",
+ * "whatever year the accident happened"): that field is no candidate (`not_restricted`).
+ */
+export const NOT_RESTRICTED_PHRASES: Readonly<Record<AutomaticField, readonly string[]>> = Object.freeze({
+  state: Object.freeze(['wherever', 'regardless of where', 'no matter where', 'anywhere in the country', 'anywhere in the US',
+    'anywhere in the U.S.', 'anywhere else']),
+  years: Object.freeze(['whenever', 'whatever year', 'regardless of when', 'no matter when', 'in any year']),
+  category: Object.freeze(['whatever aircraft', 'any aircraft type', 'regardless of aircraft', 'regardless of the aircraft',
+    'no matter what aircraft']),
+});
 
 /** Nouns a bare year may directly precede ("2019 accidents"). */
 export const YEAR_EVENT_NOUNS = Object.freeze(['accident', 'accidents', 'incident', 'incidents', 'event', 'events', 'crash',
@@ -301,6 +316,9 @@ const OFFSET_BEFORE = new RegExp(`${B}(?:${words(YEAR_OFFSET_WORDS)}) $`, 'iu');
 const FOLLOWERS = set(YEAR_FOLLOWERS), PORTIONS = set(YEAR_PORTION_WORDS), EVENT_NOUNS = set(YEAR_EVENT_NOUNS);
 const RELATIVE = set(YEAR_RELATIVE_WORDS);
 const REFERENCES = set(REFERENCE_WORDS), REFERENCED_NOUNS = set(REFERENCED_EVENT_NOUNS);
+const WRITING = set(REFERENCE_WRITING_WORDS), WRITING_PREPOSITIONS = set(REFERENCE_WRITING_PREPOSITIONS);
+const NOT_RESTRICTED = Object.fromEntries(AUTOMATIC_FIELDS.map(f => [f, new RegExp(`${B}(?:${words(NOT_RESTRICTED_PHRASES[f]!)})${E}`, 'iu')])) as
+  Record<AutomaticField, RegExp>;
 const TITLES = set(TITLE_WORDS), YEAR_ATTRIBUTES = set(YEAR_ATTRIBUTE_WORDS);
 const EXPERIENCE = set(CATEGORY_EXPERIENCE_WORDS), EXPERIENCE_PREPOSITIONS = set(CATEGORY_EXPERIENCE_PREPOSITIONS);
 
@@ -345,14 +363,14 @@ const wordsBefore = (s: Scan, start: number, n: number) => s.words.filter(w => w
 function stateMentions(text: string): Mention[] {
   const out: Mention[] = [];
   const occupied: Span[] = [];
-  // A qualified postal place first: a state name inside it ("Spokane, WA") is the place's name. An OR
-  // before a word is the conjunction, not Oregon ("Alaska, OR helicopter accidents"). A place that is
-  // itself a state name ("Washington, DC", "Delaware, OH") is no postal reading and no state name: ambiguous.
+  // A qualified postal place first: a state name inside it ("Spokane, WA") is the place's name. After a
+  // state name, OR is the conjunction, not Oregon ("Alaska, OR helicopter accidents"). Any other place
+  // that is itself a state name ("Washington, DC", "Delaware, OH") is no postal reading and no state name: ambiguous.
   for (const m of text.matchAll(POSTAL)) {
-    const code = m[2]!, place = m[1]!;
+    const code = m[2]!, place = m[1]!, stateName = STATE_CODE.has(place.toLowerCase());
     const span = { start: m.indices![1]![0], end: m.indices![2]![1] };
-    if (!STATE_CODES.has(code) || code === 'OR' && /^ [\p{L}\p{N}]/u.test(text.slice(span.end))) continue;
-    out.push({ field: 'state', value: code, ...span, ...(STATE_CODE.has(place.toLowerCase()) ? { ambiguous: true } : { qualified: true, postal: true }) });
+    if (!STATE_CODES.has(code) || code === 'OR' && stateName) continue;
+    out.push({ field: 'state', value: code, ...span, ...(stateName ? { ambiguous: true } : { qualified: true, postal: true }) });
     occupied.push(span);
   }
   // One left-to-right pass: a matched name, even one naming another place, is never also a shorter one.
@@ -397,16 +415,22 @@ function negated(s: Scan, at: Span): boolean {
   return but > 0 && window.slice(0, but).some(w => (NEGATION_BUT_LEADS as readonly string[]).includes(w));
 }
 
-/** Other-event phrases: a reference word, an event noun or pronoun within six words, and four words after it. */
+/**
+ * Other-event phrases: a reference word (or a writing word and its about/on/of), an event noun or
+ * pronoun within six words after it, through the four words after the noun.
+ */
 function referencedSpans(words: Word[]): Span[] {
   const out: Span[] = [];
   words.forEach((w, r) => {
-    if (!REFERENCES.has(w.word)) return;
-    const next = words[r + 1]?.word;
-    if (w.word === 'like' && next === 'to' || /^lists?$/.test(w.word) && next === 'of') return;
-    const n = words.slice(r + 1, r + 1 + REFERENCE_NOUN_WINDOW_WORDS).findIndex(x => REFERENCED_NOUNS.has(x.word));
+    let from = r;
+    if (WRITING.has(w.word)) {
+      const p = words.slice(r + 1, r + 1 + REFERENCE_WRITING_WINDOW_WORDS).findIndex(x => WRITING_PREPOSITIONS.has(x.word));
+      if (p < 0) return;
+      from = r + 1 + p;
+    } else if (!REFERENCES.has(w.word) || w.word === 'like' && words[r + 1]?.word === 'to') return;
+    const n = words.slice(from + 1, from + 1 + REFERENCE_NOUN_WINDOW_WORDS).findIndex(x => REFERENCED_NOUNS.has(x.word));
     if (n < 0) return;
-    const last = words[Math.min(words.length - 1, r + 1 + n + REFERENCE_AFTER_NOUN_WORDS)]!;
+    const last = words[Math.min(words.length - 1, from + 1 + n + REFERENCE_AFTER_NOUN_WORDS)]!;
     if (words[r + 1]) out.push({ start: words[r + 1]!.start, end: last.end });
   });
   return out;
@@ -723,6 +747,7 @@ export function automaticCandidates(question: string, emitted: BriefFilters, req
     else if (tooMany(field, emitted)) reason = 'too_many_values';
     else if (unsafe) reason = 'unsafe_text';
     else if (questionLevel()) reason = questionLevel()!;
+    else if (NOT_RESTRICTED[field].test(text)) reason = 'not_restricted';
     else {
       const s = scanned ??= scan(text);
       const decision = field === 'state' ? stateField(s, emitted.state!) : field === 'category' ? categoryField(s, emitted.category!) : yearsField(s, emitted);

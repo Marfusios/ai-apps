@@ -211,7 +211,7 @@ const probes: Probe[] = [
   ['Find non-fatal accidents in Alaska.', AK], ['Find non-helicopter accidents.', { category: ['HELI'] }],
   ['Find accidents without helicopters.', { category: ['HELI'] }], ['Find helicopter, not chopper accidents.', { category: ['HELI'] }],
   ['Find accidents in 2019, never in Alaska.', { state: ['AK'], ...Y2019 }],
-  // Two requests in one sentence: every event noun and every joiner on its own; a sentence end separates them.
+  // Two requests in one sentence: every event noun (and the nouns that are not), every joiner; a sentence end separates them.
   ...['accident', 'accidents', 'crash', 'crashes', 'incident', 'incidents', 'event', 'events', 'occurrence', 'occurrences', 'mishap',
     'mishaps', 'case', 'cases', 'investigation', 'investigations', 'record', 'records', 'report', 'reports']
     .map(n => [`Find Alaska ${n} and helicopter crashes.`, { state: ['AK'], category: ['HELI'] }] satisfies Probe),
@@ -323,6 +323,24 @@ const probes: Probe[] = [
   ['Find accidents in 2019, in Alaska.', { state: ['AK'], ...Y2019 }], ['Find accidents in 2019 (in Alaska).', { state: ['AK'], ...Y2019 }],
   ['Find accidents in 2019 -- at night.', Y2019], ['Find accidents in 2019 helicopter crashes.', { category: ['HELI'], ...Y2019 }],
   ['Find accidents in 2019 and later in Alaska.', { yearFrom: 2019 }],
+  // Fix round 4: a reading list, unions of accident nouns only, OR as Oregon after a city, writing about another event,
+  // and words that say a field does not limit the request.
+  ['For a historical reading list, retrieve cases near Dover, DE involving icing.', { state: ['DE'] }],
+  ['Search the investigation archive for gusts and aircraft control, restricting the event location in the state of Iowa.', { state: ['IA'] }],
+  ['Show investigation sources near Hillsboro, OR associated with engine failures.', { state: ['OR'] }],
+  ['Find helicopter accidents in Portland, OR during 2019.', { state: ['OR'], category: ['HELI'], ...Y2019 }],
+  ['Find accidents in Alaska, OR helicopter accidents anywhere.', { state: ['AK'], category: ['HELI'] }],
+  ['Find helicopter accidents in Alaska, OR at night.', { state: ['AK'], category: ['HELI'] }],
+  ...['wrote', 'write', 'writes', 'written', 'writing'].flatMap(w => ['about', 'on', 'of']
+    .map(p => [`Find cases in which investigators ${w} ${p} accidents in Alaska.`, AK] satisfies Probe)),
+  ['Find cases in which investigators wrote extensively about accidents in Alaska.', AK],
+  ['Find cases in which investigators wrote very extensively about accidents in Alaska.', AK],
+  ['Find cases in which investigators wrote about accidents in Alaska, wherever the investigated event occurred.', AK],
+  ['Find investigations completed in 2015, whatever year the accident happened.', { yearFrom: 2015, yearTo: 2015 }],
+  ...['wherever', 'regardless of where', 'no matter where', 'anywhere in the country', 'anywhere in the US', 'anywhere in the U.S.',
+    'anywhere else', 'whenever', 'whatever year', 'regardless of when', 'no matter when', 'in any year', 'whatever aircraft',
+    'any aircraft type', 'regardless of aircraft', 'regardless of the aircraft', 'no matter what aircraft', 'anywhere']
+    .map(phrase => [`Find helicopter accidents in Alaska in 2019; ${phrase}.`, { state: ['AK'], category: ['HELI'], ...Y2019 }] satisfies Probe),
   // Nested punctuation.
   ['Find ((helicopter)) accidents ((in [Alaska])), during 2019.', { state: ['AK'], category: ['HELI'], ...Y2019 }],
   ['Find helicopter accidents in Alaska (or Hawaii) during 2019.', { state: ['AK', 'HI'], category: ['HELI'], ...Y2019 }],

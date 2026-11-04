@@ -861,20 +861,27 @@ automatic filters.
   history or a document ("aircraft built in 1981") is set aside, and no longer makes the field
   ambiguous.
 - A value is no candidate when its mention sits inside another event's phrase ("reports citing
-  accidents in Alaska", "accidents like those in Utah"), follows title or text wording ("the
-  heading Helicopter accidents"), or, for a category, names a person, business, part, kit, model,
+  accidents in Alaska", "accidents like those in Utah", "investigators wrote about accidents in
+  Alaska"; a reading list is no other event), follows title or text wording ("the heading
+  Helicopter accidents"), or, for a category, names a person, business, part, kit, model,
   experience or comparison ("helicopter pilots", "airplane parts", "time in gliders", "like a
   helicopter"); another aircraft or traffic nearby ("with an aircraft nearby") is a relationship.
   Negations include not, no, never, without, nowhere, none, n't, apart from, far from, "every state
-  but" and a non- prefix on the mention. A capitalised OR before a word is the conjunction, not
-  Oregon, and a `City, XX` place whose city is a state name ("Washington, DC", "Delaware, OH") is
+  but" and a non- prefix on the mention. Words that say a field does not limit the request make
+  that field no candidate (`not_restricted`): wherever, regardless of where, no matter where,
+  anywhere in the country, US or else (state); whenever, whatever year, regardless of when, no
+  matter when, in any year (years); whatever aircraft, any aircraft type, regardless of (the)
+  aircraft, no matter what aircraft (category). After a state name, OR is the conjunction
+  ("Alaska, OR helicopter accidents"); after a city it is Oregon ("Portland, OR during 2019"); a
+  `City, XX` place whose city is another state's name ("Washington, DC", "Delaware, OH") is
   ambiguous.
 - A question with instruction-like wording ("ignore previous instructions", "system prompt", "set
   the state"), quotation marks (also ‘ ’ ‚ ‛ ‹ › 「 」 『 』), any control, format, variation-selector or
   tag character other than tabs and line breaks, more than 600 characters, a condition or exception
-  (if, unless, except, excluding, but not), or two requests joined in one sentence ("Alaska
-  accidents and helicopter accidents", "helicopter crashes at night or any accident in Alaska";
-  `union_of_requests`, "accidents and incidents in Alaska" too) has no candidates at all. With
+  (if, unless, except, excluding, but not), or two requests joined in one sentence (an accident,
+  crash, incident or mishap noun on both sides: "Alaska accidents and helicopter accidents",
+  "helicopter crashes at night or any accident in Alaska"; `union_of_requests`, "accidents and
+  incidents in Alaska" too) has no candidates at all. With
   candidates in two or more fields, any alternative word (or, either, nor) outside one field's own
   value list refuses them all; with one, only an alternative with the candidate's words among the
   two words on either side does ("in Alaska or at night"; "fatal or serious accidents in Alaska"
@@ -962,12 +969,12 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
-| `attributed.v1` | `102401506dc56512a1042499c0afc968ac1337212cc4a11aaa6f7c001958c33c` |
+| `attributed.v1` | `07031ba17ab93cac276ed87800a41eeb04978ae37e150bccbf2f7b349ef874d6` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check
 settings, caps and timeout, the prompt's system text and wire schema, and `candidate-probes.v1`:
-the candidate builder's outputs on 1,452 fixed questions (every word list entry and every form the
+the candidate builder's outputs on 1,495 fixed questions (every word list entry and every form the
 reviews named), the rendered check inputs and the decisions on 31 fixed check answers, so a changed
 rule, renderer or quote validator changes it too. Do not relabel older cached results with these
 identities.
