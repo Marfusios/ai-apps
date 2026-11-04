@@ -1,0 +1,2504 @@
+{
+  "version": "task24-confirmation-v1",
+  "source": {
+    "generationId": 1,
+    "archiveSha256": "bc74fefb1b39e1b86700a4be82b8ff6014bb1f6d81008524de73f2ddbd38b052",
+    "mappingVersion": "v1-empirical",
+    "fieldNormalizationVersion": "v1",
+    "citationTextVersion": "v1"
+  },
+  "questions": [
+    {
+      "id": "t24-environment-broad-01-p1",
+      "family": "03022047",
+      "topic": "fence/fence post",
+      "area": "environment",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AL",
+          "IL",
+          "NM",
+          "OH"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2020
+      },
+      "relevant": [
+        "CEN09CA480",
+        "CEN09LA105",
+        "CEN09LA209",
+        "CEN10CA172",
+        "CEN10CA507",
+        "CEN12LA445",
+        "CEN13CA495",
+        "CEN13LA032",
+        "CEN14CA151",
+        "CEN15LA402",
+        "CEN17LA060",
+        "CEN17LA311",
+        "CEN20LA264",
+        "CHI08CA112",
+        "CHI08CA120",
+        "ERA15CA364",
+        "ERA18LA041",
+        "ERA18LA195",
+        "GAA16CA277",
+        "GAA18CA284",
+        "GAA19CA069",
+        "GAA19CA116",
+        "GAA19CA224",
+        "MIA08CA126"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0302204781",
+              "0302204782",
+              "0302204784",
+              "0302204785",
+              "0302204786",
+              "0302204787",
+              "0302204791",
+              "0302204793",
+              "0302204799"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Alabama, Illinois, New Mexico, or Ohio, from 2008 through 2020, have a finding concerning fence/fence post?",
+      "group": "g1",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-broad-01-p2",
+      "family": "03022047",
+      "topic": "fence/fence post",
+      "area": "environment",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AL",
+          "IL",
+          "NM",
+          "OH"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2020
+      },
+      "relevant": [
+        "CEN09CA480",
+        "CEN09LA105",
+        "CEN09LA209",
+        "CEN10CA172",
+        "CEN10CA507",
+        "CEN12LA445",
+        "CEN13CA495",
+        "CEN13LA032",
+        "CEN14CA151",
+        "CEN15LA402",
+        "CEN17LA060",
+        "CEN17LA311",
+        "CEN20LA264",
+        "CHI08CA112",
+        "CHI08CA120",
+        "ERA15CA364",
+        "ERA18LA041",
+        "ERA18LA195",
+        "GAA16CA277",
+        "GAA18CA284",
+        "GAA19CA069",
+        "GAA19CA116",
+        "GAA19CA224",
+        "MIA08CA126"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0302204781",
+              "0302204782",
+              "0302204784",
+              "0302204785",
+              "0302204786",
+              "0302204787",
+              "0302204791",
+              "0302204793",
+              "0302204799"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2020 in Alabama, Illinois, New Mexico, or Ohio with a recorded finding about fence/fence post.",
+      "group": "g1",
+      "paraphraseOf": "t24-environment-broad-01-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-broad-02-p1",
+      "family": "03034010",
+      "topic": "sudden wind shift",
+      "area": "environment",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AK",
+          "ID",
+          "IL",
+          "OK",
+          "SC",
+          "TN",
+          "TX"
+        ],
+        "yearFrom": 2012,
+        "yearTo": 2022
+      },
+      "relevant": [
+        "ANC13CA064",
+        "ANC14CA082",
+        "ANC19TA037",
+        "ANC19TA055",
+        "ANC20CA055",
+        "ANC20CA087",
+        "ANC22LA027",
+        "CEN13CA106",
+        "CEN13LA426",
+        "CEN14CA525",
+        "CEN14LA433",
+        "CEN20CA350",
+        "CEN21LA185",
+        "CEN21LA317",
+        "ERA13CA255",
+        "GAA16CA111",
+        "GAA17CA232",
+        "GAA18CA321",
+        "GAA19CA551",
+        "WPR14CA264",
+        "WPR15CA006"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0303401081",
+              "0303401082",
+              "0303401084",
+              "0303401085",
+              "0303401086",
+              "0303401087",
+              "0303401091",
+              "0303401099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Alaska, Idaho, Illinois, Oklahoma, South Carolina, Tennessee, or Texas, from 2012 through 2022, have a finding concerning sudden wind shift?",
+      "group": "g2",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-broad-02-p2",
+      "family": "03034010",
+      "topic": "sudden wind shift",
+      "area": "environment",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AK",
+          "ID",
+          "IL",
+          "OK",
+          "SC",
+          "TN",
+          "TX"
+        ],
+        "yearFrom": 2012,
+        "yearTo": 2022
+      },
+      "relevant": [
+        "ANC13CA064",
+        "ANC14CA082",
+        "ANC19TA037",
+        "ANC19TA055",
+        "ANC20CA055",
+        "ANC20CA087",
+        "ANC22LA027",
+        "CEN13CA106",
+        "CEN13LA426",
+        "CEN14CA525",
+        "CEN14LA433",
+        "CEN20CA350",
+        "CEN21LA185",
+        "CEN21LA317",
+        "ERA13CA255",
+        "GAA16CA111",
+        "GAA17CA232",
+        "GAA18CA321",
+        "GAA19CA551",
+        "WPR14CA264",
+        "WPR15CA006"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0303401081",
+              "0303401082",
+              "0303401084",
+              "0303401085",
+              "0303401086",
+              "0303401087",
+              "0303401091",
+              "0303401099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2012 through 2022 in Alaska, Idaho, Illinois, Oklahoma, South Carolina, Tennessee, or Texas with a recorded finding about sudden wind shift.",
+      "group": "g2",
+      "paraphraseOf": "t24-environment-broad-02-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-broad-03-p1",
+      "family": "03023015",
+      "topic": "snow/slush/ice covered",
+      "area": "environment",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "ID",
+          "WI"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2023
+      },
+      "relevant": [
+        "CEN09LA093",
+        "CEN10CA094",
+        "CEN11CA139",
+        "CEN14CA132",
+        "CEN21LA127",
+        "CEN22LA092",
+        "CEN23LA098",
+        "CHI08CA076",
+        "GAA18CA106",
+        "GAA18CA221",
+        "GAA19CA143",
+        "GAA19CA157",
+        "GAA20CA004",
+        "WPR09CA066",
+        "WPR10CA201",
+        "WPR10LA155",
+        "WPR11CA088",
+        "WPR12CA041",
+        "WPR12CA060",
+        "WPR12CA112",
+        "WPR12CA148",
+        "WPR22LA139"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0302301581",
+              "0302301582",
+              "0302301583",
+              "0302301584",
+              "0302301585",
+              "0302301586",
+              "0302301587",
+              "0302301588",
+              "0302301591",
+              "0302301593",
+              "0302301599"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Idaho or Wisconsin, from 2008 through 2023, have a finding concerning snow/slush/ice covered?",
+      "group": "g3",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-broad-03-p2",
+      "family": "03023015",
+      "topic": "snow/slush/ice covered",
+      "area": "environment",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "ID",
+          "WI"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2023
+      },
+      "relevant": [
+        "CEN09LA093",
+        "CEN10CA094",
+        "CEN11CA139",
+        "CEN14CA132",
+        "CEN21LA127",
+        "CEN22LA092",
+        "CEN23LA098",
+        "CHI08CA076",
+        "GAA18CA106",
+        "GAA18CA221",
+        "GAA19CA143",
+        "GAA19CA157",
+        "GAA20CA004",
+        "WPR09CA066",
+        "WPR10CA201",
+        "WPR10LA155",
+        "WPR11CA088",
+        "WPR12CA041",
+        "WPR12CA060",
+        "WPR12CA112",
+        "WPR12CA148",
+        "WPR22LA139"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0302301581",
+              "0302301582",
+              "0302301583",
+              "0302301584",
+              "0302301585",
+              "0302301586",
+              "0302301587",
+              "0302301588",
+              "0302301591",
+              "0302301593",
+              "0302301599"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2023 in Idaho or Wisconsin with a recorded finding about snow/slush/ice covered.",
+      "group": "g3",
+      "paraphraseOf": "t24-environment-broad-03-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-broad-01-p1",
+      "family": "01071010",
+      "topic": "fluids: fuel",
+      "area": "aircraft_systems",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "NC",
+          "OH"
+        ],
+        "yearFrom": 2020,
+        "yearTo": 2022,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN20CA274",
+        "CEN20LA063",
+        "CEN20LA092",
+        "CEN20LA290",
+        "CEN20LA422",
+        "CEN21LA020",
+        "CEN21LA250",
+        "CEN21LA265",
+        "CEN21LA365",
+        "CEN21LA457",
+        "ERA20CA226",
+        "ERA20LA295",
+        "ERA21FA237",
+        "ERA21LA042",
+        "ERA22LA002",
+        "ERA22LA130",
+        "ERA22LA258",
+        "ERA22LA276",
+        "ERA22LA298",
+        "ERA22LA406",
+        "ERA23LA018",
+        "ERA23LA089"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0107101000",
+              "0107101011",
+              "0107101013",
+              "0107101014",
+              "0107101015",
+              "0107101016",
+              "0107101017",
+              "0107101018",
+              "0107101022",
+              "0107101023",
+              "0107101024",
+              "0107101025",
+              "0107101027",
+              "0107101099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in North Carolina or Ohio, from 2020 through 2022, have a finding concerning fluids: fuel on an aircraft recorded as airplane?",
+      "group": "g4",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-broad-01-p2",
+      "family": "01071010",
+      "topic": "fluids: fuel",
+      "area": "aircraft_systems",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "NC",
+          "OH"
+        ],
+        "yearFrom": 2020,
+        "yearTo": 2022,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN20CA274",
+        "CEN20LA063",
+        "CEN20LA092",
+        "CEN20LA290",
+        "CEN20LA422",
+        "CEN21LA020",
+        "CEN21LA250",
+        "CEN21LA265",
+        "CEN21LA365",
+        "CEN21LA457",
+        "ERA20CA226",
+        "ERA20LA295",
+        "ERA21FA237",
+        "ERA21LA042",
+        "ERA22LA002",
+        "ERA22LA130",
+        "ERA22LA258",
+        "ERA22LA276",
+        "ERA22LA298",
+        "ERA22LA406",
+        "ERA23LA018",
+        "ERA23LA089"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0107101000",
+              "0107101011",
+              "0107101013",
+              "0107101014",
+              "0107101015",
+              "0107101016",
+              "0107101017",
+              "0107101018",
+              "0107101022",
+              "0107101023",
+              "0107101024",
+              "0107101025",
+              "0107101027",
+              "0107101099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2020 through 2022 in North Carolina or Ohio on an aircraft recorded as airplane with a recorded finding about fluids: fuel.",
+      "group": "g4",
+      "paraphraseOf": "t24-aircraft-systems-broad-01-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-broad-02-p1",
+      "family": "01071020",
+      "topic": "fluids: oil",
+      "area": "aircraft_systems",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AR",
+          "CO",
+          "KS",
+          "MO",
+          "ND",
+          "NY",
+          "SD",
+          "WI"
+        ],
+        "yearFrom": 2009,
+        "yearTo": 2022
+      },
+      "relevant": [
+        "CEN11LA441",
+        "CEN12LA326",
+        "CEN12LA357",
+        "CEN12LA508",
+        "CEN12LA637",
+        "CEN13LA346",
+        "CEN14CA318",
+        "CEN14CA515",
+        "CEN14FA232",
+        "CEN14LA204",
+        "CEN15LA172",
+        "CEN15LA279",
+        "CEN16LA309",
+        "CEN17IA094",
+        "CEN17IA233",
+        "CEN19LA111",
+        "CEN19LA290",
+        "CEN22LA007",
+        "CEN22LA330",
+        "ERA09LA324",
+        "ERA10LA335"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0107102000",
+              "0107102013",
+              "0107102014",
+              "0107102015",
+              "0107102017",
+              "0107102018",
+              "0107102022",
+              "0107102023",
+              "0107102024",
+              "0107102025",
+              "0107102027",
+              "0107102099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Arkansas, Colorado, Kansas, Missouri, North Dakota, New York, South Dakota, or Wisconsin, from 2009 through 2022, have a finding concerning fluids: oil?",
+      "group": "g5",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-broad-02-p2",
+      "family": "01071020",
+      "topic": "fluids: oil",
+      "area": "aircraft_systems",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AR",
+          "CO",
+          "KS",
+          "MO",
+          "ND",
+          "NY",
+          "SD",
+          "WI"
+        ],
+        "yearFrom": 2009,
+        "yearTo": 2022
+      },
+      "relevant": [
+        "CEN11LA441",
+        "CEN12LA326",
+        "CEN12LA357",
+        "CEN12LA508",
+        "CEN12LA637",
+        "CEN13LA346",
+        "CEN14CA318",
+        "CEN14CA515",
+        "CEN14FA232",
+        "CEN14LA204",
+        "CEN15LA172",
+        "CEN15LA279",
+        "CEN16LA309",
+        "CEN17IA094",
+        "CEN17IA233",
+        "CEN19LA111",
+        "CEN19LA290",
+        "CEN22LA007",
+        "CEN22LA330",
+        "ERA09LA324",
+        "ERA10LA335"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0107102000",
+              "0107102013",
+              "0107102014",
+              "0107102015",
+              "0107102017",
+              "0107102018",
+              "0107102022",
+              "0107102023",
+              "0107102024",
+              "0107102025",
+              "0107102027",
+              "0107102099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2009 through 2022 in Arkansas, Colorado, Kansas, Missouri, North Dakota, New York, South Dakota, or Wisconsin with a recorded finding about fluids: oil.",
+      "group": "g5",
+      "paraphraseOf": "t24-aircraft-systems-broad-02-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-broad-03-p1",
+      "family": "01023242",
+      "topic": "landing gear system: brake",
+      "area": "aircraft_systems",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "ID",
+          "IL",
+          "OH",
+          "SC",
+          "TX"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2013
+      },
+      "relevant": [
+        "CEN09CA020",
+        "CEN09CA450",
+        "CEN09IA294",
+        "CEN10CA174",
+        "CEN10CA215",
+        "CEN11IA369",
+        "CEN12LA023",
+        "CEN12LA087",
+        "CEN12LA335",
+        "CEN13CA139",
+        "CEN13LA408",
+        "CHI08CA234",
+        "CHI08CA247",
+        "DFW08CA096",
+        "ERA11CA002",
+        "ERA12LA456",
+        "ERA13CA286",
+        "LAX08LA217",
+        "MIA08CA155",
+        "WPR09CA295",
+        "WPR12CA322",
+        "WPR12CA355"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0102324200",
+              "0102324201",
+              "0102324202",
+              "0102324205",
+              "0102324206",
+              "0102324207",
+              "0102324208",
+              "0102324209",
+              "0102324210",
+              "0102324211",
+              "0102324212",
+              "0102324213",
+              "0102324214",
+              "0102324215",
+              "0102324218",
+              "0102324226",
+              "0102324227",
+              "0102324299"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Idaho, Illinois, Ohio, South Carolina, or Texas, from 2008 through 2013, have a finding concerning landing gear system: brake?",
+      "group": "g6",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-broad-03-p2",
+      "family": "01023242",
+      "topic": "landing gear system: brake",
+      "area": "aircraft_systems",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "ID",
+          "IL",
+          "OH",
+          "SC",
+          "TX"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2013
+      },
+      "relevant": [
+        "CEN09CA020",
+        "CEN09CA450",
+        "CEN09IA294",
+        "CEN10CA174",
+        "CEN10CA215",
+        "CEN11IA369",
+        "CEN12LA023",
+        "CEN12LA087",
+        "CEN12LA335",
+        "CEN13CA139",
+        "CEN13LA408",
+        "CHI08CA234",
+        "CHI08CA247",
+        "DFW08CA096",
+        "ERA11CA002",
+        "ERA12LA456",
+        "ERA13CA286",
+        "LAX08LA217",
+        "MIA08CA155",
+        "WPR09CA295",
+        "WPR12CA322",
+        "WPR12CA355"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0102324200",
+              "0102324201",
+              "0102324202",
+              "0102324205",
+              "0102324206",
+              "0102324207",
+              "0102324208",
+              "0102324209",
+              "0102324210",
+              "0102324211",
+              "0102324212",
+              "0102324213",
+              "0102324214",
+              "0102324215",
+              "0102324218",
+              "0102324226",
+              "0102324227",
+              "0102324299"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2013 in Idaho, Illinois, Ohio, South Carolina, or Texas with a recorded finding about landing gear system: brake.",
+      "group": "g6",
+      "paraphraseOf": "t24-aircraft-systems-broad-03-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-broad-01-p1",
+      "family": "02061010",
+      "topic": "planning/preparation: performance calculations",
+      "area": "personnel",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "FL",
+          "IL",
+          "LA",
+          "MT",
+          "NJ",
+          "SD",
+          "TX"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN10CA343",
+        "CEN11CA486",
+        "CEN12CA026",
+        "CEN12CA568",
+        "CEN12LA459",
+        "CEN12LA500",
+        "CEN14LA251",
+        "CEN15LA276",
+        "CEN19LA173",
+        "CEN20TA031",
+        "CEN21FA377",
+        "CEN25LA231",
+        "CHI08CA276",
+        "CHI08CA296",
+        "CHI08LA215",
+        "ERA13FA259",
+        "ERA17LA311",
+        "ERA24LA197",
+        "GAA15CA117",
+        "WPR14CA401",
+        "WPR21LA239"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0206101031",
+              "0206101036",
+              "0206101040",
+              "0206101044",
+              "0206101046"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Florida, Illinois, Louisiana, Montana, New Jersey, South Dakota, or Texas, from 2008 through 2026, have a finding concerning planning/preparation: performance calculations on an aircraft recorded as airplane?",
+      "group": "g7",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-broad-01-p2",
+      "family": "02061010",
+      "topic": "planning/preparation: performance calculations",
+      "area": "personnel",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "FL",
+          "IL",
+          "LA",
+          "MT",
+          "NJ",
+          "SD",
+          "TX"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN10CA343",
+        "CEN11CA486",
+        "CEN12CA026",
+        "CEN12CA568",
+        "CEN12LA459",
+        "CEN12LA500",
+        "CEN14LA251",
+        "CEN15LA276",
+        "CEN19LA173",
+        "CEN20TA031",
+        "CEN21FA377",
+        "CEN25LA231",
+        "CHI08CA276",
+        "CHI08CA296",
+        "CHI08LA215",
+        "ERA13FA259",
+        "ERA17LA311",
+        "ERA24LA197",
+        "GAA15CA117",
+        "WPR14CA401",
+        "WPR21LA239"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0206101031",
+              "0206101036",
+              "0206101040",
+              "0206101044",
+              "0206101046"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in Florida, Illinois, Louisiana, Montana, New Jersey, South Dakota, or Texas on an aircraft recorded as airplane with a recorded finding about planning/preparation: performance calculations.",
+      "group": "g7",
+      "paraphraseOf": "t24-personnel-broad-01-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-broad-02-p1",
+      "family": "02021535",
+      "topic": "attention/monitoring: monitoring other person",
+      "area": "personnel",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AK",
+          "AZ",
+          "CA",
+          "GA",
+          "ID",
+          "IN",
+          "NC"
+        ],
+        "yearFrom": 2020,
+        "yearTo": 2026,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "ANC21LA002",
+        "ANC21LA054",
+        "ANC22LA026",
+        "ANC24LA033",
+        "ANC25LA071",
+        "CEN22LA205",
+        "CEN26LA106",
+        "ERA21LA236",
+        "ERA23LA316",
+        "ERA25LA118",
+        "ERA26LA143",
+        "WPR20CA293",
+        "WPR21LA054",
+        "WPR21LA190",
+        "WPR22LA086",
+        "WPR22LA175",
+        "WPR22LA234",
+        "WPR23LA091",
+        "WPR23LA132",
+        "WPR23LA164",
+        "WPR23LA242"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0202153533",
+              "0202153535",
+              "0202153539",
+              "0202153540",
+              "0202153544",
+              "0202153545"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Alaska, Arizona, California, Georgia, Idaho, Indiana, or North Carolina, from 2020 through 2026, have a finding concerning attention/monitoring: monitoring other person on an aircraft recorded as airplane?",
+      "group": "g8",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-broad-02-p2",
+      "family": "02021535",
+      "topic": "attention/monitoring: monitoring other person",
+      "area": "personnel",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AK",
+          "AZ",
+          "CA",
+          "GA",
+          "ID",
+          "IN",
+          "NC"
+        ],
+        "yearFrom": 2020,
+        "yearTo": 2026,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "ANC21LA002",
+        "ANC21LA054",
+        "ANC22LA026",
+        "ANC24LA033",
+        "ANC25LA071",
+        "CEN22LA205",
+        "CEN26LA106",
+        "ERA21LA236",
+        "ERA23LA316",
+        "ERA25LA118",
+        "ERA26LA143",
+        "WPR20CA293",
+        "WPR21LA054",
+        "WPR21LA190",
+        "WPR22LA086",
+        "WPR22LA175",
+        "WPR22LA234",
+        "WPR23LA091",
+        "WPR23LA132",
+        "WPR23LA164",
+        "WPR23LA242"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0202153533",
+              "0202153535",
+              "0202153539",
+              "0202153540",
+              "0202153544",
+              "0202153545"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2020 through 2026 in Alaska, Arizona, California, Georgia, Idaho, Indiana, or North Carolina on an aircraft recorded as airplane with a recorded finding about attention/monitoring: monitoring other person.",
+      "group": "g8",
+      "paraphraseOf": "t24-personnel-broad-02-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-broad-03-p1",
+      "family": "02061025",
+      "topic": "planning/preparation: flight planning/navigation",
+      "area": "personnel",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AR",
+          "MO",
+          "ND",
+          "SC",
+          "SD",
+          "TN"
+        ],
+        "yearFrom": 2010,
+        "yearTo": 2025
+      },
+      "relevant": [
+        "CEN10CA333",
+        "CEN11CA477",
+        "CEN12CA313",
+        "CEN12LA336",
+        "CEN13CA386",
+        "CEN21LA156",
+        "CEN22LA006",
+        "CEN22LA200",
+        "CEN23LA056",
+        "CEN25LA075",
+        "CEN26LA019",
+        "DCA16IA200",
+        "ERA10CA271",
+        "ERA11CA339",
+        "ERA11LA208",
+        "ERA14LA158",
+        "ERA21FA263",
+        "ERA22LA081",
+        "GAA15CA091",
+        "GAA16CA357",
+        "GAA16CA512"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0206102531",
+              "0206102536",
+              "0206102540",
+              "0206102544",
+              "0206102545",
+              "0206102546",
+              "0206102599"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Arkansas, Missouri, North Dakota, South Carolina, South Dakota, or Tennessee, from 2010 through 2025, have a finding concerning planning/preparation: flight planning/navigation?",
+      "group": "g9",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-broad-03-p2",
+      "family": "02061025",
+      "topic": "planning/preparation: flight planning/navigation",
+      "area": "personnel",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "AR",
+          "MO",
+          "ND",
+          "SC",
+          "SD",
+          "TN"
+        ],
+        "yearFrom": 2010,
+        "yearTo": 2025
+      },
+      "relevant": [
+        "CEN10CA333",
+        "CEN11CA477",
+        "CEN12CA313",
+        "CEN12LA336",
+        "CEN13CA386",
+        "CEN21LA156",
+        "CEN22LA006",
+        "CEN22LA200",
+        "CEN23LA056",
+        "CEN25LA075",
+        "CEN26LA019",
+        "DCA16IA200",
+        "ERA10CA271",
+        "ERA11CA339",
+        "ERA11LA208",
+        "ERA14LA158",
+        "ERA21FA263",
+        "ERA22LA081",
+        "GAA15CA091",
+        "GAA16CA357",
+        "GAA16CA512"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0206102531",
+              "0206102536",
+              "0206102540",
+              "0206102544",
+              "0206102545",
+              "0206102546",
+              "0206102599"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2010 through 2025 in Arkansas, Missouri, North Dakota, South Carolina, South Dakota, or Tennessee with a recorded finding about planning/preparation: flight planning/navigation.",
+      "group": "g9",
+      "paraphraseOf": "t24-personnel-broad-03-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-broad-01-p1",
+      "family": "ev500",
+      "topic": "loss of lift",
+      "area": "occurrence",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "ID",
+          "MT",
+          "NJ",
+          "NM",
+          "OH",
+          "TX"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2018,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN10CA378",
+        "CEN10LA227",
+        "CEN11CA037",
+        "CEN13LA273",
+        "CEN15LA183",
+        "CEN15LA252",
+        "CEN16LA208",
+        "CEN18FA143",
+        "ERA13CA316",
+        "ERA13LA339",
+        "GAA15CA094",
+        "GAA16CA278",
+        "GAA16CA320",
+        "GAA16CA359",
+        "GAA17CA202",
+        "GAA17CA526",
+        "WPR12LA283",
+        "WPR13CA325",
+        "WPR13CA395",
+        "WPR14CA317",
+        "WPR14LA220",
+        "WPR17LA064"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "500"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Idaho, Montana, New Jersey, New Mexico, Ohio, or Texas, from 2008 through 2018, involved loss of lift on an aircraft recorded as airplane?",
+      "group": "g10",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-broad-01-p2",
+      "family": "ev500",
+      "topic": "loss of lift",
+      "area": "occurrence",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "ID",
+          "MT",
+          "NJ",
+          "NM",
+          "OH",
+          "TX"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2018,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN10CA378",
+        "CEN10LA227",
+        "CEN11CA037",
+        "CEN13LA273",
+        "CEN15LA183",
+        "CEN15LA252",
+        "CEN16LA208",
+        "CEN18FA143",
+        "ERA13CA316",
+        "ERA13LA339",
+        "GAA15CA094",
+        "GAA16CA278",
+        "GAA16CA320",
+        "GAA16CA359",
+        "GAA17CA202",
+        "GAA17CA526",
+        "WPR12LA283",
+        "WPR13CA325",
+        "WPR13CA395",
+        "WPR14CA317",
+        "WPR14LA220",
+        "WPR17LA064"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "500"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published event records from 2008 through 2018 in Idaho, Montana, New Jersey, New Mexico, Ohio, or Texas on an aircraft recorded as airplane; I am looking for occurrences of loss of lift.",
+      "group": "g10",
+      "paraphraseOf": "t24-occurrence-broad-01-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-broad-02-p1",
+      "family": "ev901",
+      "topic": "birdstrike",
+      "area": "occurrence",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "IA",
+          "MA",
+          "NC",
+          "TX"
+        ],
+        "yearFrom": 2016,
+        "yearTo": 2026,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN17LA136",
+        "CEN20CA048",
+        "CEN22LA084",
+        "CEN23LA131",
+        "CEN23LA379",
+        "CEN24LA025",
+        "CEN24LA035",
+        "CEN24LA054",
+        "CEN25LA362",
+        "DCA23LA067",
+        "ERA21LA047",
+        "ERA21LA197",
+        "ERA22LA110",
+        "ERA22LA124",
+        "ERA23LA106",
+        "GAA17CA429",
+        "GAA18CA071",
+        "GAA18CA128",
+        "GAA18CA475",
+        "GAA19CA400",
+        "GAA20CA054"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "901"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Iowa, Massachusetts, North Carolina, or Texas, from 2016 through 2026, involved birdstrike on an aircraft recorded as airplane?",
+      "group": "g11",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-broad-02-p2",
+      "family": "ev901",
+      "topic": "birdstrike",
+      "area": "occurrence",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "IA",
+          "MA",
+          "NC",
+          "TX"
+        ],
+        "yearFrom": 2016,
+        "yearTo": 2026,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN17LA136",
+        "CEN20CA048",
+        "CEN22LA084",
+        "CEN23LA131",
+        "CEN23LA379",
+        "CEN24LA025",
+        "CEN24LA035",
+        "CEN24LA054",
+        "CEN25LA362",
+        "DCA23LA067",
+        "ERA21LA047",
+        "ERA21LA197",
+        "ERA22LA110",
+        "ERA22LA124",
+        "ERA23LA106",
+        "GAA17CA429",
+        "GAA18CA071",
+        "GAA18CA128",
+        "GAA18CA475",
+        "GAA19CA400",
+        "GAA20CA054"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "901"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published event records from 2016 through 2026 in Iowa, Massachusetts, North Carolina, or Texas on an aircraft recorded as airplane; I am looking for occurrences of birdstrike.",
+      "group": "g11",
+      "paraphraseOf": "t24-occurrence-broad-02-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-broad-03-p1",
+      "family": "ev220",
+      "topic": "low altitude operations",
+      "area": "occurrence",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "KS",
+          "KY",
+          "WY"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN10CA286",
+        "CEN12FA521",
+        "CEN12LA236",
+        "CEN13LA263",
+        "CEN14LA211",
+        "CEN15LA403",
+        "CEN16CA277",
+        "CEN21LA062",
+        "CEN23LA303",
+        "GAA17CA170",
+        "GAA19CA352",
+        "MIA08CA145",
+        "NYC08LA263",
+        "WPR10LA406",
+        "WPR11LA388",
+        "WPR12LA301",
+        "WPR13LA248",
+        "WPR20CA160",
+        "WPR20LA170",
+        "WPR24LA115",
+        "WPR24LA187"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "220"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Kansas, Kentucky, or Wyoming, from 2008 through 2026, involved low altitude operations on an aircraft recorded as airplane?",
+      "group": "g12",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-broad-03-p2",
+      "family": "ev220",
+      "topic": "low altitude operations",
+      "area": "occurrence",
+      "class": "broad",
+      "filters": {
+        "state": [
+          "KS",
+          "KY",
+          "WY"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026,
+        "category": [
+          "AIR"
+        ]
+      },
+      "relevant": [
+        "CEN10CA286",
+        "CEN12FA521",
+        "CEN12LA236",
+        "CEN13LA263",
+        "CEN14LA211",
+        "CEN15LA403",
+        "CEN16CA277",
+        "CEN21LA062",
+        "CEN23LA303",
+        "GAA17CA170",
+        "GAA19CA352",
+        "MIA08CA145",
+        "NYC08LA263",
+        "WPR10LA406",
+        "WPR11LA388",
+        "WPR12LA301",
+        "WPR13LA248",
+        "WPR20CA160",
+        "WPR20LA170",
+        "WPR24LA115",
+        "WPR24LA187"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "220"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published event records from 2008 through 2026 in Kansas, Kentucky, or Wyoming on an aircraft recorded as airplane; I am looking for occurrences of low altitude operations.",
+      "group": "g12",
+      "paraphraseOf": "t24-occurrence-broad-03-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-narrow-01-p1",
+      "family": "03034050",
+      "topic": "microburst",
+      "area": "environment",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "FL"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ERA14CA184",
+        "ERA22LA395"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0303405081",
+              "0303405082",
+              "0303405086",
+              "0303405091"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Florida, from 2008 through 2026, have a finding concerning microburst?",
+      "group": "g13",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-narrow-01-p2",
+      "family": "03034050",
+      "topic": "microburst",
+      "area": "environment",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "FL"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ERA14CA184",
+        "ERA22LA395"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0303405081",
+              "0303405082",
+              "0303405086",
+              "0303405091"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in Florida with a recorded finding about microburst.",
+      "group": "g13",
+      "paraphraseOf": "t24-environment-narrow-01-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-narrow-02-p1",
+      "family": "03012015",
+      "topic": "approach lighting",
+      "area": "environment",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "AZ"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "SEA08LA082"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0301201582",
+              "0301201588",
+              "0301201599"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Arizona, from 2008 through 2026, have a finding concerning approach lighting?",
+      "group": "g14",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-narrow-02-p2",
+      "family": "03012015",
+      "topic": "approach lighting",
+      "area": "environment",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "AZ"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "SEA08LA082"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0301201582",
+              "0301201588",
+              "0301201599"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in Arizona with a recorded finding about approach lighting.",
+      "group": "g14",
+      "paraphraseOf": "t24-environment-narrow-02-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-narrow-03-p1",
+      "family": "03035075",
+      "topic": "below vfr minima",
+      "area": "environment",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "VA"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ERA10CA017",
+        "ERA10CA392",
+        "ERA17CA008",
+        "ERA19FA003",
+        "ERA23FA131"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0303507582",
+              "0303507583",
+              "0303507584",
+              "0303507585",
+              "0303507586",
+              "0303507587",
+              "0303507591",
+              "0303507592",
+              "0303507599"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Virginia, from 2008 through 2026, have a finding concerning below vfr minima?",
+      "group": "g15",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-environment-narrow-03-p2",
+      "family": "03035075",
+      "topic": "below vfr minima",
+      "area": "environment",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "VA"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ERA10CA017",
+        "ERA10CA392",
+        "ERA17CA008",
+        "ERA19FA003",
+        "ERA23FA131"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0303507582",
+              "0303507583",
+              "0303507584",
+              "0303507585",
+              "0303507586",
+              "0303507587",
+              "0303507591",
+              "0303507592",
+              "0303507599"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in Virginia with a recorded finding about below vfr minima.",
+      "group": "g15",
+      "paraphraseOf": "t24-environment-narrow-03-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-narrow-01-p1",
+      "family": "01057322",
+      "topic": "engine fuel and control: fuel control/carburetor",
+      "area": "aircraft_systems",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "MO"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "CEN12LA622",
+        "CEN20LA360"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0105732201",
+              "0105732202",
+              "0105732205",
+              "0105732206",
+              "0105732207",
+              "0105732208",
+              "0105732210",
+              "0105732211",
+              "0105732212",
+              "0105732213",
+              "0105732214",
+              "0105732215",
+              "0105732216",
+              "0105732217",
+              "0105732227",
+              "0105732299"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Missouri, from 2008 through 2026, have a finding concerning engine fuel and control: fuel control/carburetor?",
+      "group": "g16",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-narrow-01-p2",
+      "family": "01057322",
+      "topic": "engine fuel and control: fuel control/carburetor",
+      "area": "aircraft_systems",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "MO"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "CEN12LA622",
+        "CEN20LA360"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0105732201",
+              "0105732202",
+              "0105732205",
+              "0105732206",
+              "0105732207",
+              "0105732208",
+              "0105732210",
+              "0105732211",
+              "0105732212",
+              "0105732213",
+              "0105732214",
+              "0105732215",
+              "0105732216",
+              "0105732217",
+              "0105732227",
+              "0105732299"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in Missouri with a recorded finding about engine fuel and control: fuel control/carburetor.",
+      "group": "g16",
+      "paraphraseOf": "t24-aircraft-systems-narrow-01-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-narrow-02-p1",
+      "family": "01023020",
+      "topic": "ice/rain protection system: intake anti-ice, deice",
+      "area": "aircraft_systems",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "MT"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "WPR14LA023"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0102302005",
+              "0102302007",
+              "0102302008",
+              "0102302010",
+              "0102302011",
+              "0102302017",
+              "0102302027",
+              "0102302099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Montana, from 2008 through 2026, have a finding concerning ice/rain protection system: intake anti-ice, deice?",
+      "group": "g17",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-narrow-02-p2",
+      "family": "01023020",
+      "topic": "ice/rain protection system: intake anti-ice, deice",
+      "area": "aircraft_systems",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "MT"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "WPR14LA023"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0102302005",
+              "0102302007",
+              "0102302008",
+              "0102302010",
+              "0102302011",
+              "0102302017",
+              "0102302027",
+              "0102302099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in Montana with a recorded finding about ice/rain protection system: intake anti-ice, deice.",
+      "group": "g17",
+      "paraphraseOf": "t24-aircraft-systems-narrow-02-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-narrow-03-p1",
+      "family": "01057330",
+      "topic": "engine fuel and control: fuel indicating system",
+      "area": "aircraft_systems",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "NY"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ENG16IA027"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0105733005",
+              "0105733013",
+              "0105733018"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in New York, from 2008 through 2026, have a finding concerning engine fuel and control: fuel indicating system?",
+      "group": "g18",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-aircraft-systems-narrow-03-p2",
+      "family": "01057330",
+      "topic": "engine fuel and control: fuel indicating system",
+      "area": "aircraft_systems",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "NY"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ENG16IA027"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0105733005",
+              "0105733013",
+              "0105733018"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in New York with a recorded finding about engine fuel and control: fuel indicating system.",
+      "group": "g18",
+      "paraphraseOf": "t24-aircraft-systems-narrow-03-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-narrow-01-p1",
+      "family": "02021540",
+      "topic": "attention/monitoring: monitoring other aircraft",
+      "area": "personnel",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "IN"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "CEN10CA468",
+        "CEN15CA373"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0202154031",
+              "0202154036",
+              "0202154037",
+              "0202154039",
+              "0202154040",
+              "0202154044",
+              "0202154045",
+              "0202154046",
+              "0202154099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Indiana, from 2008 through 2026, have a finding concerning attention/monitoring: monitoring other aircraft?",
+      "group": "g19",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-narrow-01-p2",
+      "family": "02021540",
+      "topic": "attention/monitoring: monitoring other aircraft",
+      "area": "personnel",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "IN"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "CEN10CA468",
+        "CEN15CA373"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0202154031",
+              "0202154036",
+              "0202154037",
+              "0202154039",
+              "0202154040",
+              "0202154044",
+              "0202154045",
+              "0202154046",
+              "0202154099"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in Indiana with a recorded finding about attention/monitoring: monitoring other aircraft.",
+      "group": "g19",
+      "paraphraseOf": "t24-personnel-narrow-01-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-narrow-02-p1",
+      "family": "02021015",
+      "topic": "personality/attitude: confidence/reliance on equip",
+      "area": "personnel",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "CA"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "WPR24FA124"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0202101544"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in California, from 2008 through 2026, have a finding concerning personality/attitude: confidence/reliance on equip?",
+      "group": "g20",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-narrow-02-p2",
+      "family": "02021015",
+      "topic": "personality/attitude: confidence/reliance on equip",
+      "area": "personnel",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "CA"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "WPR24FA124"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0202101544"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in California with a recorded finding about personality/attitude: confidence/reliance on equip.",
+      "group": "g20",
+      "paraphraseOf": "t24-personnel-narrow-02-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-narrow-03-p1",
+      "family": "02031045",
+      "topic": "experience/qualifications: recent experience w/ equipment",
+      "area": "personnel",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "TX"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "CEN09CA184",
+        "CEN12CA081"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0203104500",
+              "0203104534",
+              "0203104540",
+              "0203104544"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Texas, from 2008 through 2026, have a finding concerning experience/qualifications: recent experience w/ equipment?",
+      "group": "g21",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-personnel-narrow-03-p2",
+      "family": "02031045",
+      "topic": "experience/qualifications: recent experience w/ equipment",
+      "area": "personnel",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "TX"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "CEN09CA184",
+        "CEN12CA081"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0203104500",
+              "0203104534",
+              "0203104540",
+              "0203104544"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published investigations from 2008 through 2026 in Texas with a recorded finding about experience/qualifications: recent experience w/ equipment.",
+      "group": "g21",
+      "paraphraseOf": "t24-personnel-narrow-03-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-narrow-01-p1",
+      "family": "ev284",
+      "topic": "approach wrong surface or wrong airport",
+      "area": "occurrence",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "AK"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ANC11LA008",
+        "ANC20CA036",
+        "ANC26LA011"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "284"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Alaska, from 2008 through 2026, involved approach wrong surface or wrong airport?",
+      "group": "g22",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-narrow-01-p2",
+      "family": "ev284",
+      "topic": "approach wrong surface or wrong airport",
+      "area": "occurrence",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "AK"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ANC11LA008",
+        "ANC20CA036",
+        "ANC26LA011"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "284"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published event records from 2008 through 2026 in Alaska; I am looking for occurrences of approach wrong surface or wrong airport.",
+      "group": "g22",
+      "paraphraseOf": "t24-occurrence-narrow-01-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-narrow-02-p1",
+      "family": "ev100",
+      "topic": "air traffic event",
+      "area": "occurrence",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "VA"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "OPS11IA401",
+        "OPS12IA849",
+        "OPS14IA007"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "100"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in Virginia, from 2008 through 2026, involved air traffic event?",
+      "group": "g23",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-narrow-02-p2",
+      "family": "ev100",
+      "topic": "air traffic event",
+      "area": "occurrence",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "VA"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "OPS11IA401",
+        "OPS12IA849",
+        "OPS14IA007"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "100"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published event records from 2008 through 2026 in Virginia; I am looking for occurrences of air traffic event.",
+      "group": "g23",
+      "paraphraseOf": "t24-occurrence-narrow-02-p1",
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-narrow-03-p1",
+      "family": "ev510",
+      "topic": "glider tow event",
+      "area": "occurrence",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "NC"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ERA18LA087"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "510"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Which investigations in North Carolina, from 2008 through 2026, involved glider tow event?",
+      "group": "g24",
+      "paraphraseOf": null,
+      "executionFilters": {}
+    },
+    {
+      "id": "t24-occurrence-narrow-03-p2",
+      "family": "ev510",
+      "topic": "glider tow event",
+      "area": "occurrence",
+      "class": "narrow",
+      "filters": {
+        "state": [
+          "NC"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2026
+      },
+      "relevant": [
+        "ERA18LA087"
+      ],
+      "codeSet": {
+        "clauses": [
+          {
+            "kind": "event",
+            "codes": [
+              "510"
+            ]
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "question": "Find published event records from 2008 through 2026 in North Carolina; I am looking for occurrences of glider tow event.",
+      "group": "g24",
+      "paraphraseOf": "t24-occurrence-narrow-03-p1",
+      "executionFilters": {}
+    }
+  ],
+  "narrativeQuestionIds": [
+    "t24-environment-narrow-01-p1",
+    "t24-environment-broad-01-p1",
+    "t24-aircraft-systems-narrow-01-p1",
+    "t24-aircraft-systems-broad-01-p1",
+    "t24-personnel-narrow-01-p1",
+    "t24-personnel-broad-01-p1",
+    "t24-occurrence-narrow-01-p1",
+    "t24-occurrence-broad-01-p1"
+  ]
+}

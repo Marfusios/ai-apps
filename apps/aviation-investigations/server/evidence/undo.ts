@@ -22,20 +22,36 @@ export function isExpiredUndoClaim(err: unknown): boolean {
   return false;
 }
 
+/**
+ * What the policy added on its own, as whole facets of the parent's applied filters: the state set,
+ * both year bounds (one facet, even when one bound is open), the category set. A facet counts only
+ * while the parent's applied value is exactly the automatic one.
+ */
+function automaticFacets(parent: EvidenceRow): (keyof BriefFilters)[][] {
+  const automatic = parent.data.automaticFilters, applied = parent.data.appliedFilters;
+  if (!automatic) return [];
+  const facets: (keyof BriefFilters)[][] = [];
+  if (automatic.state?.length && equal({ state: automatic.state }, { state: applied.state })) facets.push(['state']);
+  if ((automatic.yearFrom !== undefined || automatic.yearTo !== undefined)
+    && applied.yearFrom === automatic.yearFrom && applied.yearTo === automatic.yearTo) facets.push(['yearFrom', 'yearTo']);
+  if (automatic.category?.length && equal({ category: automatic.category }, { category: applied.category })) facets.push(['category']);
+  return facets;
+}
+
 export function canUndo(parent: EvidenceRow, edit: Extract<CreateEvidenceRequest, { kind: 'edited' }>, now: Date): boolean {
   if (parent.data.version !== EVIDENCE_CONTRACT_VERSION || parent.status !== 'results' || parent.expiresAt <= now || parent.data.edited || parent.freeUndoReservationId != null || edit.terms !== undefined) return false;
   const query = disclosedQuery(parent.data);
   if (query.source !== 'question') return false;
   const removedTerms = edit.keywords === 'question' && query.keywords.kind !== 'question';
   if (edit.keywords !== undefined && !removedTerms) return false;
-  const automatic = parent.data.automaticFilters;
-  let removedState = false;
-  if (!equal(edit.filters, parent.data.appliedFilters)) {
-    // Removing an OR member narrows the search; undo removes the entire automatic state constraint.
-    if (!automatic?.state.length || !equal({ state: automatic.state }, { state: parent.data.appliedFilters.state })) return false;
-    const { state: _state, ...rest } = parent.data.appliedFilters;
-    if (!equal(edit.filters, rest)) return false;
-    removedState = true;
+  if (equal(edit.filters, parent.data.appliedFilters)) return removedTerms;
+  // Undo removes one or more entire automatic facets and nothing else. Removing an OR member, one
+  // of two automatic year bounds or changing an endpoint narrows or changes the search: paid.
+  const facets = automaticFacets(parent);
+  for (let mask = 1; mask < 1 << facets.length; mask++) {
+    const removed = new Set(facets.filter((_, i) => mask & 1 << i).flat());
+    const rest = Object.fromEntries(Object.entries(parent.data.appliedFilters).filter(([key]) => !removed.has(key as keyof BriefFilters)));
+    if (equal(edit.filters, rest)) return true;
   }
-  return removedState || removedTerms;
+  return false;
 }

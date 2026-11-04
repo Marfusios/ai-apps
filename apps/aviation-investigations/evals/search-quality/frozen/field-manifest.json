@@ -1,0 +1,121 @@
+{
+  "version": "task24-field-freeze-v1",
+  "frozenAt": "2026-10-25T10:41:56.703Z",
+  "codeCommit": "621881dd50f39b0057da82274e3420574e4c3cc4",
+  "settings": {
+    "model": "claude-haiku-5-5",
+    "version": "scope.e3",
+    "systemSha256": "901abbf596ebd86ea32afb5c241c51cace149d89958ab1a8a75398930c041b04",
+    "wireSha256": "cb20cf6bc65ecd99328518c75e1513e716b92b59a272f5d86a9f022d8ddc85c9",
+    "caps": {
+      "input": 10000,
+      "output": 2500
+    },
+    "timeoutMs": 10000,
+    "thinking": "off",
+    "effort": "low",
+    "retries": 0,
+    "price": {
+      "kind": "llm",
+      "provider": "anthropic",
+      "input": 0.1,
+      "output": 0.5,
+      "cacheWrite": 0.125,
+      "cacheRead": 0.01,
+      "longContext": {
+        "thresholdTokens": 100000,
+        "input": 0.5,
+        "output": 2.5,
+        "cacheWrite": 0.625,
+        "cacheRead": 0.05
+      }
+    },
+    "worstCaseUsd": 0.0024125,
+    "reservationUsd": 0.002413,
+    "guard": "state-explicit.v1"
+  },
+  "files": {
+    "evals/search-quality/fields.ts": "72f1e5188166a7b1a75cde336988e096eeb4e71e7f7ddbb1866a034403ce2170",
+    "evals/search-quality/field-score.ts": "d41f2a4f0bb9868bef6021b2b19f3d3896c1258c788d1de33de80472c8eb20a0",
+    "evals/search-quality/frozen.ts": "f4a611a2f60ad0869c254ecd436114b74111423251285ae3cb092070c48a679c",
+    "evals/search-quality/money.ts": "040eb305b3c5c04fc47d169f170c5a1640ef7a38bcb6053d73180c57599bbf2d",
+    "evals/search-quality/config.ts": "996918e249d493f0398374a8f12b74a2776ca887724b992b7a40a0f67b3ef6bf",
+    "evals/search-quality/types.ts": "a7d5e888a13603ce0ad68823a7e10d43b9d7c9bf5521e988d954d64833581c00",
+    "shared/state-eligibility.ts": "079771657f20c8300ad4357d14fd0495b3590c0c0594339be8c67e174d3368bb",
+    "shared/vocab.ts": "d16b81ff34e1be4a853dafc4180f9b5b70f54ea49f5678e7f02b3f6828a88775",
+    "shared/codes.ts": "02fa08d63a1b7ea3e60673c39f6dfc64acb11dc94396919a11ac0d6c5051203d",
+    "shared/contracts/briefs.ts": "48870e420ac5ca654a6c65f1238b596db14043ba84393d257d225e2f2b04c7a7",
+    "shared/contracts/evidence.ts": "a7db7e16ee276cd9f8fb302313673846b73f8692e115d9ae1becda20cbe230be",
+    "shared/contracts/search.ts": "25fded21963af500b5f2a6b778a6bbd94d63aaada71fc8461db18fd63e991d0c",
+    "shared/contracts/common.ts": "08135c0b602282c92985e093dabc123bffc64ae6d148ff88cb3ad37eb2ae37df",
+    "shared/config.ts": "cf210f7510956833239a429fbf58a6a4c3ea5c97fca0dbc1a833e5989be62154",
+    "server/ai/anthropic.ts": "c88072731106d885ac2b0f214a3ba579ee026f1e68998280a199eacf906cc492",
+    "server/ai/provider.ts": "c448a3c2585e58488d58a339087adf6868b332f2c4727ae4ee18a8e260a41e97",
+    "server/ai/pricing.ts": "9d841a208f4f9bbeae65e5517baca42b29235d44afb3d6dd6546e7490c822a3f",
+    "server/ai/prompts/scope.e1.ts": "3fc179ccee841756a0a094dc9b1ce6b4cb6a7d1dcc33ced01822b86a604fdde6",
+    "server/ai/prompts/untrusted.ts": "1b2ea3ec8a7b8efbe4cbca5939a83690b8172ecf0f18d698f2c370c9e5ace93b",
+    "worker/index/spend-gate.ts": "ce5314a3a9f452b5f1ba72eac28c6daaa3d323660766b4f7977b03c40db6f34e",
+    "server/quota/spend.ts": "6bf98e4f75c102df6c57ff86e5012c6a4c9aa8d54fef87c346f3276cb438058e",
+    "server/quota/settle.ts": "b3fbe373524a8e5b395800c88feb8af720445755fd2d807728a39a065db235ed",
+    "server/quota/pacing.ts": "02f86cbb6dea40578e25d860e0ca89a2f688dc7c0ae2fe275f5b23982ffc7c9b",
+    "server/quota/policy.ts": "2d0eaeba27d56bbe247b7024d06261ded8a96848f211f466e73aed1cb463a3c9",
+    "server/quota/hold.ts": "78ce19c81f0fe75458245c734b8cf1e105739add448a75a435caa47be6b9107e",
+    "server/db/client.ts": "7c1707bbb49b9bd195183598fe901bebef1b4e5ac669c75a991c3f5fb100ca7f",
+    "pnpm-lock.yaml": "16b13bb77b04dc42b9fa323a0a7a4c841a10137455f011dde8898c44dbd51047",
+    "evals/search-quality/freeze-fields.ts": "df1c01688402f0e0e9c8050240691d6b61fec999a30125b37613f9fc02b7c48e",
+    "evals/search-quality/verify-data.ts": "bf7f943d4327a6bacf4a262d436fd60901a085224527ae78ff8f3750c9c05ac9",
+    "evals/search-quality/construct.py": "eba37aa1c6b4634b5a597e5689f9d8593f945ed23aee420b8c22d8fff1c3f77f",
+    "evals/search-quality/exclusions.py": "b88d4055ae1fcd3ebc122ee5e5ce5e158e9ad60ed5e4b99df6934a6d627d11d9",
+    "evals/search-quality/snapshot.ts": "7b537680d329b08b0c7e93a1a7453776bf618f56693ec13b17a01d387e1ab90f",
+    "evals/search-quality/frozen/confirmation.json": "9e228d4aca9fdd947d38c57348ec8eb41f5bc4870440f5cf8adee27097130bd3",
+    "evals/search-quality/frozen/fields.json": "779419fda1b74c6620a2ea60a6dfc098e866456f46237810104b2adf312cee36",
+    "evals/search-quality/frozen/exclusions.json": "6d8e3d7eb56a7704cf7849ad957d65bd7bf246c3e5f39fc9bd594a988e6d6c49",
+    "evals/search-quality/frozen/leakage.json": "2258d8e584fbfa7cdf53444ff1075ce7f34ed9d2278f336612554fe59c664a27",
+    "evals/search-quality/frozen/gold-verification.json": "94778c2f2532f192a4f0883174db23007af059caf1570878742adbec2e56d5c5",
+    "evals/search-quality/frozen/construction.json": "be5d3e7bd259777508b5b3e45e7a458b304b5dc620362f56f7658931a359f30f",
+    "evals/search-quality/frozen/construction-review.json": "74827f8bf54826e2768b9514051aadd88678e234929adaf04c5765f635ed9a4a"
+  },
+  "freePreflight": {
+    "measured": [
+      {
+        "id": "t24-field-state-control-261",
+        "tokens": 5741
+      },
+      {
+        "id": "t24-field-category-control-007",
+        "tokens": 5743
+      },
+      {
+        "id": "t24-field-state-control-299",
+        "tokens": 5741
+      },
+      {
+        "id": "t24-field-state-control-285",
+        "tokens": 5741
+      },
+      {
+        "id": "t24-field-state-positive-105",
+        "tokens": 5741
+      }
+    ],
+    "ledger": {
+      "total": {
+        "reservations": 0,
+        "open": 0,
+        "openMicros": 0,
+        "chargedMicros": 0,
+        "ledgerMicros": 0
+      },
+      "fields": {
+        "reservations": 0,
+        "open": 0,
+        "openMicros": 0,
+        "chargedMicros": 0,
+        "ledgerMicros": 0
+      },
+      "monthlyIngestionUsd": 48.92493
+    },
+    "pricesChecked": "2026-10-25",
+    "priceSource": "https://platform.claude.com/docs/en/models/haiku-5-5/overview"
+  }
+}

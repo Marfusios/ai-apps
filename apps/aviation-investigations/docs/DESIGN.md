@@ -443,8 +443,8 @@ omit them. Provider calls settle with result storage in one transaction. A faile
 returns its quota unit but retains real spend; a result with any note counts once.
 Crash recovery closes abandoned searches and returns their units while charging the reservation conservatively. A
 client disconnect leaves admitted work running and replayable; shutdown, deletion
-and the configured server deadline can stop it (30 seconds for the baseline, 50 or
-60 seconds with a reranker).
+and the configured server deadline can stop it (35 seconds for the baseline, 55 or
+65 seconds with a reranker, 8 seconds more for the `attributed.v1` attribution check).
 
 Before enabling this path, freeze and review scope/excerpt/pagination versions; replay
 context-loss counterexamples through the actual UI, including required context on the
@@ -966,13 +966,17 @@ The evaluated scope.e3 prompt/schema/settings are unchanged.
 
 ### Evidence.v3: applied state, disclosures and undo
 
-The public response is `evidence.v3`. The ranking configurations and their hashes
-remain those evaluated for Task 24; automatic filters are an independent, frozen
+The public response is `evidence.v3`. The ranking configurations remain those evaluated
+for Task 24 except the scope timeout (10 to 15 seconds in Task 30), which changed their
+hashes; automatic filters are an independent, frozen
 policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
 identity includes the outputs of a fixed, versioned guard-probe set; a changed response
 to any probe changes the hash even without a guard version bump. Live accepts
-`none` and the reviewed `state-explicit.v1.3`; the default stays `none` and an operator
-must explicitly enable state in the environment settings. The independent live
+`none` and `attributed.v1-state` (Task 30); `attributed.v1-state-years` (a recorded wrong year
+range) and `attributed.v1` (with the category, which failed confirmation) are dev-only, and
+`state-explicit.v1.3` is dev-only since the 2026-10-25 security re-check. The default stays `none` and an operator must explicitly
+enable automatic filters in the environment settings; live runs `attributed.v1-state` since
+4 November 2026, by the owner's decision accepting the residual in SECURITY_REVIEW. The independent live
 ranking allowlist is `er-q-v1` and `er-q-h50-v1`. `state-explicit.v1.3` uses
 only a valid scope.e3 case-search result's state set, on original question searches.
 It requires agreement with the complete explicitly named state set. Its finite
@@ -1016,8 +1020,9 @@ The page reports server-derived facts:
   or hides terms when execution records disagree. Fallbacks
   report `question`. Edited queries still carry explicit terms; filter-only edits
   retain their parent's query and both executed texts.
-- `automaticFilters` contains the applied state set, or null. It is always null
-  on edits. `order` is `ai_relevance` only when valid rerank grades were applied;
+- `automaticFilters` contains what the active policy applied on its own, or null: the state set
+  (v1.3), or under `attributed.v1` and its variants any of the state set, the event-year bounds and
+  the aircraft category set (Task 30). It is always null on edits. `order` is `ai_relevance` only when valid rerank grades were applied;
   every other outcome is `match`.
 - `marks` is `suggested_terms` only when the baseline actually retained suggestion
   marks; otherwise `search_words`. Suggestion terms are null if those terms were
@@ -1032,8 +1037,9 @@ The page reports server-derived facts:
 
 A quota-free undo requires an owned, unexpired, completed original v3 question search,
 no explicit edited terms, and no changes except removal of automatic additions.
-Filters must equal the parent's filters or remove its entire automatic state field;
-removing one member of a multi-state OR is a narrowing edit and costs a unit. Setting
+Filters must equal the parent's filters or remove one or more entire automatic facets (the
+automatic state set, both automatic year bounds as one facet, the automatic category set);
+removing one member of a multi-value facet is a narrowing edit and costs a unit. Setting
 `keywords: 'question'` is an undo only if the parent used added terms. At least one
 addition must be removed. All other edits cost one unit.
 
@@ -1065,11 +1071,99 @@ lock and before shared bucket/spend locks; the child write rechecks it again. Ol
 are read as v3 using their actual recorded metadata, with no invented automatic state or
 free undo. Existing expiry, authorization and backup exclusions remain unchanged.
 
+### Automatic filters attributed to the accident (`attributed.v1`, Task 30)
+
+`attributed.v1` and its field subsets apply scope.e3's suggested **state**, **event years** and
+**aircraft category** on an original question search, but only when the question names them
+explicitly and a separate check says that each value describes the requested accidents themselves.
+They replace the regex attribution of `state-explicit.v1.3`, which the security re-check of 25 October
+2026 did not clear ("Find accidents involving aircraft maintained within Alaska" still applied AK;
+punctuation, parentheses and longer modifiers defeated its rejections). v1.3 stays a dev-only
+setting. Every other suggested field stays a suggestion, and edits never add automatic filters.
+
+A value is applied only when both locks agree.
+
+1. **Deterministic candidates** (`shared/automatic-candidates.ts`; behaviour fingerprint
+   `candidate-probes.v1` in the policy identity). The emitted values must be exactly what the question
+   names: the complete set of explicitly named states (full names, or a postal code only in its
+   qualified `City, XX` form; a full name followed by a place suffix such as city, county or river is
+   no state mention; Washington needs a qualifier because DC is a separate code), an event-year
+   interval equal to the interval of exactly one supported date expression with its operator ("after
+   2015" is 2016 onwards, "before 2000" ends in 1999, "in the 1990s" is 1990–1999), and the complete set
+   of named aircraft categories from fixed word lists ("plane", "aircraft", "rotorcraft" and
+   "fixed-wing" name none). Each value keeps its witness span; a value named twice is no candidate.
+   Conservative structural refusals remove a field or the whole question: alternatives or unions of
+   separate requests (or, either, versus, compared with, unlike, instead of; two request phrases joined
+   by and, plus, as well as, a comma or a slash; "nationwide, Ohio included"; more than one sentence or
+   clause, where a dot before more words ends one unless it is a decimal or a name prefix such as
+   St. Louis), conditions and
+   exceptions, local negations, referenced or written-about other events, titles and summaries,
+   attribute words around a category (a helicopter pilot, hours in gliders, balloon tires, helicopter
+   turbine engines), history or person words before a year (built in, trained during, pilots flying
+   since), temporal continuations and approximations around a year, unrestricted wording (wherever,
+   whatever year, any aircraft), coordinated list members that map to no value, in any letter case and
+   before or after a state (fixed-wing, Kansas City, boston, a territory), instruction-like wording,
+   quotation marks, invisible or bidirectional characters, and questions over 600 characters.
+   The refusals are a list, so they cannot prove that the named states bound the whole request: the
+   last security check still found rare forms where only the state would apply (see SECURITY_REVIEW
+   "Automatic filters attributed to the accident").
+2. **The attribution check** (prompt version `attr.a3`, kept in `server/ai/prompts/attribution.a2.ts`;
+   Claude Haiku 5.5, thinking off, effort low, no retries, 5,000 input and 1,200 output tokens, eight
+   seconds; one call per search, only when a candidate exists). Each candidate is one value (`state:XX`,
+   `years`, `category:CODE`). For each the check returns what the question's words for that value
+   describe (the accident's location, date or aircraft; a departure or destination; the aircraft's
+   history; a person; a document; another event; another aircraft or object; an exclusion; not a
+   constraint; unclear) and the shortest quote naming it. The question is untrusted text; the candidates
+   are AirCase's own labels, rendered with their exact ranges. A field applies only when every one of its
+   values gets the field's accident class with a quote whose occurrence covers that value's witness.
+   Any stage failure, timeout or invalid, incomplete or duplicated answer applies nothing and leaves the
+   suggestion as it was.
+
+**Variants.** The policy's `fields` drive the candidates, the check's input, `/api/config`
+`aiAutomaticFilters` and the identity: `attributed.v1` (state, years, category; dev only),
+`attributed.v1-state-years` (dev only) and `attributed.v1-state`, the only one on the live allowlist.
+The aircraft category failed Task 30's confirmation. The years passed its forced rule, but end to end
+both locks read "nothing after 2010" as 2011 onwards (the parser takes the positive expression and the
+quote covers it). So both stay suggestions.
+
+**Money and time.** The check is one metered `attribution` stage inside the admitted reservation: its
+worst case ($0.001225, the whole input as a cache write) is added to the search reservation before the
+single rounding ($0.0037 with `er-q-v1`, $0.0102 with `er-q-h50-v1`), it counts among the uncertain-call
+stages, and the run deadline adds its eight seconds once. A failed reservation or settlement fails the
+search as for scope; an abstention never hides one. Measured cost per check is about $0.00008 with the
+cached prompt; latency about one second when it runs.
+
+**Contract and storage.** `evidence.v3`'s `automaticFilters` may carry `state`, `yearFrom`, `yearTo` and
+`category` (at least one key); state-only pages read as before. Migration 0030 lets the settlement guard
+accept those keys and nothing else. The free undo removes one or more whole automatic facets (the
+automatic state set; both automatic year bounds as one facet; the automatic category set) and/or the
+added terms, and nothing else; removing one value of several is an ordinary edit. The private
+`autoFilterFields` hold one reason per field (`applied`, `not_candidate:<rule>`, `attribution:<class>`,
+`attribution_unavailable`, `bad_quote`) and `attributionOutcome`; no question or quote text is stored
+outside the search itself.
+
+**Rollout and rollback.** Release the reader with the policy at `none`, so that open tabs load the new
+client before any page carries automatic years or categories; then set the confirmed variant. To
+disable, set `none`: the same reader keeps reading stored pages and their undo. Do not roll the image
+back below this release once such pages exist: an older reader rejects them.
+
+**Evaluation (Task 30).** OBSERVABILITY_AND_EVALUATION "Automatic filters attributed to the accident
+(Task 30)" has the protocol and results. In short, on 1,644 frozen confirmation questions never used
+for any change (990 traps), the three-field policy applied a wrong state in 0 of 348 trap questions and
+0 of 200 applications, a wrong year range in 0 of 358 and 0 of 197, and a wrong category in 4 of 347;
+state and years passed the pre-registered rule (years are held back, see Variants), category did not.
+The state-only release candidate
+with the final rules (`attributed.v1-state`, identity `4af506c9…`) applies a wrong state in 0 of 348
+trap questions and 0 of 176 applications (0 of 151 end to end), and applies the state in 57% of the
+questions that name one (49% end to end). Applied automatically, the state alone raised narrow
+recall@20 from 30% to 60% on the development questions and from 19% to 48% on fresh ones, with no
+click (70% and 51% after one click on all suggested filters, in the same run).
+
 ### Evidence pricing (initial AI feature)
 
 `server/evidence/pricing.ts` derives the reservation from the configured scope and
-embedding models and their hard caps, plus the selected reranker, with one final
-rounding. For the baseline with Haiku 5.5 and `text-embedding-3-small`,
+embedding models and their hard caps, plus the selected reranker and, under
+`attributed.v1`, the attribution check ($0.001225), with one final rounding. For the baseline with Haiku 5.5 and `text-embedding-3-small`,
 10,000 scope input tokens, a cache-write premium on up to 6,500 prefix tokens,
 2,500 output tokens and 1,000 embedding tokens cost at most **$0.0024325**. Round up
 to **$0.0025** per admitted search. These scope caps are independent of `scope.v2` for
@@ -1307,7 +1401,8 @@ model) is refused further generated-summary requests until 00:00 UTC: admission 
 `uncertain_limit`, the API 429 `quota_exhausted` with `Retry-After`, nothing reserved and no search taken.
 That allows at most two answer-stage cancels or timeouts a day (about $0.68, the cost of
 six finished briefs) and some thirty check-stage ones. Only the named calls count (the
-scope, the answer's compose, the check and the query embedding: `UNCERTAIN_CALL_STAGES`).
+scope, the answer's compose, the check, the query embedding, the evidence rerank and the
+automatic-filter attribution check: `UNCERTAIN_CALL_STAGES`).
 A charge in full that follows a server failure is not the principal's uncertain call and
 is left out, though it still counts in full against the budgets: lease expiry, and a step
 that broke outside its stages (a database error between stages, an exception while the

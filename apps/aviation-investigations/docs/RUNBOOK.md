@@ -799,7 +799,8 @@ by the evidence ranking object; incompatible model overrides fail its price chec
 Only the baseline retains suggestion-based highlights (executed words if absent);
 every alternative highlights executed lexical words. This policy is part of the hash.
 The conservative reservations are $0.0025 without rerank, $0.0090 for Haiku/50,
-$0.0140 for Haiku/100 and $0.1332 for Sonnet/50. Confirm budget capacity before
+$0.0140 for Haiku/100 and $0.1332 for Sonnet/50, each $0.001225 more (before the
+rounding) under the `attributed.v1` automatic-filter policy: $0.0037, $0.0102, $0.0152 and $0.1345. Confirm budget capacity before
 authorizing any paid test; preflight does not generate.
 
 For a non-HTTP evaluation use `rankEvidence(config, input, providers, spendGate)`
@@ -829,86 +830,253 @@ intervals too wide), not cleared, and it only reorders the retrieved cases.
 
 ### Evidence automatic filters and v3 rollout
 
-`AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default) or
-`state-explicit.v1.3`. Both are allowed on dev and live following the state policy's
-field confirmation and review. Unknown values fail startup. The default stays
-`none`. To enable it, deploy the matching v3 client and complete these steps:
+`AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default), an attributed policy or, on dev
+only, `state-explicit.v1.3`. Unknown values fail startup. Only a variant whose fields the Task 30
+confirmation cleared belongs on the live allowlist (`LIVE_EVIDENCE_AUTO_FILTERS`,
+`shared/evidence-auto-filters.ts`), which is `none` and `attributed.v1-state`; the attributed
+variants differ only in their fields (the same rules, prompt, caps and settings):
 
-1. In `live.env`, set `AVIATION_EVIDENCE_AUTO_FILTERS=state-explicit.v1.3` and keep
-   `AVIATION_EVIDENCE_RANKING=er-q-v1`.
-2. Run `pnpm worker ai-preflight` with those same environment settings **before**
-   `pnpm app:up`. Require successful configuration validation and no OVER rows.
-   This catches an invalid policy before the app is recreated.
-3. Run `pnpm app:up` with those settings, then check that `/api/config` reports
-   `aiAutomaticFilters: ['state']` after its cache expires. Confirm that an applied
-   state is disclosed and can be removed without a visitor quota unit.
-4. Monitor the private `autoFilterReason` mix and the ratio of free-undo claims to
-   state-applied original searches. Removals are the live precision signal, not a
-   labelled precision estimate: a claim may also remove added keywords or precede
-   a failed search. Keep these diagnostics and question text out of logs/traces.
+- `attributed.v1-state`: the state only; live (the state passed the confirmation). Codex's last
+  security check did not clear it (SECURITY_REVIEW "Automatic filters attributed to the accident"):
+  the owner accepted the residual it describes and enabled it on live on 4 November 2026.
+- `attributed.v1-state-years`: the state and the years; dev-only. The years passed the forced rule,
+  but end to end both locks read "nothing after 2010" as 2011 onwards.
+- `attributed.v1`: state, years and category; dev-only, because its category field failed the
+  confirmation. On live the years and the aircraft category therefore always stay suggestions.
 
-This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
-it does not change any evaluated ranking hash. The Docker service passes it through.
-The live ranking allowlist is `er-q-v1` and `er-q-h50-v1`.
-Each saved search records both configuration identities. No reindex is needed.
-v1.1 and v1.2 were never deployed and are no longer accepted. Replace any unreleased
-older setting with `none` or v1.3 before preflight. v1.3 is built on v1.1, adding five
-rejections for other-event wording, references before the first mention, title/text
-language, locations attributed to destinations/departures/attributes, and definite
-singular events at a state mention. It removes v1.2's overbroad `like` alternative:
-"I'd like to see accidents in Alaska" remains eligible. See DESIGN for the bounded
-rules and deliberate abstentions. Its accepted set is a strict subset of v1.1
-(and a subset of v1). The 1,040-answer offline replay gives 365 TP / 0 FP / 35 FN
-for the guard, two applications lost from v1.1. The pipeline's separate case-search
-intent requirement yields 363 TP / 0 FP / 37 FN. Neither result proves semantic
-attribution for future wording; other fields and rankings remain restricted.
-`GET /api/config` reports `aiAutomaticFilters: []` for `none` and `['state']` for
-the state policy. The field is optional for cached pre-deploy configs: missing means
-unknown, so the client uses cautious "suggests filters" wording. Client copy follows
-this field, not a fixed claim about states.
+`state-explicit.v1.3` fails startup on live: it did not clear the 2026-10-25 security re-check
+("Find accidents involving aircraft maintained within Alaska" still got an automatic AK filter).
+The default stays `none`, and nothing is enabled on live without the owner's decision. Live runs
+`AVIATION_EVIDENCE_AUTO_FILTERS=attributed.v1-state` since 4 November 2026. Rollback: set `none`,
+run the preflight and `app:up` on the same image.
+
+**`attributed.v1`** (Task 30) applies the scope's suggested state, years and aircraft category on
+its own when the question names them explicitly and a separate check says each describes the
+accident itself; its subsets apply only their own fields. Every other suggested field stays a
+suggestion, and edited searches never add automatic filters.
+
+- Deterministic candidates (`shared/automatic-candidates.ts`; `state-mention.v1`,
+  `year-mention.v1`, `category-mention.v1`): the question's own words must name exactly the
+  suggested values, once each, and at most eight states and three categories (more is
+  `too_many_values`). Words of one category within two words are one mention ("blimp or airship").
+- Years must equal the interval of exactly one supported date expression, with its open or closed
+  ends ("in 2019", "2015 to 2018", "since 2010", "after 2015", "2015 or later", "no later than
+  2019", "after 2015 and before 2020", "in the 1990s"). The grammar is an allowlist: a decade only
+  after in, during, throughout, from, "of" after an event noun or first in the question, never "the
+  1900s" or "the 2000s"; a portion word ("late in the 1990s"), a two-digit second year
+  ("2015-18"), an operator joined to another ("in and after 2015"), a duration or offset before
+  the operator ("a year after", "shortly after", "some time after") gives no interval. So do an
+  end word before in or during ("starting in 2015", "ending in 2015"), an approximation before a
+  range ("around 2015 to 2018"), operators joined with a comma or by "including" ("in, and after
+  2015"), and "inclusive" after an open interval ("after 2015 inclusive"). After an expression, a
+  joiner-like word or mark (to, into, through, and, or, as, but, with, including, along, plus, &, a
+  comma, colon, semicolon or dash) with a year or a temporal word (now, present, date, later,
+  since, end, years, ...) among the next three words gives no interval ("in 2015 to the present",
+  "in 2015 and the years since"), as do "at the earliest/latest" and "thereabouts" or "give or
+  take"; any other follower is fine ("in 2020 concerning landing flare"). A year or decade outside
+  every expression ("in 2015 and also 2016", "to late 2018", "from 2015 up to 2018") gives no
+  interval, except a model year ("a 1978 Cessna"). So do, by construction: a temporal continuation
+  anywhere outside the expression (today, now, present, currently, current, to date, so far,
+  onward(s), forward, henceforth, subsequently, continuing, continued, ongoing, since then, up to
+  now, this day, these days, nowadays: "in 2015 up to today", "during 2015 continuing onward"); an
+  approximation within the two words before the expression or its operator (approximately, approx,
+  about, around, roughly, circa, c., nearly, almost, some, close to: "approximately in 2015",
+  "reports about accidents in 2015"); and a parenthesis, dash or colon after the expression with a
+  temporal word or a year later in its clause ("in 2015 (the start of the period) through
+  today"). A year after a word about a person, an aircraft's history or a document ("aircraft
+  built in 1981"), or after a person or business doing something ("pilots flying since 1985",
+  "instructors teaching since 2010"; "student pilot accidents in 2019" stays), is set aside, and
+  no longer makes the field ambiguous.
+- A value is no candidate when its mention sits inside another event's phrase ("reports citing
+  accidents in Alaska", "accidents like those in Utah", "investigators wrote about accidents in
+  Alaska"; a reading list or a discussion is no other event, and a reference word that opens the
+  question is its verb: "Compare ...", "Cite ..."), follows title or text wording ("the heading
+  Helicopter accidents"; a summary or abstract only before a naming verb: "whose summary mentions
+  Alaska"), or, for a category, names a person, business, part, kit, model, experience or
+  comparison, directly or after one other word ("helicopter pilots", "airplane parts", "helicopter
+  tail rotor", "secondhand helicopter turbine engines", "time in gliders", "like a helicopter");
+  another aircraft or traffic nearby ("with an aircraft nearby") is a relationship. Such a mention
+  of an unsuggested value is set aside ("crashes in Nevada similar to the accident in California"
+  keeps Nevada), except in the same list as a suggested value or when it names a part
+  ("helicopter and airplane engine failures"): then the field is refused, so it never applies fewer
+  values than the question names. Negations include not, no, never, without, nowhere, none, n't,
+  apart from, far from, avoid(ed), elsewhere, leaving out, skipping, omitting, minus, "every state
+  but", a non- or ex- prefix on the mention and "aside" after it ("excepted" is an exception). Words that say a field does not limit the request make
+  that field no candidate (`not_restricted`): wherever, regardless of where, no matter where,
+  anywhere in the country, US or else (state); whenever, whatever year, regardless of when, no
+  matter when, in any year (years); whatever aircraft, any aircraft type, regardless of (the)
+  aircraft, no matter what aircraft (category). After a state name, OR is the conjunction
+  ("Alaska, OR helicopter accidents"); after a city it is Oregon ("Portland, OR during 2019"); a
+  `City, XX` place whose city is another state's name ("Washington, DC", "Delaware, OH") is
+  ambiguous. A value coordinated (and, or, plus, &, /, a comma after it) with a list member the
+  filter cannot represent refuses its field (`unmapped_value`) instead of narrowing it: an
+  aircraft word that maps to no category (fixed-wing, rotorcraft, plane, jet, seaplane,
+  floatplane, amphibian, drone, UAS, UAV, multicopter, aircraft: "helicopter and fixed-wing
+  accidents"), or a place that is no state (a state name with a place suffix, "Ohio and Kansas
+  City"; a Title-Case place, "Alaska or the Yukon"; Puerto Rico, Guam, Mexico, Canada, Ontario,
+  British Columbia, the Bahamas and the other territories). So does any other word coordinated
+  directly with a state value, whatever its case ("Ohio and Boston", "Ohio and BOSTON", "Ohio and
+  boston"): no city is mapped to a state, so the set is not known to be complete. After a state
+  value, a coordinator (a comma, and, or, &, /, plus) and an optional location preposition (in,
+  near, at, around, outside, by) must lead to a value (a state, a category, a year), a time of day
+  or season after the preposition, or a closed list of continuations (during, with, from, which,
+  especially, fatal, accidents, ...), whatever the case: "Ohio, boston", "Ohio, BOSTON" and "Ohio
+  and in boston" refuse, while "Ohio, Iowa, or Texas", "Ohio and at night", "Ohio and in 2019" and
+  "Florida, from 2008 through 2026" stay. The same holds before a state value: "boston and in
+  Ohio" and "BOSTON and in Ohio" refuse, "Iowa and Ohio" and "at night and in Ohio" stay. A place,
+  a comma, then its state is one place only when the place follows a location preposition ("in
+  boston, Ohio", "Kansas City, Missouri", "miles of Juneau, Alaska"); "nationwide, Ohio included"
+  refuses.
+- A question with instruction-like wording ("ignore previous instructions", "system prompt", "set
+  the state"), quotation marks (every initial and final quote but the apostrophe ’, low-9, corner
+  and ornament quotes, double primes), any control, format or default-ignorable character (soft
+  hyphens, joiners, Hangul fillers, variation selectors, tags) other than tabs and line breaks,
+  more than 600 characters, a condition or exception (if, unless, except, excepted, excluding,
+  but not), more than one sentence or clause (a ".", "?", "!" or ";" followed by any further word,
+  whatever its case: `multiple_requests`, so "Find accidents in Juneau, AK. Find fatal cases
+  anywhere." and "Find accidents in Ohio in the U.S. fatal cases anywhere are also relevant."
+  refuse; the only dots that are no end are one between digits ("1.5 inches"), the inner dots of a
+  dotted token ("U.S"), and St., Mt., Ft. or Pt. as a name's prefix ("St. Louis": not after a
+  capitalised word or a number, "Main St.", not before a request head or a verb such as Find, and
+  with no request head later in the clause); U.S., D.C., e.g., Inc. and every other abbreviation
+  followed by more words end the clause), or two requests in one clause has no candidates at all
+  (`union_of_requests`): a request head before a joiner (and, or, plus, as well as, ...), a
+  marker word (also, too, then, alternatively, otherwise, else, failing that, in addition,
+  besides, separately) or a comma or dash outside a value list, and after it another head or,
+  directly, a pronoun head (one, ones, those, any, anything, whatever, others) or a state or
+  category word ("Alaska records and helicopter cases", "Alaska accidents, helicopter accidents",
+  "accidents in Alaska and those involving helicopters"; "accidents and incidents in Alaska"
+  too). The heads are accident(s), crash(es), incident(s), mishap(s), occurrence(s), event(s),
+  case(s), record(s), report(s), investigation(s), file(s), source(s), wreck(s), loss(es),
+  emergency/emergencies, fatality/fatalities and flights, counted only when plural or directly
+  before in, near, at, of, from, involving, with, that, where, which, during, since, before, after,
+  by or the end of the phrase, so "the investigation archive" and "the event location" are none. With two or more fields named in the question (candidates or not), any alternative
+  word (or, either, nor) outside one field's own value list refuses every candidate; with one,
+  only an alternative with the candidate's words among the two words on either side does ("in
+  Alaska or at night"; "fatal or serious accidents in Alaska" keeps its state). Any comparison word
+  (versus, compare, unlike, rather than, instead of, whereas) refuses every candidate.
+- One check (`attr.a3`, `server/ai/prompts/attribution.a2.ts`) on Haiku 5.5, only when there is a
+  candidate: one check per value (`state:XX` for each state, `years`, `category:CODE` for each
+  category; at most twelve), thinking off, effort low, no retries, a cached system prompt, at most
+  5,000 input and 1,200 output tokens, an 8-second bound, inside the scope phase. A field applies only
+  as a whole, when every one of its values' checks names the field's accident class and quotes a
+  span of the question holding that value's own matched words ("crashes in Nevada of aircraft
+  registered in California" cannot apply California with Nevada; a decade's words are "the
+  1990s", and one word of "blimp or airship" covers that value). attr.a3 adds that a request for
+  investigations, records, files, sources or events in a place, from years or of a category is a
+  request for those accidents. A failure, timeout, invalid or
+  incomplete answer, another class or a bad quote applies nothing for that field and leaves it a
+  suggestion. The uncertain allowance, a failed scope and non-search intents skip the check.
+- Money: the check's worst case is $0.001225 (5,000 input tokens all written to the cache and 1,200
+  output tokens at the price table's Haiku rates). A typical request is about 3,200 input and 100
+  output tokens by the offline sizing, about $0.0004, less when the five-minute cache hits; a
+  search without a candidate makes no call. The search reservation adds the worst case before its
+  one rounding: $0.0037 with `er-q-v1` and $0.0102 with `er-q-h50-v1` (from $0.0025 and $0.0090).
+  The check settles as its own `attribution` ledger line; a call of unknown usage is charged at
+  its worst case and counts toward the daily uncertain allowance.
+- Time: the request deadline adds the check's 8 seconds once (73 seconds at most, with the
+  depth-100 reranker, under the 120-second lease).
+
+To enable it on an environment, in two steps:
+
+1. Apply migration **0030_automatic_fields** with `pnpm app:migrate`. It lets the automatic keys
+   `state`, `yearFrom`, `yearTo` and `category` change a running search's filters at settlement
+   (0025 allowed `state` only); grants and the schema snapshot are unchanged. Without it every
+   search with automatic years or a category fails at settlement.
+2. **First release, the reader:** deploy this image, whose server and web client read and undo
+   automatic years and category, with `AVIATION_EVIDENCE_AUTO_FILTERS=none`. Let open tabs reload
+   the new client before the next step: an older tab reads only automatic `state` and rejects a
+   page with automatic years or a category. `none` on this reader is also the rollback.
+3. **Then enable**, only with the variant the confirmation cleared on the live allowlist (above):
+   set `AVIATION_EVIDENCE_AUTO_FILTERS` to `attributed.v1-state` and run
+   `pnpm worker ai-preflight` with those settings **before** `pnpm app:up`. It counts the check's
+   real request: the fixed prompt and schema, the most values one check takes (the eight longest
+   state labels, the longest year value and the three longest category labels) with a
+   600-character question, and the output at its schema bounds (twelve checks with 160-character
+   quotes). Require no OVER row. The free count on the Task 30 release candidate was 2,924
+   tokens for the largest request with a Latin question and 3,328 with a dense one (cap 5,000),
+   2,356 for the cached prefix, and 982 for the output at its bounds (cap 1,200). At runtime a
+   request over the input cap is refused unbilled, and an answer over the output cap truncates
+   (billed); either way that search applies nothing.
+4. Run `pnpm app:up`, check that `/api/config` reports the variant's fields in `aiAutomaticFilters`
+   (`['state']`) after its cache expires, and that automatic filters are
+   disclosed and removable without a visitor quota unit.
+5. Monitor the private `autoFilterReason`, `autoFilterFields` and `attributionOutcome` mix (kept
+   on failed searches too, once the check has settled), the `evidence.attribution` spans and the
+   ledger's `attribution` lines. Keep these diagnostics and question text out of logs and traces.
+
+**Rollback** is a policy change on the same release: set `AVIATION_EVIDENCE_AUTO_FILTERS=none`,
+run `pnpm worker ai-preflight`, then `pnpm app:up`. New question searches apply nothing and make no
+check; saved pages keep their own automatic filters and their one free undo; no data or schema is
+rolled back. Do not roll back to an image older than this release while attributed.v1 searches
+are unexpired (24 hours): an older server or open tab reads only automatic `state` and refuses
+pages with automatic years or a category.
+
+This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing it does not change any
+ranking hash. The Docker service passes it through. The live ranking allowlist is `er-q-v1` and
+`er-q-h50-v1`. Each saved search records both configuration identities. No reindex is needed.
+Task 30 also raised the evidence scope timeout from 10 to 15 seconds (run deadline 35 seconds plus
+the reranker's bound), which changed all eleven ranking identities
+(`tests/support/evidence-ranking-hashes.json`); saved searches keep the identities they recorded.
+
+`state-explicit.v1.3` (dev only) is built on v1.1, adding five rejections for other-event wording,
+references before the first mention, title/text language, locations attributed to
+destinations/departures/attributes, and definite singular events at a state mention. It removes
+v1.2's overbroad `like` alternative: "I'd like to see accidents in Alaska" remains eligible. See
+DESIGN for the bounded rules and deliberate abstentions. Its accepted set is a strict subset of
+v1.1 (and a subset of v1). The 1,040-answer offline replay gives 365 TP / 0 FP / 35 FN for the
+guard, two applications lost from v1.1. The pipeline's separate case-search intent requirement
+yields 363 TP / 0 FP / 37 FN. Neither result proves semantic attribution for future wording. v1.1
+and v1.2 were never deployed and are no longer accepted.
+`GET /api/config` reports `aiAutomaticFilters: []` for `none`, `['state']` for v1.3 and
+`attributed.v1-state`, `['state', 'years']` for `attributed.v1-state-years` and
+`['state', 'years', 'category']` for attributed.v1. The field is optional for cached pre-deploy
+configs: missing means unknown, so the client uses cautious "suggests filters" wording. Client
+copy follows this field, not a fixed claim about states.
 A policy change changes the response ETag even on the same dataset; the existing
 public cache lifetime is five minutes.
-The automatic-policy identity includes `state-probes.v5` outputs. Current hashes:
+The automatic-policy identity includes behavioural probe outputs. Current hashes:
 
 | Policy | SHA-256 |
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
+| `attributed.v1` | `de24ac7e8d7998fdb1289e7366caa4e921e72b79117e6714fb615d11530bf456` |
+| `attributed.v1-state` | `4af506c977f7517adac0fa6ea12c74115575d1a3dafdcc7bc48316468764fde8` |
+| `attributed.v1-state-years` | `10fb5924583ec082b13890dc0b163c2bb11cdec9b75f787ca1c8b7caef91102b` |
 
-The state policy hashes its fixed probes' inputs and actual guard outputs; `none`
-records no active guard. Do not relabel older cached results with these identities.
-The v1.3 policy binds `state-probes.v5` (499 probes, including all review challenges
-and witnesses for every new regex alternative). The eleven ranking identities are unchanged.
-
+The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
+probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check
+settings, caps and timeout, the prompt's system text and wire schema, and `candidate-probes.v1`:
+the candidate builder's outputs on 2,421 fixed questions (every word list entry and every form the
+reviews named), the rendered check inputs and the decisions on 34 fixed check answers, so a changed
+rule, renderer or quote validator changes it too. Do not relabel older cached results with these
+identities.
 
 Apply migration 0025 before serving v3. Its known local-test-only round-2 and round-3 versions are
 reapplied transactionally by the migrator without removing existing undo claims; other
 unknown migration drift is still refused. Its columns/grants and snapshot are unchanged.
-Deploy the matching evidence.v3 web client for keyword, automatic-state, ordering,
+Deploy the matching evidence.v3 web client for keyword, automatic-filter, ordering,
 mark-source, suggestion and undo disclosures. v2 stored pages upgrade on read;
 pre-v2 pages remain unavailable. Unexpired v2 retries of the identical compatible
 body replay the existing result (including running/failed searches), with the usual
 ownership and Turnstile checks and no new quota or provider call. Different bodies
 still conflict; v3-only `keywords` can never be discarded to match a v2 hash.
 Old tabs reject v3 page responses until reloaded; reload them after deployment.
-To roll back automatic state on live, set `AVIATION_EVIDENCE_AUTO_FILTERS=none`
-in the live settings, run `pnpm worker ai-preflight`, then run `pnpm app:up`
-with those settings. New question-search pages disclose no automatic filters;
-Explore and About switch wording through `aiAutomaticFilters: []`, subject to the
-five-minute config cache above. Saved pages retain their own facts; new edits use
-explicit filters only. Do not roll back the database
-schema or old private result data to disable this policy.
 
-Free undo is allowed once per original question, even at a visitor quota limit.
-Its attempt, concurrency, Turnstile and money checks are unchanged. The parent claim
-is taken atomically at admission and is not reset after a downstream failure; retries
-with the same key replay its result/failure once a search row exists. A pre-run abandon
+Free undo is allowed once per original question, even at a visitor quota limit: an edit that
+removes one or more whole automatic facets (the state set, both automatic year bounds, the
+category set) and/or the added terms, and changes nothing else. Removing one value of several is
+a narrower, ordinary search. Its attempt, concurrency, Turnstile and money checks are unchanged.
+The parent claim is taken atomically at admission and is not reset after a downstream failure;
+retries with the same key replay its result/failure once a search row exists. A pre-run abandon
 expires the idempotency slot without restoring the undo claim, so even a same-key retry
 is an ordinary quota-counted admission (or is refused at the quota limit).
 Confirm quota_counted=false for the free request and normal ledger settlement. No
-public request field can ask for free quota directly. Automatic state is cleared for
-live opt-in; a non-baseline ranking still requires its own evaluation and allowlist
-decision. Deploy the matching v3 web client before enabling automatic state.
+public request field can ask for free quota directly. Superseded: this section used to say that
+automatic state was cleared for live opt-in; `state-explicit.v1.3` did not clear the 2026-10-25
+security re-check and is dev-only. A non-baseline ranking still requires its own evaluation and
+allowlist decision. Deploy the matching web client before enabling automatic filters.
 
 ### Retrieval version
 
@@ -1879,7 +2047,9 @@ tag and digest together.
    `NODE_EXTRA_CA_CERTS`; Docker uses its configured trusted endpoint. Run
    `pnpm -s worker langfuse-prompts --sync` before releasing linked generation spans.
    It only calls Langfuse, never a model provider. Run it again to verify idempotence.
-   The two returned content hashes must match; a modified mirror or a version other
+   It mirrors `aircase-scope.e3`, `aircase-rerank.r1` and `aircase-attr.a3` (Task 30; `attr.a1` and
+   `attr.a2` were never deployed); each
+   prompt's content hash must be the same in both runs; a modified mirror or a version other
    than 1 is a release failure. Do not edit the mirror in the Langfuse UI; resolve drift
    against the frozen code and review any deliberate prompt version change.
 4. In the admin overview, check tracing enabled, last successful export and failed

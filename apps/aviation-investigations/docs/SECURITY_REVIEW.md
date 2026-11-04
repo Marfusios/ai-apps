@@ -319,7 +319,10 @@ backup exclusion and 24-hour expiry.
 
 The automatic-state policy is frozen/hashed separately from the evaluated rankings.
 Live allows `none` (the default and rollback) and `state-explicit.v1.3`; v1.1 and
-v1.2 were never deployed and are no longer accepted. The guard requires the complete
+v1.2 were never deployed and are no longer accepted. (Superseded in Task 30: live allows
+`none` and `attributed.v1-state`; `attributed.v1-state-years`, with a recorded wrong year range,
+`attributed.v1`, whose category field failed confirmation, and `state-explicit.v1.3`, which did
+not clear the 2026-10-25 re-check, are dev-only.) The guard requires the complete
 explicit model-emitted state set. v1.3 is built on v1.1 with five rejection rules
 after NFKC: bounded other-event wording, references before the first state mention,
 title/text language, destinations/departures/attributes at each mention, and a definite
@@ -377,6 +380,68 @@ The new claim column is private, non-resettable and included in restore privileg
 The scope guard is a conservative permission rule, not a proof of semantic safety for
 all language. Relevance and incident interpretation remain research tasks; all public
 filters, lexical changes, AI ordering and mark sources are disclosed and undoable.
+
+## Automatic filters attributed to the accident (Task 30)
+
+**What changes.** With `attributed.v1-state`, the only attributed variant on the live allowlist, an
+original question search may apply the scope's state without a click (DESIGN "Automatic filters
+attributed to the accident"). A wrong automatic filter silently removes relevant
+cases from that visitor's own results. It cannot reach another visitor's search, a stored case or any
+generated text.
+
+**Trust boundary.** The question, the scope output and the attribution output are untrusted. Values
+reach retrieval only through the deterministic candidate rules (exact mention with witness spans, exact
+year intervals, set equality, structural refusals) and only for the variant's fields; the model can
+remove a candidate, never add one or change a value. The attribution input carries AirCase's own
+canonical labels; the question sits in the usual untrusted block and the candidate JSON is escaped.
+Instruction-like wording, quotation marks, invisible, bidirectional and default-ignorable characters
+and over-long questions disable automation for that search. Narratives never reach the scope or the
+attribution call.
+
+**Failure modes.** Any stage failure, timeout, refusal, truncation or invalid output, and any coverage or
+quote mismatch, applies nothing and keeps the suggestion; there is no fallback to the old regex guard.
+Shutdown, deletion, admission loss and cancellation still stop further paid dispatch.
+
+**Money.** One `attribution` ticket inside the admitted reservation (worst case $0.001225 added before
+rounding), zero SDK retries, exactly-once settlement, the uncertain-call allowance covers the stage, and a
+reservation or settlement failure fails the search instead of being read as an abstention.
+
+**Storage and undo.** Migration 0030 widens the settlement guard from `state` to the four automatic keys
+only. The free undo stays server-owned and once per original question and removes any whole stored
+automatic facet, with every owner, expiry, idempotency, Turnstile, concurrency and money check
+unchanged. Diagnostics hold fixed reason codes; no question or quote text goes to logs, traces, progress
+or Langfuse.
+
+**Disclosure.** Every automatic chip is tagged "from your question", a fixed note says that AI applied
+them and that taking out everything AI added is free once, and Explore and About name only the fields
+the configured variant applies.
+
+**Review status: not cleared.** Codex's design review (2 P1, 4 P2, 2 P3) shaped the design and the
+evaluation protocol. Its implementation gate at `54f6fc6` did not clear any field (exact year
+boundaries, joint requests and list members, the evaluator's decision join). After fix rounds 6 and 7
+its re-check kept years blocked by the recorded wrong range ("nothing after 2010" applied as 2011
+onwards by both locks), so years stay a suggestion and `attributed.v1-state-years` is dev-only. Its
+checks of fix rounds 8, 9 and 10 each confirmed the reported forms fixed, the subset property and the
+replayed numbers, and each found nearby forms. The last one (`1a798e4`, identity `4af506c9…`) leaves
+one P1 open, request coverage: with an approving mock check, "Find accidents in Boston and also in
+Ohio.", "Find accidents from everywhere, Ohio included." and "Find accidents in Ohio near main St.
+Fatal ones anywhere will do." still apply Ohio alone and drop the rest of the request. These are
+deterministic counterexamples, not observed model failures; the measured system made no wrong state
+filter (OBSERVABILITY_AND_EVALUATION). The refusals are a list, and three rounds show it does not close
+over open English; closing the class needs a different deterministic lock (a short list of accepted
+question shapes) at a further cost in recall. Enabling `attributed.v1-state` before that means the
+owner explicitly accepts this residual: a wrong state is disclosed as a chip "from your question" and
+removable free, and it only narrows that visitor's own results. Codex asked that such an acceptance be
+recorded as a change to the guard requirement, not as a clearance.
+
+**Owner decision (4 November 2026): residual accepted, state enabled on live.** The owner accepted this
+residual and enabled `attributed.v1-state` on live after the reader-first release of Task 30. This
+changes the guard requirement for the state field: the deterministic lock must still accept only
+explicitly named states and refuse the listed structures, but it no longer has to prove that the named
+states bound the whole request. On rare wordings like the three above, a disclosed, free-to-remove
+automatic state that narrows the visitor's own results is accepted. This is not a clearance of the
+request-coverage finding, and it extends to no other field: years and the aircraft category stay
+suggestions. Rollback is `none` on the same reader.
 
 ## Task 25 review surface
 

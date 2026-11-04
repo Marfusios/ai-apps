@@ -1,0 +1,1700 @@
+{
+  "version": "task24-construction-v1",
+  "seed": "2026102501",
+  "corpusSha256": "f71ddcae244e1a0c04510cd4adbeaa6472eab0f599259f36c695f8c9b7fab595",
+  "exclusionsSha256": "6d8e3d7eb56a7704cf7849ad957d65bd7bf246c3e5f39fc9bd594a988e6d6c49",
+  "rejectedPredicates": [
+    {
+      "family": "03042020",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03034050",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03012015",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03035075",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03013030",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03034030",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03017075",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03023025",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03036010",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03014055",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03022037",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03035050",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03016010",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03017025",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03041025",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057530",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057322",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023020",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057330",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022916",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022722",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023457",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035510",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023414",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022551",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057932",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022720",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035343",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022424",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023520",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022560",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023080",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01058570",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057120",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046320",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046240",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022611",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022216",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046122",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023245",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023232",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035710",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023423",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035341",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046120",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035523",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035420",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022740",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022230",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035711",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057324",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022213",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046111",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035414",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023250",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022711",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022120",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035340",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023097",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035350",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023432",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01071430",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035544",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023442",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022562",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023241",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035753",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023211",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057210",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046210",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057130",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022563",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046420",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022930",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057933",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046730",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035346",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057820",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057332",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022561",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023010",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022422",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022751",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023030",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057721",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022420",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022932",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023040",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035620",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035415",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035740",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035310",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035554",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022430",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022312",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022780",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035246",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057603",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023220",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01071040",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057830",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035270",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023450",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057497",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057920",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01058597",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057430",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035260",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022710",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057930",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023410",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023340",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046310",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035311",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022520",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035301",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023140",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022597",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022752",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023231",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035714",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057921",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01011010",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057197",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022917",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057421",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022920",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022410",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035712",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057713",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035720",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022130",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022770",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035552",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057620",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022436",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022924",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057323",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057397",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035220",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046330",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022610",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057931",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023246",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023212",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035754",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057314",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057261",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022843",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023252",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022434",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057722",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046321",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022510",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022210",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022797",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01010910",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022140",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022370",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035410",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023720",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035514",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035210",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057111",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023620",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022701",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057310",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022440",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022622",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023234",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022911",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023251",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035553",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022550",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035751",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023210",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01071025",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01058560",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057810",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01010510",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022741",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023130",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035330",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057333",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022742",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046123",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057321",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035230",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046340",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035610",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01071030",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035541",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022211",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035540",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035321",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035530",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01011020",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035730",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057240",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01058540",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023244",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035240",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046710",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01058550",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01071410",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057331",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046114",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022565",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046230",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023260",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022432",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057532",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046110",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057313",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01010520",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01071497",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023170",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035741",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022731",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023243",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057797",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023420",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035511",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035521",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023710",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022450",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022913",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022760",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023418",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046197",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022910",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023460",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023222",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046140",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01010920",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01010550",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023150",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022915",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023201",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035345",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046113",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023270",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023411",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022460",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023221",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057311",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057420",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035312",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035630",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057910",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01010530",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022530",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022497",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023510",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035743",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023422",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035550",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022761",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035302",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057410",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022721",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035531",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023610",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046410",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035313",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022435",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023233",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057411",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022150",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057160",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01071035",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035347",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023421",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023452",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023197",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057602",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057260",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01058010",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023160",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023444",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057112",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023110",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035524",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01035280",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01023897",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01046220",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01022433",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01058120",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02063545",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02021540",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02021015",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02031045",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02012040",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02022510",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02011010",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02061020",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02032045",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02012050",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02022030",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02063537",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02062520",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02011015",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02063540",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02012025",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02051020",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02031520",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02064010",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02012015",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02031535",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02011510",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02011020",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02064025",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02032030",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02012010",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02013025",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02063530",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02012055",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02012045",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02013515",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02021030",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02013520",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02021010",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02032040",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02063025",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev284",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev100",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev510",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev244",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev335",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev850",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev070",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev140",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev242",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev600",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "ev282",
+      "class": "broad",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "03042020",
+      "class": "narrow",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "01057530",
+      "class": "narrow",
+      "reason": "no fresh full predicate in registered bounds"
+    },
+    {
+      "family": "02063545",
+      "class": "narrow",
+      "reason": "no fresh full predicate in registered bounds"
+    }
+  ],
+  "casesExcluded": 12096,
+  "freshABGoldCases": 283
+}

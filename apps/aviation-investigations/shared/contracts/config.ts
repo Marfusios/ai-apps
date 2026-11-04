@@ -23,7 +23,7 @@ export const ConfigResponseSchema = z.strictObject({
   turnstileSiteKey: z.string().max(200).nullable(),
   googleEnabled: z.boolean(),
   /** Fields the active policy may apply; empty when disabled, absent in older cached configs. */
-  aiAutomaticFilters: z.array(z.literal('state')).max(1).optional(),
+  aiAutomaticFilters: z.array(z.enum(['state', 'years', 'category'])).max(3).refine(f => new Set(f).size === f.length, 'repeated field').optional(),
   /** Evidence search allowances; amounts are private. Optional for older clients/fixtures. */
   aiLimits: z.strictObject({ anonymousDaily: z.number().int().nonnegative(), accountDaily: z.number().int().nonnegative(),
     newAccountDaily: z.number().int().nonnegative(), newAccountDays: z.number().int().nonnegative(),

@@ -216,6 +216,7 @@ it('does not open another environment file while loading the selected worker', a
     expect(providerKey(config, 'dev')).toBe('synthetic-dev');
   }));
 
+// 520 durable register/remove cycles: well over the default timeout on a busy machine.
 it('unregisters removed managed paths before the bounded registry can fill', async () =>
   withConfig(async (c) => {
     const space = new ManagedSpace(c.root, { ...FILE_LIMITS, reserve: 0 });
@@ -225,4 +226,4 @@ it('unregisters removed managed paths before the bounded registry can fill', asy
       await space.remove(join(c.root, name));
     }
     expect(await space.registered()).toEqual([]);
-  }));
+  }), 120_000);

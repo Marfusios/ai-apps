@@ -11,15 +11,20 @@ import { describe, expect, it } from 'vitest';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { CreateEvidenceResponseSchema, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
+import { EVIDENCE_AUTO_FILTER_VERSIONS } from '../../shared/evidence-auto-filters.js';
 import { isNarrativeHeading, wholeNarrativeParagraphs } from '../../shared/narrative-paragraphs.js';
+import { autoFilterPolicy, automaticFieldsOf as registeredFields } from '../../server/evidence/auto-filters.js';
 import casesJson from '../../web/mock/cases.json' with { type: 'json' };
 import {
   MOCK_EVIDENCE_BASELINE,
+  MOCK_EVIDENCE_FIELDS_POLICY,
   MOCK_EVIDENCE_QUESTIONS,
   MOCK_EVIDENCE_RELEASE,
   MOCK_EVIDENCE_STATE_POLICY,
   MockEvidence,
   aiOrder,
+  attributedOf,
+  automaticFieldsOf,
   evidenceCases,
   parseMockEvidenceConfig,
   questionWords,
@@ -80,11 +85,12 @@ function undo(server: MockEvidence, from: EvidencePage, filters: BriefFilters, r
   return undoReply(server, from, filters, restore, n).search;
 }
 
-/** The configurations the tests use: the server's defaults, what live runs, and the others the evaluation may pick. */
+/** The configurations the tests use: the server's defaults, what live runs, the attributed policy, and the others the evaluation may pick. */
 const CONFIGS: Record<string, MockEvidenceConfig> = {
   baseline: MOCK_EVIDENCE_BASELINE,
   release: MOCK_EVIDENCE_RELEASE,
   statePolicy: MOCK_EVIDENCE_STATE_POLICY,
+  fieldsPolicy: MOCK_EVIDENCE_FIELDS_POLICY,
   questionTermsAiOrderState: { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.3' },
   termsState: { ranking: 'er-t-v1', autoFilters: 'state-explicit.v1.3' },
   questionAiOrder: { ranking: 'er-q-h100-v1', autoFilters: 'none' },
@@ -437,6 +443,28 @@ describe('the reviewed state policy, off on live: the question alone, in match o
   });
 });
 
+describe('the attributed policy, not on live: live’s ranking with the state, years and aircraft category the question names applied', () => {
+  it('discloses the three, keeps the rest suggested, and takes out any whole one for free, once', () => {
+    const server = new MockEvidence({ config: MOCK_EVIDENCE_FIELDS_POLICY });
+    const page = results(server, MOCK_EVIDENCE_QUESTIONS.fields);
+    const automatic = { state: ['TX'], yearFrom: 2008, category: ['HELI'] };
+    expect([page.automaticFilters, page.appliedFilters, page.query]).toEqual([automatic, automatic, { source: 'question', keywords: { kind: 'question' } }]);
+    expect([page.order, page.marks, page.freeUndo, page.undo]).toEqual(['ai_relevance', 'search_words', false, 'available']);
+    // The phase and the terms stay a suggestion; what was applied is not suggested again.
+    expect(page.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'power loss' });
+    // Every case meets the three, and its relevance facts say so.
+    const cases = readAll(server, page);
+    expect(cases.map((c) => c.case.ntsbNo).sort()).toEqual(['CEN19FA024', 'DFW08TA066']);
+    expect(cases.map((c) => [...c.relevance.filters].sort())).toEqual([['category', 'state', 'years'], ['category', 'state', 'years']]);
+    // A question naming a state alone gets the state alone.
+    expect(results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms, 2).automaticFilters).toEqual({ state: ['TX'] });
+    // Taking the years out is the free undo, once.
+    const undone = undoReply(server, page, { state: ['TX'], category: ['HELI'] }, false, 3);
+    expect([undone.exempt, undone.reply.quotaExempt, undone.search.freeUndo, undone.search.automaticFilters]).toEqual([true, true, true, null]);
+    expect((server.read(page.id, 1).body as EvidencePage).undo).toBe('used');
+  });
+});
+
 describe('what live runs: the question alone, the leading results in AI order, the reader’s words marked, nothing applied on its own', () => {
   it('discloses AI order only; a state the question names stays in the suggestion; nothing to undo', () => {
     const server = new MockEvidence({ config: MOCK_EVIDENCE_RELEASE });
@@ -447,6 +475,29 @@ describe('what live runs: the question alone, the leading results in AI order, t
     const named = results(server, MOCK_EVIDENCE_QUESTIONS.stateMarked, 3);
     expect([named.automaticFilters, named.appliedFilters, named.undo]).toEqual([null, {}, 'none']);
     expect(named.suggestion?.filters.state).toEqual(['MO']);
+  });
+});
+
+describe('each policy applies only the fields the server says it may (`aiAutomaticFilters`)', () => {
+  it('every policy has the fields of the server’s registry (server/evidence/auto-filters.ts)', () => {
+    for (const version of EVIDENCE_AUTO_FILTER_VERSIONS) expect(automaticFieldsOf(version), version).toEqual([...registeredFields(autoFilterPolicy(version))]);
+    expect(automaticFieldsOf('attributed.v1')).toEqual(['state', 'years', 'category']);
+  });
+
+  it('an attributed policy applies the suggested values of its fields only; the suggestion keeps the rest, in order', () => {
+    const suggested: BriefFilters = { category: ['HELI'], phase: ['approach'], state: ['TX'], yearFrom: 2008, yearTo: 2010 };
+    expect(attributedOf(suggested, ['state', 'years', 'category'])).toEqual({ automatic: { state: ['TX'], yearFrom: 2008, yearTo: 2010, category: ['HELI'] }, rest: { phase: ['approach'] } });
+    // A variant with fewer fields: the others stay suggested where the scope put them.
+    const state = attributedOf(suggested, ['state']);
+    expect(state).toEqual({ automatic: { state: ['TX'] }, rest: { category: ['HELI'], phase: ['approach'], yearFrom: 2008, yearTo: 2010 } });
+    expect(Object.keys(state?.rest ?? {})).toEqual(['category', 'phase', 'yearFrom', 'yearTo']);
+    // The years are one field: both bounds, or the one suggested.
+    expect(attributedOf(suggested, ['years'])).toEqual({ automatic: { yearFrom: 2008, yearTo: 2010 }, rest: { category: ['HELI'], phase: ['approach'], state: ['TX'] } });
+    expect(attributedOf({ yearTo: 1999 }, ['years'])).toEqual({ automatic: { yearTo: 1999 }, rest: {} });
+    expect(attributedOf(suggested, ['category', 'state'])).toEqual({ automatic: { state: ['TX'], category: ['HELI'] }, rest: { phase: ['approach'], yearFrom: 2008, yearTo: 2010 } });
+    // Nothing of its fields suggested, or no fields: nothing applied.
+    expect(attributedOf({ phase: ['approach'], state: ['TX'] }, ['years', 'category'])).toBeNull();
+    expect(attributedOf(suggested, [])).toBeNull();
   });
 });
 

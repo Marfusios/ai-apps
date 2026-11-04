@@ -556,15 +556,18 @@ separate evaluation and gate review; sizing is not an approval to spend or deplo
 
 Automatic filtering has its own frozen identity, separate from every evaluated ranking
 configuration. Saved searches record `autoFilterPolicy` (version/sha256),
-`automaticFilters` and `autoFilterReason`; only the applied state set is public.
+`automaticFilters` and `autoFilterReason` (and, under `attributed.v1`, `autoFilterFields` and
+`attributionOutcome`); only the applied automatic filters are public.
 The fitted `addedTerms` suffix is saved once and drives disclosure. Failed attempts
 retain actual automatic state/filters in private diagnostics, never logs or traces.
 The automatic policy binds `state-probes.v5` outputs as well as the guard version.
 Cache identities for an automatic-filter experiment must include both policy identities,
 the question, explicit edit and pinned corpus. The scope.e3 wire schema is unchanged.
-`none` remains the default and rollback. The reviewed `state-explicit.v1.3` is also
-allowed on live; the operator enables it explicitly. The live ranking allowlist
-is `er-q-v1` and `er-q-h50-v1`, and ranking hashes are unchanged. v1.3 is v1.1 plus five
+`none` remains the default and rollback. Live allows `none` and `attributed.v1-state` (Task 30) and
+runs `attributed.v1-state` since 4 November 2026;
+`state-explicit.v1.3` is dev-only since the 2026-10-25 security re-check. The live ranking
+allowlist is `er-q-v1` and `er-q-h50-v1`; Task 30's 15-second scope timeout changed the
+ranking hashes. v1.3 is v1.1 plus five
 rejection rules (DESIGN), including reference position and attribution at every
 location mention. v1.1/v1.2 were never deployed and are no longer accepted settings.
 The offline fixture of 1,040 recorded C answers reproduces the controller's
@@ -588,3 +591,90 @@ A page discloses actual lexical keywords, `order` (AI grades applied versus matc
 Quota-free undo still reserves and settles real provider spend, counts rate-limit attempts,
 and appears in the cost ledger. Its original parent's write-once reservation claim prevents
 reuse with another idempotency key or after sign-in. It is not a paid-call exemption.
+
+### Automatic filters attributed to the accident (Task 30)
+
+Task 30 measured `attributed.v1` (DESIGN "Automatic filters attributed to the accident") with the
+harness in `evals/auto-filters/` (README there), on the shared dev ledger, through the production
+`rankEvidence` and spend gate. The protocol and the per-field decision rule were written before any
+paid call; Codex's design review shaped them.
+
+**Question sets.** The *development family* could be used to find and fix problems: 622 written probes
+(two independent writers, the review-24 counterexamples and Codex's 150 adversarial probes), the 1,040
+recorded Field test C answers (state) and the 1,600 C2 year and category questions. The *confirmation
+family* was never used for any change: 1,644 fresh questions by six independent writers (per field 330
+traps, where a value is named but must not be applied, and 212–222 positives), each gold label checked
+blind by a labeller of the other model family, disagreements dropped, frozen with its sha256 before the
+first confirmation call. Forced runs make the scope suggest exactly the named values (the worst case,
+three samples each); end-to-end runs use the real scope.e3 (one sample).
+
+**Decision rule (per field, on the confirmation forced run).** A trap question fails when any sample
+applies that field; the one-sided 95% exact upper bound on trap failures must be at most 1% (at least
+299 traps with none failing). Precision over applications, counted per question, needs a one-sided 95%
+exact lower bound of at least 98% (at least 149 applications with none wrong). Any unsafe application on
+a review-24 probe in the development runs vetoes the field. End-to-end recall below 50% is reported as
+"not useful" (a report, not a veto). Missing or mismatched evidence keeps a field off.
+
+**Results with the final rules** (policy identity `5c0448bf…`, three fields; question-level counts):
+
+| Run | State | Years | Category |
+| --- | --- | --- | --- |
+| Confirmation, forced: failed traps | 0 / 348 (UB 0.86%) | 0 / 358 (UB 0.83%) | 4 / 347 (UB 2.62%) |
+| Confirmation, forced: wrong applications | 0 / 200 (LB 98.5%) | 0 / 197 (LB 98.5%) | 4 / 216 (LB 95.8%) |
+| Confirmation, end to end: wrong applications | 0 / 162 | 1 / 162 | 1 / 170 |
+| Confirmation recall, forced / end to end | 62.8% / 52.6% | 58.6% / 46.9% | 66.0% / 55.4% |
+| Development (622 probes), forced and end to end: wrong samples | 0 | 0 | 0 |
+| Recorded Field test C (state) / C2 (years, category): wrong applications | 0 of 205 | 0 of 282 | 0 of 234 |
+| **Decision** | **passes** | **passes the rule; "not useful"** | **fails: stays a suggestion** |
+
+The category traps that failed were a "lighted helicopter pad", a crash "a news helicopter filmed",
+"even a blimp would count" and parts "for a tiltrotor program". The one wrong end-to-end year read
+"nothing after 2010" as 2011 onwards. These confirmation failures were not used to change anything.
+Earlier development rounds (prompts attr.a1 and attr.a2) had 31 and then 1 wrong development item;
+each fix round was reviewed. Recall is the price of the conservative refusals: the recorded state
+answers drop from 365 (v1.3's regex guard) to 205 correct applications, with no wrong one either way.
+
+**The state-only release candidate.** Only `attributed.v1-state` (the same rules, prompt and settings
+with the state field alone) is on the live allowlist. Years stay a suggestion: they passed the forced
+rule, but the wrong end-to-end year range above is a real failure of both locks. Codex's re-checks then
+found request-coverage gaps in the state rules, using approving mock checks (a postal code or "U.S."
+ending a sentence before a second request, an unmapped city in lower case, "nationwide, Ohio
+included"). Fix rounds 8 to 10 answer them by refusing more. Round 8 (`d1d5f480…`) was confirmed on the
+same frozen set from the integration branch. Rounds 9 and 10 only remove candidates: a unit test checks
+that their candidates on the 2,421 fingerprint questions are a subset of the previous round's. So the
+recorded round-8 samples were replayed through the final rules. A sample either keeps its identical
+model input, and with it the recorded answer, or loses its candidate (174 of the 6,091 samples with a
+usable scope did; none gained or changed one). Codex verified the subset and the replay independently.
+
+| `attributed.v1-state`, confirmation | Round 8, measured | Final rules (`4af506c9…`), exact replay |
+| --- | --- | --- |
+| Forced: failed traps | 0 / 348 (UB 0.86%) | 0 / 348 (UB 0.86%) |
+| Forced: wrong applications | 0 / 192 (LB 98.45%) | 0 / 176 (LB 98.31%) |
+| End to end: wrong applications | 0 / 164 | 0 / 151 (LB 98.04%) |
+| Recall of the 308 positives, forced / end to end | 61.6% / 53.2% | 57.1% / 49.0% |
+| Development, forced and end to end: wrong samples | 0 (247 and 242 correct) | (refusals only: none added) |
+
+The final rules pass the pre-registered safety rule, with end-to-end recall just under the 50% "useful"
+label (a report, not a veto). The replay is replayed evidence, not a new model sample.
+
+**Retrieval.** On Task 29's sets, the live ranking with automatic filters raised narrow recall@20 from
+30.1% to 67.9% on the 12 development questions (three samples) and from 20.8% to 52.8% on the 24 fresh
+ones, against 71.9% and 44.9% after one click on "Apply these filters" (rules of fix round 5; with the
+final rules 8 of 111 searches change, and the fresh figure becomes about 50.0%). These were three-field
+filters. The state-only candidate was measured with the round-9 identity (`510c8c43…`); all 103
+of its automatic searches with a case-search scope give identical attribution inputs and decisions
+under the final rules, so the result holds exactly for `4af506c9…`:
+
+| Narrow recall@20 | No filters (QH50) | State applied automatically | One click on all suggested filters |
+| --- | --- | --- | --- |
+| Development, 12 questions, three samples | 29.8% | 60.1% (+30.3, 95% interval 9.1 to 52.6) | 69.6% |
+| Fresh, 24 questions | 19.4% | 47.9% (+28.5, 95% interval 9.7 to 50.0) | 50.7% |
+
+Broad P@10 rose on the development set (28.9% to 40.7%) and stayed level on the fresh one (8.8% and
+8.3%). The automatic state applied in 37 of 63 and 18 of 48 searches. The run cost $1.15.
+
+**Monitoring.** After enabling, watch the private `autoFilterFields` mix per field, `attributionOutcome`
+failures, the `evidence.attribution` spans (latency, cost) and free-undo claims relative to searches
+with automatic filters. Removals are a precision signal, not a labelled estimate. Questions, quotes and
+filter values stay out of logs and traces.
+

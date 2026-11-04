@@ -1,0 +1,12 @@
+{
+  "version": "task24-fields-c2-verification-v1",
+  "passed": true,
+  "questions": 1600,
+  "independentSeedCases": 1600,
+  "issues": [],
+  "hashes": {
+    "corpus": "f71ddcae244e1a0c04510cd4adbeaa6472eab0f599259f36c695f8c9b7fab595",
+    "fields": "7dfdf59ab386bee17645f3c3f073dcd3af700aa1ef6cda7c6ab7aa5f8ae3eca6",
+    "exclusions": "c25da9a322810ceec45fa3272af73ed17d1c6bfde62a2e8365699a8195927f6b"
+  }
+}

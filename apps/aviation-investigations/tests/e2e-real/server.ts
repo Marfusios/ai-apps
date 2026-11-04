@@ -31,6 +31,12 @@
  * the search is done, so the checklist's reads of the search's progress see each stage under way and
  * then the finished search; nothing of this is in production code.
  *
+ * A fourth app, http://127.0.0.1:E2E_REAL_FIELDS_PORT (default E2E_REAL_PORT + 5), runs the
+ * attributed policy (Task 30, `attributed.v1`) on live's ranking (`er-q-h50-v1`), for
+ * tests/e2e-real/evidence-attributed.spec.ts: the state, years and aircraft category a question names
+ * are applied on their own once the deterministic candidate rules and the (fake, scripted) attribution
+ * check pass each value, and are stored through migration 0030's guard.
+ *
  * It resets aviation_test's corpus and control tables, so do not run it alongside
  * `pnpm test:integration`.
  */
@@ -51,7 +57,7 @@ import { deleteIndices, fixtureEmbedder, FIXTURE_EMBEDDING, publishFixtureDatase
 import { APP_DIR } from '../support/extract-dir.js';
 import { FakeSiteverify } from '../support/fake-siteverify.js';
 import { resetControls, testDb, testEs, testEsReader } from '../integration/helpers.js';
-import { E2E_ADMIN_EMAIL, E2E_GOOGLE_CLIENT, e2eEvidenceScope, e2eRerank } from './evidence-fakes.js';
+import { E2E_ADMIN_EMAIL, E2E_GOOGLE_CLIENT, e2eAttribution, e2eEvidenceScope, e2eRerank } from './evidence-fakes.js';
 
 const port = Number(process.env.E2E_REAL_PORT) || 5181;
 const appUrl = `http://127.0.0.1:${port}`;
@@ -59,6 +65,8 @@ const v3Port = Number(process.env.E2E_REAL_V3_PORT) || port + 3;
 const v3Url = `http://127.0.0.1:${v3Port}`;
 const livePort = Number(process.env.E2E_REAL_LIVE_PORT) || port + 4;
 const liveUrl = `http://127.0.0.1:${livePort}`;
+const fieldsPort = Number(process.env.E2E_REAL_FIELDS_PORT) || port + 5;
+const fieldsUrl = `http://127.0.0.1:${fieldsPort}`;
 const googleUrl = `http://localhost:${Number(process.env.E2E_GOOGLE_PORT) || 5183}`;
 const prefix = `aviation-test-e2e${randomBytes(4).toString('hex')}`;
 const webRoot = join(APP_DIR, 'dist/web');
@@ -97,6 +105,11 @@ const liveConfig = loadConfig({
     BETTER_AUTH_SECRET: 'e2e-real-better-auth-secret-0123456789abcdef',
     AIRCASE_ADMIN_EMAILS: E2E_ADMIN_EMAIL,
   },
+});
+// The attributed policy on live's ranking.
+const fieldsConfig = loadConfig({
+  files: [],
+  env: { ...env, APP_URL: fieldsUrl, AVIATION_EVIDENCE_RANKING: 'er-q-h50-v1', AVIATION_EVIDENCE_AUTO_FILTERS: 'attributed.v1' },
 });
 
 // The live app's sign-in exchanges its codes with the stand-in for Google, in the sign-in server's
@@ -205,6 +218,8 @@ const liveApp = await serve(liveConfig, livePort, {
   holdEvidenceAnswerMs: 1_200,
 });
 console.log(`e2e live-configuration server on ${liveUrl} (er-q-h50-v1, none; Google sign-in, admin ${E2E_ADMIN_EMAIL})`);
+const fieldsApp = await serve(fieldsConfig, fieldsPort, { llm: { evidenceScope: e2eEvidenceScope, rerank: e2eRerank, evidenceAttribution: e2eAttribution } });
+console.log(`e2e attributed-policy server on ${fieldsUrl} (er-q-h50-v1, attributed.v1)`);
 const app = await serve(config, port);
 console.log(`e2e server on ${appUrl}, AI evidence search on (offline fakes)`);
 
@@ -212,7 +227,7 @@ let closing = false;
 async function shutdown(): Promise<void> {
   if (closing) return;
   closing = true;
-  await Promise.all([app.close().catch(() => undefined), v3App.close().catch(() => undefined), liveApp.close().catch(() => undefined)]);
+  await Promise.all([app.close().catch(() => undefined), v3App.close().catch(() => undefined), liveApp.close().catch(() => undefined), fieldsApp.close().catch(() => undefined)]);
   await deleteIndices(writer, prefix).catch(() => undefined);
   await Promise.allSettled([closeDb(db), writer.close(), reader.close()]);
   process.exit(0);

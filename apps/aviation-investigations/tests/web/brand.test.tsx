@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SITE_DESCRIPTION } from '../../shared/brand';
 import { pageTitle, type TitledPage } from '../../shared/page-titles';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
-import { MOCK_EVIDENCE_RELEASE } from '../../web/mock/evidence';
+import { MOCK_EVIDENCE_FIELDS_POLICY, MOCK_EVIDENCE_RELEASE } from '../../web/mock/evidence';
 import { createHandlers } from '../../web/src/mocks/handlers';
 import indexHtml from '../../web/index.html?raw';
 import { Footer } from '../../web/src/components/Footer';
@@ -198,6 +198,31 @@ describe('the About page words its AI line for what the evidence policy applies 
       ),
     );
     expect(main.textContent).not.toContain('AI suggests filters you can choose to apply');
+  });
+
+  it('a US state, years or aircraft type the question sets, when the policy applies years or an aircraft category too (Task 30)', async () => {
+    server.use(...createHandlers({ evidence: MOCK_EVIDENCE_FIELDS_POLICY }));
+    renderApp('/about');
+    const main = await screen.findByRole('main');
+    await waitFor(() =>
+      expect(main.textContent).toContain(
+        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state, years or aircraft type your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.',
+      ),
+    );
+    expect(main.textContent).not.toContain('A US state your question names explicitly');
+    expect(main.textContent).not.toContain('AI suggests filters you can choose to apply');
+  });
+
+  it('only the fields the configuration reports, when a policy applies fewer of them (Task 30)', async () => {
+    server.use(...createHandlers({ evidence: MOCK_EVIDENCE_FIELDS_POLICY, aiAutomaticFilters: ['state', 'years'] }));
+    renderApp('/about');
+    const main = await screen.findByRole('main');
+    await waitFor(() =>
+      expect(main.textContent).toContain(
+        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state or years your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.',
+      ),
+    );
+    expect(main.textContent).not.toContain('aircraft type');
   });
 
   it('a server that does not report the policy: the configuration still reads, and the line claims nothing applied', async () => {

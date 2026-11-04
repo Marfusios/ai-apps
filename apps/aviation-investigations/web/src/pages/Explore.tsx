@@ -22,6 +22,7 @@ import { cx } from '../lib/cx';
 import { formatCount, plural } from '../lib/format';
 import { AiNoticeBox } from '../features/ai/AiNoticeBox';
 import { AskAiButton } from '../features/ai/AskAiButton';
+import { automaticFieldsSentence } from '../features/ai/automatic-fields';
 import { SearchWait } from '../features/evidence/SearchWait';
 import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { CaseDrawer, type DrawerPosition } from '../features/case/CaseDrawer';
@@ -39,21 +40,28 @@ import {
 } from '../features/explore/url-state';
 
 /**
- * The quiet AI nudge under the results (UI_DESIGN §4.2, Task 23, Task 24; Builder copy for the
- * owner's review): what an AI search does, never a promise to explain or group the results. It
+ * The quiet AI nudge under the results (UI_DESIGN §4.2, Task 23, Task 24, Task 30; Builder copy for
+ * the owner's review): what an AI search does, never a promise to explain or group the results. It
  * searches with the question alone (contract `evidence.v3`), so the nudge also says when the
  * filters set here stay behind. What the AI does with filters follows the server's evidence policy
  * (`/api/config` `aiAutomaticFilters`): it only suggests them (`AI_NUDGE`, also while the
  * configuration or the field is unknown), or a US state the question names explicitly can be
- * applied (the guard may abstain), which can be removed, and the rest is suggested (`AI_NUDGE_STATE`).
+ * applied (the guard may abstain), which can be removed, and the rest is suggested
+ * (`AI_NUDGE_STATE`), or, when the policy applies years or an aircraft category too (Task 30), the
+ * fields it reports (a US state, years or aircraft type) the question sets for the accidents can be
+ * applied (an AI check may abstain), which can be removed, and the rest is suggested: `AI_NUDGE_FIELDS`
+ * for all three, else the same sentence naming only the reported fields (features/ai/automatic-fields.ts).
  */
 export const AI_NUDGE = 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.';
 export const AI_NUDGE_STATE =
   'Ask in plain English: AirCase searches with your question. A US state it names explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.';
+export const AI_NUDGE_FIELDS =
+  'Ask in plain English: AirCase searches with your question. A US state, years or aircraft type your question sets for the accidents can be applied automatically, and you can remove them; everything else AI suggests stays a suggestion.';
 export const AI_NUDGE_FILTERS = 'It searches the question alone, not the filters set here.';
 
 /** The nudge's sentence for the fields the evidence policy applies on its own (unknown: the cautious one). */
 export function aiNudge(automatic: ClientConfig['aiAutomaticFilters']): string {
+  if (automatic?.includes('years') || automatic?.includes('category')) return `Ask in plain English: AirCase searches with your question. ${automaticFieldsSentence(automatic)}`;
   return automatic?.includes('state') ? AI_NUDGE_STATE : AI_NUDGE;
 }
 

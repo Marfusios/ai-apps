@@ -1,0 +1,320 @@
+{
+  "version": "task24-confirmation2-power-v1",
+  "source": "spent confirmation 1, paired group differences, QH100 minus Q0",
+  "planningLimitation": "QH50 may have different effects; this sizes at the observed confirmation-1 effects as authorized. Normal between-group planning approximation, not a population guarantee or a changed test.",
+  "simulationSeedBase": 2026102505,
+  "trialsPerSize": 100000,
+  "narrow": {
+    "narrowR20": {
+      "groups": {
+        "g13": 0.0,
+        "g14": 0.3333333333333333,
+        "g15": 0,
+        "g16": -0.4166666666666667,
+        "g17": 0,
+        "g18": 0,
+        "g19": 0.5,
+        "g20": 0,
+        "g21": 0,
+        "g22": 0.3333333333333333,
+        "g23": 0.2222222222222222,
+        "g24": 0
+      },
+      "mean": 0.08101851851851852,
+      "sd": 0.23672923644525534
+    },
+    "narrowR10": {
+      "groups": {
+        "g13": -0.25,
+        "g14": 0.16666666666666666,
+        "g15": 0,
+        "g16": -0.25,
+        "g17": 0,
+        "g18": 0,
+        "g19": 0.25,
+        "g20": 0,
+        "g21": 0,
+        "g22": 0.3333333333333333,
+        "g23": 0.05555555555555555,
+        "g24": 0.5
+      },
+      "mean": 0.06712962962962962,
+      "sd": 0.21854865540058505
+    }
+  },
+  "curve": [
+    {
+      "groupsPerClass": 4,
+      "power": {
+        "narrowR20": 0.13487,
+        "narrowR20Point": 0.60179,
+        "narrowR20Interval": 0.13524,
+        "narrowR10": 0.15593,
+        "narrowR10Point": 0.79027,
+        "narrowR10Interval": 0.15593
+      },
+      "simulationLower95": {
+        "narrowR20": 0.1330930947637235,
+        "narrowR20Point": 0.5992434953903925,
+        "narrowR20Interval": 0.13346103960390357,
+        "narrowR10": 0.15404279110807395,
+        "narrowR10Point": 0.7881522049515692,
+        "narrowR10Interval": 0.15404279110807395
+      }
+    },
+    {
+      "groupsPerClass": 8,
+      "power": {
+        "narrowR20": 0.22162,
+        "narrowR20Point": 0.64444,
+        "narrowR20Interval": 0.22165,
+        "narrowR10": 0.26787,
+        "narrowR10Point": 0.86819,
+        "narrowR10Interval": 0.26787
+      },
+      "simulationLower95": {
+        "narrowR20": 0.21945944059515138,
+        "narrowR20Point": 0.6419499183061081,
+        "narrowR20Interval": 0.21948933600495835,
+        "narrowR10": 0.26556632057950724,
+        "narrowR10Point": 0.8664302641897816,
+        "narrowR10Interval": 0.26556632057950724
+      }
+    },
+    {
+      "groupsPerClass": 12,
+      "power": {
+        "narrowR20": 0.29543,
+        "narrowR20Point": 0.67382,
+        "narrowR20Interval": 0.29546,
+        "narrowR10": 0.36714,
+        "narrowR10Point": 0.91739,
+        "narrowR10Interval": 0.36714
+      },
+      "simulationLower95": {
+        "narrowR20": 0.29305668560608067,
+        "narrowR20Point": 0.6713812543083979,
+        "narrowR20Interval": 0.29308661563775457,
+        "narrowR10": 0.36463253097106285,
+        "narrowR10Point": 0.9159579465949306,
+        "narrowR10Interval": 0.36463253097106285
+      }
+    },
+    {
+      "groupsPerClass": 16,
+      "power": {
+        "narrowR20": 0.36785,
+        "narrowR20Point": 0.69953,
+        "narrowR20Interval": 0.36786,
+        "narrowR10": 0.44979,
+        "narrowR10Point": 0.94503,
+        "narrowR10Interval": 0.44979
+      },
+      "simulationLower95": {
+        "narrowR20": 0.36534151589416153,
+        "narrowR20Point": 0.6971451029688075,
+        "narrowR20Interval": 0.3653515016390719,
+        "narrowR10": 0.4472021741912577,
+        "narrowR10Point": 0.9438443634786662,
+        "narrowR10Interval": 0.4472021741912577
+      }
+    },
+    {
+      "groupsPerClass": 20,
+      "power": {
+        "narrowR20": 0.43393,
+        "narrowR20Point": 0.72203,
+        "narrowR20Interval": 0.43398,
+        "narrowR10": 0.52972,
+        "narrowR10Point": 0.96302,
+        "narrowR10Interval": 0.52972
+      },
+      "simulationLower95": {
+        "narrowR20": 0.43135183439599106,
+        "narrowR20Point": 0.7196995355243823,
+        "narrowR20Interval": 0.43140179973603365,
+        "narrowR10": 0.5271236254573586,
+        "narrowR10Point": 0.9620383266321755,
+        "narrowR10Interval": 0.5271236254573586
+      }
+    },
+    {
+      "groupsPerClass": 24,
+      "power": {
+        "narrowR20": 0.49349,
+        "narrowR20Point": 0.74255,
+        "narrowR20Interval": 0.49358,
+        "narrowR10": 0.59883,
+        "narrowR10Point": 0.97373,
+        "narrowR10Interval": 0.59883
+      },
+      "simulationLower95": {
+        "narrowR20": 0.49088924709287884,
+        "narrowR20Point": 0.7402755562449855,
+        "narrowR20Interval": 0.49097924103886736,
+        "narrowR10": 0.5962803421688933,
+        "narrowR10Point": 0.9728980155410719,
+        "narrowR10Interval": 0.5962803421688933
+      }
+    },
+    {
+      "groupsPerClass": 28,
+      "power": {
+        "narrowR20": 0.5469,
+        "narrowR20Point": 0.75618,
+        "narrowR20Interval": 0.54698,
+        "narrowR10": 0.66097,
+        "narrowR10Point": 0.98284,
+        "narrowR10Interval": 0.66097
+      },
+      "simulationLower95": {
+        "narrowR20": 0.5443104941584354,
+        "narrowR20Point": 0.7539463600991637,
+        "narrowR20Interval": 0.544390533400448,
+        "narrowR10": 0.6585075022563642,
+        "narrowR10Point": 0.9821644368443679,
+        "narrowR10Interval": 0.6585075022563642
+      }
+    },
+    {
+      "groupsPerClass": 32,
+      "power": {
+        "narrowR20": 0.59726,
+        "narrowR20Point": 0.77067,
+        "narrowR20Interval": 0.59744,
+        "narrowR10": 0.71582,
+        "narrowR10Point": 0.98785,
+        "narrowR10Interval": 0.71582
+      },
+      "simulationLower95": {
+        "narrowR20": 0.5947087089818158,
+        "narrowR20Point": 0.7684830917419325,
+        "narrowR20Interval": 0.5948888948461606,
+        "narrowR10": 0.7134738024796945,
+        "narrowR10Point": 0.9872800988368635,
+        "narrowR10Interval": 0.7134738024796945
+      }
+    },
+    {
+      "groupsPerClass": 36,
+      "power": {
+        "narrowR20": 0.6417,
+        "narrowR20Point": 0.78114,
+        "narrowR20Interval": 0.64199,
+        "narrowR10": 0.75741,
+        "narrowR10Point": 0.99161,
+        "narrowR10Interval": 0.75741
+      },
+      "simulationLower95": {
+        "narrowR20": 0.6392056618679743,
+        "narrowR20Point": 0.778989133088985,
+        "narrowR20Interval": 0.6394961081684636,
+        "narrowR10": 0.7551801899583515,
+        "narrowR10Point": 0.9911355206330345,
+        "narrowR10Interval": 0.7551801899583515
+      }
+    },
+    {
+      "groupsPerClass": 40,
+      "power": {
+        "narrowR20": 0.6841,
+        "narrowR20Point": 0.79488,
+        "narrowR20Interval": 0.68474,
+        "narrowR10": 0.79853,
+        "narrowR10Point": 0.9938,
+        "narrowR10Interval": 0.79853
+      },
+      "simulationLower95": {
+        "narrowR20": 0.6816817538197699,
+        "narrowR20Point": 0.7927795096477769,
+        "narrowR20Interval": 0.6823230749265798,
+        "narrowR10": 0.7964435080479413,
+        "narrowR10Point": 0.9933916700427473,
+        "narrowR10Interval": 0.7964435080479413
+      }
+    },
+    {
+      "groupsPerClass": 44,
+      "power": {
+        "narrowR20": 0.72041,
+        "narrowR20Point": 0.80586,
+        "narrowR20Interval": 0.72148,
+        "narrowR10": 0.83205,
+        "narrowR10Point": 0.99593,
+        "narrowR10Interval": 0.83205
+      },
+      "simulationLower95": {
+        "narrowR20": 0.7180753779359237,
+        "narrowR20Point": 0.8038024366539912,
+        "narrowR20Interval": 0.7191481197516965,
+        "narrowR10": 0.8301053984891373,
+        "narrowR10Point": 0.9955988097719365,
+        "narrowR10Interval": 0.8301053984891373
+      }
+    },
+    {
+      "groupsPerClass": 48,
+      "power": {
+        "narrowR20": 0.75234,
+        "narrowR20Point": 0.81749,
+        "narrowR20Interval": 0.75447,
+        "narrowR10": 0.86006,
+        "narrowR10Point": 0.99696,
+        "narrowR10Interval": 0.86006
+      },
+      "simulationLower95": {
+        "narrowR20": 0.7500945628017255,
+        "narrowR20Point": 0.8154806737439334,
+        "narrowR20Interval": 0.7522310769267121,
+        "narrowR10": 0.8582553158171627,
+        "narrowR10Point": 0.9966736207409856,
+        "narrowR10Interval": 0.8582553158171627
+      }
+    },
+    {
+      "groupsPerClass": 52,
+      "power": {
+        "narrowR20": 0.78026,
+        "narrowR20Point": 0.8266,
+        "narrowR20Interval": 0.78428,
+        "narrowR10": 0.8827,
+        "narrowR10Point": 0.99787,
+        "narrowR10Interval": 0.8827
+      },
+      "simulationLower95": {
+        "narrowR20": 0.7781060276003794,
+        "narrowR20Point": 0.8246305808827195,
+        "narrowR20Interval": 0.7821403305880775,
+        "narrowR10": 0.8810261309795037,
+        "narrowR10Point": 0.9976301759752407,
+        "narrowR10Interval": 0.8810261309795037
+      }
+    },
+    {
+      "groupsPerClass": 56,
+      "power": {
+        "narrowR20": 0.80564,
+        "narrowR20Point": 0.83614,
+        "narrowR20Interval": 0.81214,
+        "narrowR10": 0.90403,
+        "narrowR10Point": 0.99844,
+        "narrowR10Interval": 0.90403
+      },
+      "simulationLower95": {
+        "narrowR20": 0.8035815522017132,
+        "narrowR20Point": 0.8342145072949244,
+        "narrowR20Interval": 0.8101081178650869,
+        "narrowR10": 0.9024977660847032,
+        "narrowR10Point": 0.9982346998875412,
+        "narrowR10Interval": 0.9024977660847032
+      }
+    }
+  ],
+  "requiredGroupsPerClass": 56,
+  "requiredPerAreaClass": 14,
+  "questions": 224,
+  "searches": 1344,
+  "worstBlockMicros": 7728000,
+  "phaseCapMicros": 8000000,
+  "unchangedTest": "Question mean of 3 samples, two paraphrases per group, 10000 connected-group bootstrap resamples; R20 delta>=.05 and one-sided lower>0; R10 delta and lower>-.02."
+}

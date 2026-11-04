@@ -6,7 +6,7 @@ import type { QuotaBudgets } from '../quota/policy.js';
 import type { SpendLine } from '../quota/settle.js';
 import { createLedgerSpendGate, type SpendGate, type SpendReservation } from '../../worker/index/spend-gate.js';
 
-export type RankingStage = 'scope' | 'embed' | 'rerank';
+export type RankingStage = 'scope' | 'embed' | 'rerank' | 'attribution';
 export interface RankingCall { stage: RankingStage; provider: LlmProviderName; model: string; worstCaseUsd: number }
 export interface RankingSpendGate {
   reserve(call: RankingCall): Promise<unknown>;

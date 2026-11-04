@@ -7,7 +7,7 @@ import { BRIEF_FILTER_FACETS, BriefFiltersSchema, IdempotencyKeySchema, Question
 import { US_STATE_CODES } from '../vocab.js';
 import { ReportLinkSchema } from './cases.js';
 import { NtsbNoSchema, Sha256Schema } from './common.js';
-import { CaseRowSchema, SectionKindSchema, SpanSchema } from './search.js';
+import { CaseRowSchema, FACET_VALUES, SectionKindSchema, SpanSchema } from './search.js';
 
 export const EVIDENCE_CONTRACT_VERSION = 'evidence.v3';
 export const EVIDENCE_PAGE_SIZE = 10;
@@ -55,7 +55,16 @@ export const EvidenceTermsSchema = z.string().min(1).max(MAX_TERMS_CHARS).regex(
 export const EvidenceScopeSuggestionSchema = z.strictObject({ filters: BriefFiltersSchema, terms: EvidenceTermsSchema });
 export type EvidenceScopeSuggestion = z.infer<typeof EvidenceScopeSuggestionSchema>;
 export const EvidenceSuggestionSchema = z.strictObject({ filters: BriefFiltersSchema, terms: EvidenceTermsSchema.nullable() });
-export const EvidenceAutomaticFiltersSchema = z.strictObject({ state: z.array(z.enum(US_STATE_CODES)).min(1).max(US_STATE_CODES.length) });
+const AutomaticYear = z.number().int().min(1900).max(2100);
+const automaticCategories = FACET_VALUES.category as readonly string[] as [string, ...string[]];
+/** What the active policy applied on its own: a state set, an event-year range, an aircraft category set (at least one). */
+export const EvidenceAutomaticFiltersSchema = z.strictObject({
+  state: z.array(z.enum(US_STATE_CODES)).min(1).max(US_STATE_CODES.length).optional(),
+  yearFrom: AutomaticYear.optional(),
+  yearTo: AutomaticYear.optional(),
+  category: z.array(z.enum(automaticCategories)).min(1).max(automaticCategories.length).optional(),
+}).refine(f => f.state !== undefined || f.yearFrom !== undefined || f.yearTo !== undefined || f.category !== undefined, 'no automatic filter')
+  .refine(f => f.yearFrom === undefined || f.yearTo === undefined || f.yearFrom <= f.yearTo, 'yearFrom must not be after yearTo');
 export type EvidenceAutomaticFilters = z.infer<typeof EvidenceAutomaticFiltersSchema>;
 export const EvidenceKeywordsSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('question') }),

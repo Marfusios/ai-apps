@@ -27,10 +27,15 @@
 import { runRerankPreflight } from './rerank-preflight.js';
 import { evidenceReservation } from '../server/evidence/pricing.js';
 import type { EvidenceRankingConfig } from '../server/evidence/ranking-config.js';
+import { attributionStage, type EvidenceAutoFilterPolicy } from '../server/evidence/auto-filters.js';
+import { attributionInput } from '../server/evidence/attribution.js';
+import { ATTRIBUTION_VERSION, renderAttributionUser } from '../server/ai/prompts/attribution.a2.js';
+import { AUTOMATIC_MAX_CATEGORIES, AUTOMATIC_MAX_STATES, AUTOMATIC_QUESTION_MAX_CHARS, CATEGORY_WORDS } from '../shared/automatic-candidates.js';
+import { AIRCRAFT_CATEGORY, US_STATE, US_STATE_CODES } from '../shared/vocab.js';
 import { FACET_VALUES } from '../shared/contracts/search.js';
 import { BRIEF_FILTER_FACETS } from '../shared/contracts/briefs.js';
 import { EVIDENCE_SCOPE_CAPS } from '../server/ai/pricing.js';
-import { evidenceScopeCtx } from '../server/ai/provider.js';
+import { ATTRIBUTION_MODEL, evidenceAttributionCtx, evidenceScopeCtx } from '../server/ai/provider.js';
 import { EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from '../server/ai/prompts/scope.e1.js';
 import { createHash } from 'node:crypto';
 import { MAX_BRIEF_CASES, MAX_BRIEF_PASSAGES, QUESTION_MAX_CHARS, type ComposeOutput } from '../shared/contracts/briefs.js';
@@ -420,11 +425,39 @@ export function evidencePreflightRequests() {
   };
 }
 
+/**
+ * The attribution check at its largest: a 600-character question (longer ones are never
+ * candidates; Latin, and dense text the provider counts with more tokens) and the most values
+ * one check takes: the eight longest state labels, the longest year value and the three longest
+ * category labels. The output holds one check per value with the longest `about` and
+ * 160-character quotes. Never truncated to fit.
+ */
+export function attributionPreflightRequests() {
+  const longest = (codes: readonly string[], label: (code: string) => string, n: number) =>
+    [...codes].sort((a, b) => label(b).length - label(a).length || a.localeCompare(b)).slice(0, n);
+  // Witnesses do not reach the check's input.
+  const most = [
+    { field: 'state' as const, state: longest(US_STATE_CODES, code => US_STATE[code]!, AUTOMATIC_MAX_STATES), witnesses: [] },
+    { field: 'years' as const, yearTo: 1999, witnesses: [] },
+    { field: 'category' as const, category: longest(Object.keys(CATEGORY_WORDS), code => AIRCRAFT_CATEGORY[code]!, AUTOMATIC_MAX_CATEGORIES), witnesses: [] },
+  ];
+  const dense = '整備直後に発動機の出力が低下し、操縦士は農地に不時着した。'.repeat(30).slice(0, AUTOMATIC_QUESTION_MAX_CHARS);
+  const latin = attributionInput(exactly(AUTOMATIC_QUESTION_MAX_CHARS), most);
+  return {
+    fixed: attributionInput('Find helicopter accidents in Ohio.', [{ field: 'state', state: ['OH'], witnesses: [] }]),
+    worst: [
+      { label: `most values, ${AUTOMATIC_QUESTION_MAX_CHARS}-character Latin question`, latin: true, input: latin },
+      { label: `most values, ${AUTOMATIC_QUESTION_MAX_CHARS}-character dense question`, latin: false, input: attributionInput(dense, most) },
+    ],
+    output: JSON.stringify({ result: { checks: latin.candidates.map((c, i) => ({ id: c.id, about: 'departure_or_destination', quote: exactly(160, i) })) } }),
+  };
+}
+
 /** The provider's token counter for a plain user message (an output counted as text). */
 export type TextCounter = (model: string, text: string) => Promise<number>;
 
 export interface PreflightRow {
-  stage: 'scope' | 'answer' | 'check' | 'rerank';
+  stage: 'scope' | 'answer' | 'check' | 'rerank' | 'attribution';
   model: string;
   request: string;
   tokens: number;
@@ -433,16 +466,17 @@ export interface PreflightRow {
 }
 
 /** Count every request and output against its cap. `countText` counts a plain user message. */
-export async function runAiPreflight(provider: LlmProvider, countText: TextCounter, models: StageModels, evidence?: { embeddingModel: string; reservationUsd: number; ranking?: EvidenceRankingConfig }): Promise<PreflightRow[]> {
+export async function runAiPreflight(provider: LlmProvider, countText: TextCounter, models: StageModels,
+  evidence?: { embeddingModel: string; reservationUsd: number; ranking?: EvidenceRankingConfig; autoFilters?: EvidenceAutoFilterPolicy }): Promise<PreflightRow[]> {
   if (provider.countEvidenceScopeTokens) {
     if (!evidence) throw new Error('evidence preflight requires the configured embedding model and reservation');
-    const worst = evidenceReservation(models.scope, evidence.embeddingModel, evidence.ranking).worstCaseUsd;
+    const worst = evidenceReservation(models.scope, evidence.embeddingModel, evidence.ranking, evidence.autoFilters).worstCaseUsd;
     if (!Number.isFinite(evidence.reservationUsd) || evidence.reservationUsd < worst) throw new Error('evidence reservation too small');
   }
   const r = preflightRequests();
   const rows: PreflightRow[] = [];
   const ctx = (stage: LlmStage) => stageCtx(stage, AbortSignal.timeout(30_000), 30_000);
-  const add = (stage: Exclude<PreflightRow['stage'], 'rerank'>, request: string, tokens: number, limit: number) =>
+  const add = (stage: Exclude<PreflightRow['stage'], 'rerank' | 'attribution'>, request: string, tokens: number, limit: number) =>
     rows.push({ stage, model: models[stage], request, tokens, limit, ok: tokens <= limit });
   const output = async (model: string, text: string) => (await countText(model, text)) - (await countText(model, '.')) + 1;
 
@@ -459,6 +493,20 @@ export async function runAiPreflight(provider: LlmProvider, countText: TextCount
       add('scope', `${EVIDENCE_SCOPE_VERSION}: ${w.label}`, await provider.countEvidenceScopeTokens(w.input, evidenceScopeCtx(AbortSignal.timeout(30_000), 30_000)), EVIDENCE_SCOPE_CAPS.input);
     }
     add('scope', `${EVIDENCE_SCOPE_VERSION}: output at its schema bounds`, await output(models.scope, e.output), EVIDENCE_SCOPE_CAPS.output);
+  }
+  // The configured automatic-filter policy's attribution check: the actual wire request at its largest.
+  const attribution = evidence?.autoFilters ? attributionStage(evidence.autoFilters) : null;
+  if (attribution) {
+    if (!provider.countEvidenceAttributionTokens) throw new Error('attribution token counter unavailable');
+    const a = attributionPreflightRequests();
+    const ctx = () => evidenceAttributionCtx(AbortSignal.timeout(30_000), 30_000);
+    const row = (request: string, tokens: number, limit: number) =>
+      rows.push({ stage: 'attribution', model: ATTRIBUTION_MODEL, request: `${ATTRIBUTION_VERSION}: ${request}`, tokens, limit, ok: tokens <= limit });
+    const fixed = await provider.countEvidenceAttributionTokens(a.fixed, ctx());
+    row('fixed prompt + schema', fixed, attribution.caps.input);
+    row('cached prefix', Math.max(0, fixed - await countText(ATTRIBUTION_MODEL, renderAttributionUser(a.fixed))), CACHED_PREFIX_MAX);
+    for (const w of a.worst) row(w.label, await provider.countEvidenceAttributionTokens(w.input, ctx()), attribution.caps.input);
+    row('output at its schema bounds', await output(ATTRIBUTION_MODEL, a.output), attribution.caps.output);
   }
   const scopeFixed = await provider.countInputTokens('scope', r.fixed.scope, ctx('scope'));
   add('scope', 'fixed (system prompt + schema)', scopeFixed, STAGE_CAPS.scope.input);

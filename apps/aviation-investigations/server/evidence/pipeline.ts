@@ -1,10 +1,14 @@
-/** The sole scope → retrieve → rerank entry point for HTTP and evaluation. No HTTP or quota identity. */
-import { automaticState, assertAutoFilterPolicy, autoFilterPolicy, autoFilterIdentity, type EvidenceAutoFilterPolicy, type AutoFilterReason } from './auto-filters.js';
+/** The sole scope → (attribution) → retrieve → rerank entry point for HTTP and evaluation. No HTTP or quota identity. */
+import { attributionStage, automaticFieldsOf, automaticState, assertAutoFilterPolicy, autoFilterPolicy, autoFilterIdentity, type EvidenceAutoFilterPolicy, type AutoFilterReason } from './auto-filters.js';
+import { attributedFilters, attributionInput, checkedAttribution, type AutoFieldReason } from './attribution.js';
+import { attributionWorstCaseUsd } from './pricing.js';
 import type { RerankInput } from '../ai/prompts/rerank.r1.js';
+import type { AttributionOutput } from '../ai/prompts/attribution.a2.js';
 import type { EvidenceNote, EvidenceScopeSuggestion, EvidenceAutomaticFilters } from '../../shared/contracts/evidence.js';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
+import { automaticCandidates, type AutomaticField } from '../../shared/automatic-candidates.js';
 import { fitQueryText } from '../briefs/retriever.js';
-import { evidenceScopeCtx, StageError, type LlmProvider, type StageResult } from '../ai/provider.js';
+import { evidenceAttributionCtx, evidenceScopeCtx, StageError, type LlmProvider, type StageResult } from '../ai/provider.js';
 import { validateEvidenceScope } from '../ai/prompts/scope.e1.js';
 import { QueryEmbeddingError } from '../ai/embeddings.js';
 import { embeddingCostUsd, embeddingWorstCaseUsd, stageCostUsd, stageWorstCaseUsd, STAGE_CAPS } from '../ai/pricing.js';
@@ -22,6 +26,8 @@ export type LexicalSource = 'question' | 'terms' | 'question+terms' | 'fallback_
 export interface ExecutedTexts { lexical: string; vector: string }
 export type RerankOutcome = 'not_run' | 'disabled' | 'empty' | 'applied' | 'skipped_uncertain_allowance' | RankingFailureOutcome;
 export type ScopeOutcome = 'used' | 'non_search' | 'skipped' | RankingFailureOutcome;
+/** The attribution check: not run (no candidate, or not an attributed policy), answered, or failed. */
+export type AttributionOutcome = 'not_run' | 'applied' | RankingFailureOutcome;
 export type RankingPhase = 'scope' | 'retrieval' | 'rerank';
 export interface RankingExecution {
   executed: ExecutedTexts;
@@ -32,14 +38,23 @@ export interface RankingExecution {
   automaticFilters: EvidenceAutomaticFilters | null;
   autoFilterPolicy: ReturnType<typeof autoFilterIdentity>;
   autoFilterReason: AutoFilterReason;
+  /** Private, enums only: why each of an attributed policy's fields was or was not applied. */
+  autoFilterFields: Partial<Record<AutomaticField, AutoFieldReason>>;
+  /** Private: what the attribution check did. */
+  attributionOutcome: AttributionOutcome;
 }
 export interface RankingObserver {
   onQuestion?: (result: 'suggestions' | 'note' | 'nothing_to_suggest' | 'unavailable', failed: boolean) => void;
   onRetrieved?: (cases: number) => void;
   onOrdered?: (applied: boolean, skipped: boolean) => void;
   onExecution?: (execution: RankingExecution) => void;
+  /**
+   * Private, enums only: an attributed policy's facts once its decision is made and any check has
+   * settled, so a search that then stops or fails still records what the check did.
+   */
+  onAttribution?: (facts: Pick<RankingExecution, 'attributionOutcome' | 'autoFilterFields'>) => void;
   onStage?: (stage: RankingPhase) => void;
-  onFallback?: (failure: { stage: 'scope' | 'rerank'; outcome: RankingFailureOutcome }) => void;
+  onFallback?: (failure: { stage: 'scope' | 'rerank' | 'attribution'; outcome: RankingFailureOutcome }) => void;
 }
 export interface RankingInput {
   question: string;
@@ -104,8 +119,9 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
   assertEvidenceRanking(config);
   const policy = input.autoFilters ?? autoFilterPolicy();
   assertAutoFilterPolicy(policy);
+  const attribution = attributionStage(policy);
   const skipScope = input.skipScope || input.uncertainAllowanceReached;
-  if ((!input.edited && !skipScope && !providers.llm.evidenceScope) ||
+  if ((!input.edited && !skipScope && (!providers.llm.evidenceScope || attribution && !providers.llm.evidenceAttribution)) ||
       providers.llm.models.scope !== config.scope.model) throw new RankingFailure('scope', []);
   if (providers.embeddingModel !== config.embedding.model) throw new RankingFailure('retrieve', []);
   if (config.rerank && !input.uncertainAllowanceReached && !providers.llm.rerank) throw new RankingFailure('rerank', []);
@@ -115,7 +131,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
   const configuration = evidenceRankingIdentity(config);
   // Observability cannot change dispatch, ordering or accounting, even if a logger fails.
   const enter = (stage: RankingPhase) => { try { observer.onStage?.(stage); } catch { /* metadata only */ } };
-  const fallback = (stage: 'scope' | 'rerank', outcome: RankingFailureOutcome) => {
+  const fallback = (stage: 'scope' | 'rerank' | 'attribution', outcome: RankingFailureOutcome) => {
     try { observer.onFallback?.({ stage, outcome }); } catch { /* metadata only */ }
   };
   const guard = async () => {
@@ -127,14 +143,15 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
     usage.push(...lines);
     try { await spend.settle(ticket, lines); } catch { throw new RankingFailure('spend', [...usage]); }
   };
-  async function metered<T>(call: RankingCall & { stage: 'scope' | 'rerank' }, run: () => Promise<StageResult<T>>): Promise<StageResult<T>> {
+  const promptVersion = (stage: 'scope' | 'rerank' | 'attribution') =>
+    stage === 'scope' ? config.scope.version : stage === 'rerank' ? config.rerank!.prompt.version : attribution!.prompt.version;
+  async function metered<T>(call: RankingCall & { stage: 'scope' | 'rerank' | 'attribution' }, run: () => Promise<StageResult<T>>): Promise<StageResult<T>> {
     const ticket = await reserve(call);
     let started = false, result: StageResult<T> | undefined, failure: unknown;
     try { await guard(); started = true; result = await run(); }
     catch (err) {
       failure = !started || err instanceof StageError ? err : new StageError('unexpected', {
-        stage: call.stage, provider: call.provider, model: call.model,
-        promptVersion: call.stage === 'scope' ? config.scope.version : config.rerank!.prompt.version,
+        stage: call.stage, provider: call.provider, model: call.model, promptVersion: promptVersion(call.stage),
         billing: { kind: 'uncertain' },
       });
     }
@@ -145,7 +162,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
       if (!validUsage || result.model !== call.model || result.provider !== call.provider ||
           !Number.isFinite(stageCostUsd(call.model, u)) || stageCostUsd(call.model, u) > call.worstCaseUsd + 1e-9) {
         failure = new StageError('invalid_output', { stage: call.stage,
-          provider: call.provider, model: call.model, promptVersion: call.stage === 'scope' ? config.scope.version : config.rerank!.prompt.version,
+          provider: call.provider, model: call.model, promptVersion: promptVersion(call.stage),
           billing: { kind: 'uncertain' } });
         result = undefined;
       }
@@ -178,11 +195,56 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
     }
   }
   const { executed, lexicalSource, addedTerms = null } = input.edited ?? rankingTexts(input.question, suggestion?.terms ?? null, config);
-  const automatic = automaticState(policy, input.question, suggestion?.filters ?? null, Boolean(input.edited), scopeOutcome === 'non_search');
+  let automatic: { filters: EvidenceAutomaticFilters | null; reason: AutoFilterReason };
+  let autoFilterFields: Partial<Record<AutomaticField, AutoFieldReason>> = {};
+  let attributionOutcome: AttributionOutcome = 'not_run';
+  if (!attribution) automatic = automaticState(policy, input.question, suggestion?.filters ?? null, Boolean(input.edited), scopeOutcome === 'non_search');
+  else if (input.edited) automatic = { filters: null, reason: 'edited' };
+  else if (!suggestion) automatic = { filters: null, reason: scopeOutcome === 'non_search' ? 'non_search' : 'scope_unavailable' };
+  else {
+    // Still the scope phase: candidates, then at most one attribution check, metered like scope.
+    const fields = automaticFieldsOf(policy);
+    const { candidates, reasons } = automaticCandidates(input.question, suggestion.filters, input.filters, fields);
+    let answer: AttributionOutput | null = null, stopped = false;
+    if (candidates.length) {
+      const request = attributionInput(input.question, candidates);
+      attributionOutcome = await stageSpan('evidence.attribution', { stage: 'attribution', model: attribution.model, provider: llm.name, promptVersion: attribution.prompt.version }, async span => {
+        try {
+          const result = await metered({ stage: 'attribution', provider: llm.name, model: attribution.model, worstCaseUsd: attributionWorstCaseUsd(attribution) },
+            () => llm.evidenceAttribution!(request, evidenceAttributionCtx(AbortSignal.any([input.signal, AbortSignal.timeout(attribution.timeoutMs)]), attribution.timeoutMs)));
+          span.setAttrs({ ...result.usage, usd: stageCostUsd(result.model, result.usage) });
+          // A structurally incomplete answer applies nothing at all; its known usage stays settled.
+          answer = checkedAttribution(request, result.output);
+          const outcome = answer ? 'applied' as const : 'invalid_output' as const;
+          span.setAttrs({ outcome }); return outcome;
+        } catch (error) {
+          if (error instanceof RankingFailure) throw error;
+          stopped = error instanceof RankingStopped;
+          const outcome = rankingFailureOutcome(error, input.signal);
+          const line = usage.findLast(l => l.stage === 'attribution');
+          span.setAttrs({ ...(line?.tokens ?? {}), usd: line?.usd ?? 0, outcome });
+          if (stopped) span.markStopped();
+          return outcome;
+        }
+      });
+      if (attributionOutcome !== 'applied') fallback('attribution', attributionOutcome);
+    }
+    const decision = attributedFilters(input.question, candidates, answer);
+    autoFilterFields = Object.fromEntries(fields.map(f => [f, decision.fields[f] ?? `not_candidate:${reasons[f]}`]));
+    try { observer.onAttribution?.({ attributionOutcome, autoFilterFields: { ...autoFilterFields } }); } catch { /* private diagnostics only */ }
+    if (candidates.length) {
+      // A failed check is a fallback; a stopped search (deletion, shutdown, cancel) is not.
+      if (stopped) throw new RankingFailure('scope', [...usage]);
+      input.signal.throwIfAborted();
+    }
+    automatic = { filters: decision.filters, reason: decision.filters ? 'applied' : 'not_applied' };
+  }
   const appliedFilters = automatic.filters ? { ...input.filters, ...automatic.filters } : input.filters;
   if (automatic.filters && suggestion) {
-    const { state: _applied, ...filters } = suggestion.filters;
-    suggestion = { ...suggestion, filters };
+    // The suggestion loses exactly the applied facets: the state, both year bounds, the category.
+    const a = automatic.filters;
+    const applied = new Set([...(a.state ? ['state'] : []), ...(a.yearFrom !== undefined || a.yearTo !== undefined ? ['yearFrom', 'yearTo'] : []), ...(a.category ? ['category'] : [])]);
+    suggestion = { ...suggestion, filters: Object.fromEntries(Object.entries(suggestion.filters).filter(([key]) => !applied.has(key))) as BriefFilters };
   }
   // Use the page's disclosure rule: terms already executed as keywords and filters
   // already applied are no longer suggestions. Edited searches stay skipped.
@@ -194,7 +256,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
     } catch { /* progress is optional */ }
   }
   const execution: RankingExecution = { executed, lexicalSource, addedTerms, appliedFilters, automaticFilters: automatic.filters,
-    autoFilterPolicy: autoFilterIdentity(policy), autoFilterReason: automatic.reason };
+    autoFilterPolicy: autoFilterIdentity(policy), autoFilterReason: automatic.reason, autoFilterFields, attributionOutcome };
   enter('retrieval');
   try { await guard(); } catch { throw new RankingFailure('retrieve', [...usage]); }
   const embedding: RankingCall = { stage: 'embed', provider: 'openai', model: embeddingModel, worstCaseUsd: embeddingWorstCaseUsd(embeddingModel) };

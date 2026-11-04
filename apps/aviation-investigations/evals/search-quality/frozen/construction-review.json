@@ -1,0 +1,40 @@
+{
+  "version": "task24-construction-review-v1",
+  "checked": "2026-10-25",
+  "paidOutputsInspected": false,
+  "decisions": [
+    "All 48 labels independently re-derived with the existing Track C deriveQuestion implementation; no historical case was subtracted from gold.",
+    "24 different finding/event families, 24 connected groups, 12 narrow and 12 broad groups, six questions per area/class.",
+    "All eight first-page judge question IDs selected before retrieval, one per area/class.",
+    "Old dev/holdout positives and recorded retrieval/Track N candidates, calibration cases, scope questions, prompts and fixtures are excluded.",
+    "Task 10d full channel/candidate records cover the earlier Track C retrieval configuration at the same generation; raw corpus construction metadata alone is not treated as model exposure.",
+    "The explicit multi-state ORs in some broad predicates are necessary to retain at least 21 genuinely unexposed positives. They are complete predicates and visible in question wording; no gold filters enter execution.",
+    "Canonical finding dictionary labels are used; deprecated narrative description suffixes C/F are not interpreted as gold.",
+    "Shared aviation words such as fuel, oil and flight planning do not mean shared predicates: exact families and case memberships differ. No same-predicate rewording with only a changed state/year was admitted.",
+    "Generic/unknown finding families were rejected as ambiguous. Aircraft systems includes system components and fluids, not flight-performance measurements.",
+    "The field guard is deliberately conservative: 50 US states plus DC; territories, unknown/offshore codes and ambiguous place-only readings are unsupported.",
+    "All positive field values and additional OR members are backed by distinct real coded seed records. Controls intentionally have no positive target-field constraint.",
+    "Exact question duplicates were rejected during construction. Both raw and state/year-masked comparisons to prior questions used token Jaccard 0.70 and trigram Jaccard 0.80, with zero flags.",
+    "Within-set paraphrases and common wording families are declared, not counted as additional independent case groups. Field Wilson intervals describe the registered sampling distribution, not arbitrary public traffic."
+  ],
+  "caseOverlapWithPrior": 0,
+  "fieldCaseOverlapWithAB": 0,
+  "registeredStatePositive": 400,
+  "registeredStateControl": 400,
+  "guardOnConstructedGold": {
+    "appliedPositive": 378,
+    "abstainedPositive": 22,
+    "controlsWouldApply": 0
+  },
+  "fieldWordingFamilyMaximum": 34,
+  "goldVerificationSha256": "94778c2f2532f192a4f0883174db23007af059caf1570878742adbec2e56d5c5",
+  "scopePriceCheck": {
+    "checked": "2026-10-25",
+    "source": "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
+    "inputPerMTok": 0.1,
+    "outputPerMTok": 0.5,
+    "cacheWrite5mPerMTok": 0.125,
+    "cacheReadPerMTok": 0.01,
+    "longThreshold": 100000
+  }
+}

@@ -1,0 +1,4780 @@
+{
+  "version": "task24-confirmation2-feasibility-v1",
+  "requiredGroupsPerClass": 56,
+  "freshCasesInCorpus": 9956,
+  "cells": [
+    {
+      "area": "environment",
+      "class": "broad",
+      "required": 14,
+      "unexposedInterpretableFamilies": 109,
+      "eligiblePredicateUpperBound": 9,
+      "shortfallAtLeast": 5,
+      "feasibleFamilies": [
+        "03021015",
+        "03022020",
+        "03022045",
+        "03022060",
+        "03023010",
+        "03023020",
+        "03032020",
+        "03034035",
+        "03034040"
+      ],
+      "candidates": [
+        {
+          "family": "03021015",
+          "topic": "rough terrain",
+          "filters": {
+            "state": [
+              "AK",
+              "MT",
+              "NC",
+              "NE",
+              "SC",
+              "WY"
+            ],
+            "yearFrom": 2012,
+            "yearTo": 2014,
+            "category": [
+              "AIR"
+            ]
+          },
+          "relevant": [
+            "ANC12CA052",
+            "ANC12CA094",
+            "ANC13CA073",
+            "ANC13CA101",
+            "ANC13CA109",
+            "ANC14CA029",
+            "ANC14CA067",
+            "ANC14CA084",
+            "CEN14CA348",
+            "CEN14LA131",
+            "ERA12CA517",
+            "ERA14CA200",
+            "ERA14FA313",
+            "ERA15CA048",
+            "WPR13CA213",
+            "WPR13CA282",
+            "WPR13CA352",
+            "WPR13CA403",
+            "WPR13CA409",
+            "WPR13LA230",
+            "WPR15CA057"
+          ]
+        },
+        {
+          "family": "03022020",
+          "topic": "tree(s)",
+          "filters": {
+            "state": [
+              "CA",
+              "ID",
+              "KS",
+              "NC",
+              "SC"
+            ],
+            "yearFrom": 2018,
+            "yearTo": 2019,
+            "category": [
+              "AIR"
+            ]
+          },
+          "relevant": [
+            "CEN18LA148",
+            "GAA18CA095",
+            "GAA18CA191",
+            "GAA18CA306",
+            "GAA18CA323",
+            "GAA18CA394",
+            "GAA18CA405",
+            "GAA18CA467",
+            "GAA18CA528",
+            "GAA19CA098",
+            "GAA19CA161",
+            "GAA19CA280",
+            "GAA19CA323",
+            "GAA19CA365",
+            "GAA19CA377",
+            "GAA19CA421",
+            "GAA19CA446",
+            "GAA19CA499",
+            "GAA20CA001",
+            "GAA20CA066",
+            "GAA20CA087",
+            "WPR18LA233",
+            "WPR20CA055"
+          ]
+        },
+        {
+          "family": "03022045",
+          "topic": "animal(s)/bird(s)",
+          "filters": {
+            "state": [
+              "OH",
+              "VA",
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2019
+          },
+          "relevant": [
+            "CEN09CA515",
+            "CEN10CA202",
+            "CEN10CA460",
+            "CEN11CA586",
+            "CEN13CA031",
+            "CEN13CA215",
+            "CEN13CA528",
+            "CEN14CA088",
+            "CEN14CA209",
+            "CHI08CA095",
+            "CHI08CA192",
+            "ERA14CA097",
+            "ERA14CA412",
+            "GAA15CA241",
+            "GAA16CA396",
+            "GAA17CA244",
+            "GAA17CA420",
+            "GAA17CA438",
+            "GAA17CA446",
+            "GAA18CA150",
+            "GAA18CA349"
+          ]
+        },
+        {
+          "family": "03022060",
+          "topic": "snow/ice",
+          "filters": {
+            "state": [
+              "AK",
+              "CA",
+              "IA",
+              "ME",
+              "MT",
+              "NJ",
+              "PA"
+            ],
+            "yearFrom": 2013,
+            "yearTo": 2020
+          },
+          "relevant": [
+            "ANC19CA009",
+            "ANC20CA018",
+            "ANC20CA032",
+            "ANC20CA040",
+            "ERA14CA119",
+            "ERA14CA127",
+            "ERA21LA074",
+            "GAA16CA093",
+            "GAA17CA118",
+            "GAA17CA148",
+            "GAA17CA210",
+            "GAA18CA088",
+            "GAA18CA105",
+            "GAA18CA116",
+            "GAA18CA175",
+            "GAA18CA214",
+            "GAA19CA114",
+            "GAA19CA155",
+            "GAA19CA172",
+            "GAA19CA205",
+            "WPR14CA075"
+          ]
+        },
+        {
+          "family": "03023010",
+          "topic": "wet",
+          "filters": {
+            "state": [
+              "ID",
+              "IN",
+              "KY",
+              "ME",
+              "MT",
+              "NE",
+              "NY",
+              "SC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2023
+          },
+          "relevant": [
+            "CEN16CA360",
+            "CEN22LA142",
+            "CEN22LA408",
+            "ERA09CA010",
+            "ERA09CA112",
+            "ERA13CA231",
+            "ERA14CA238",
+            "ERA14CA407",
+            "GAA16CA353",
+            "GAA16CA470",
+            "GAA18CA139",
+            "GAA18CA467",
+            "GAA19CA350",
+            "MIA08CA124",
+            "WPR10CA329",
+            "WPR10CA346",
+            "WPR13CA271",
+            "WPR20CA250",
+            "WPR22LA315",
+            "WPR22LA319",
+            "WPR23LA246"
+          ]
+        },
+        {
+          "family": "03023020",
+          "topic": "soft",
+          "filters": {
+            "state": [
+              "AK",
+              "CA",
+              "CO",
+              "MI",
+              "OK"
+            ],
+            "yearFrom": 2020,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ANC20CA094",
+            "ANC21LA001",
+            "ANC21LA017",
+            "ANC21LA034",
+            "ANC21LA041",
+            "ANC22LA037",
+            "ANC23LA040",
+            "ANC23LA067",
+            "ANC23LA075",
+            "ANC25LA039",
+            "ANC25LA056",
+            "CEN20CA116",
+            "CEN20CA151",
+            "CEN21LA074",
+            "CEN21LA110",
+            "CEN21LA182",
+            "CEN23LA374",
+            "CEN24LA176",
+            "CEN26LA216",
+            "WPR23LA312",
+            "WPR24LA151"
+          ]
+        },
+        {
+          "family": "03032020",
+          "topic": "convective turbulence",
+          "filters": {
+            "state": [
+              "CA",
+              "FL",
+              "IL",
+              "LA",
+              "TN"
+            ],
+            "yearFrom": 2013,
+            "yearTo": 2023
+          },
+          "relevant": [
+            "DCA15CA050",
+            "DCA17CA101",
+            "DCA17LA183",
+            "DCA18CA055",
+            "DCA18CA316",
+            "DCA19CA091",
+            "DCA19CA208",
+            "DCA19CA213",
+            "DCA20CA038",
+            "DCA20CA058",
+            "DCA20CA122",
+            "DCA21LA176",
+            "DCA22LA001",
+            "DCA23LA050",
+            "DCA23LA107",
+            "DCA23LA175",
+            "DCA23LA213",
+            "DCA23LA378",
+            "DCA23LA477",
+            "ERA22LA404",
+            "GAA15CA276",
+            "WPR15LA239"
+          ]
+        },
+        {
+          "family": "03034035",
+          "topic": "downdraft",
+          "filters": {
+            "state": [
+              "AK",
+              "ID"
+            ],
+            "yearFrom": 2011,
+            "yearTo": 2022
+          },
+          "relevant": [
+            "ANC11CA050",
+            "ANC11CA058",
+            "ANC11CA098",
+            "ANC13CA028",
+            "ANC13FA024",
+            "ANC14CA043",
+            "ANC15CA024",
+            "ANC15CA051",
+            "ANC15CA054",
+            "GAA15CA268",
+            "GAA17CA421",
+            "GAA17CA440",
+            "GAA17CA473",
+            "GAA18CA301",
+            "GAA18CA488",
+            "GAA19CA529",
+            "WPR11CA342",
+            "WPR13CA401",
+            "WPR18LA227",
+            "WPR20CA095",
+            "WPR21LA056",
+            "WPR21LA360"
+          ]
+        },
+        {
+          "family": "03034040",
+          "topic": "crosswind",
+          "filters": {
+            "state": [
+              "ID",
+              "NM",
+              "NY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2014
+          },
+          "relevant": [
+            "CEN09CA011",
+            "CEN09CA101",
+            "CEN09CA235",
+            "CEN09CA301",
+            "CEN11CA409",
+            "CEN11CA423",
+            "CEN14CA246",
+            "CEN14CA386",
+            "DEN08CA164",
+            "ERA09CA160",
+            "ERA10CA341",
+            "ERA11CA270",
+            "ERA11CA404",
+            "ERA12CA320",
+            "ERA12CA359",
+            "ERA12CA475",
+            "WPR09CA233",
+            "WPR09CA444",
+            "WPR10CA425",
+            "WPR10CA444",
+            "WPR10LA457",
+            "WPR11CA414",
+            "WPR12CA028",
+            "WPR12CA170"
+          ]
+        }
+      ]
+    },
+    {
+      "area": "environment",
+      "class": "narrow",
+      "required": 14,
+      "unexposedInterpretableFamilies": 109,
+      "eligiblePredicateUpperBound": 86,
+      "shortfallAtLeast": 0,
+      "feasibleFamilies": [
+        "03011020",
+        "03012070",
+        "03013010",
+        "03013035",
+        "03014015",
+        "03014045",
+        "03014070",
+        "03016020",
+        "03017010",
+        "03017015",
+        "03017020",
+        "03017030",
+        "03017035",
+        "03017037",
+        "03017040",
+        "03017045",
+        "03017050",
+        "03017055",
+        "03017070",
+        "03017080",
+        "03021010",
+        "03021015",
+        "03021017",
+        "03021020",
+        "03021025",
+        "03021030",
+        "03021035",
+        "03022010",
+        "03022012",
+        "03022015",
+        "03022017",
+        "03022020",
+        "03022022",
+        "03022025",
+        "03022027",
+        "03022030",
+        "03022035",
+        "03022040",
+        "03022042",
+        "03022045",
+        "03022050",
+        "03022052",
+        "03022055",
+        "03022057",
+        "03022060",
+        "03023010",
+        "03023020",
+        "03023030",
+        "03031010",
+        "03031015",
+        "03031035",
+        "03031040",
+        "03032010",
+        "03032015",
+        "03032020",
+        "03032025",
+        "03033010",
+        "03033025",
+        "03033030",
+        "03034020",
+        "03034025",
+        "03034035",
+        "03034040",
+        "03034055",
+        "03034060",
+        "03035010",
+        "03035015",
+        "03035020",
+        "03035025",
+        "03035030",
+        "03035035",
+        "03035045",
+        "03035055",
+        "03035060",
+        "03035070",
+        "03036015",
+        "03036020",
+        "03036025",
+        "03036030",
+        "03041010",
+        "03041015",
+        "03041020",
+        "03041040",
+        "03041050",
+        "03042010",
+        "03042040"
+      ],
+      "candidates": [
+        {
+          "family": "03011020",
+          "topic": "gps",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN24LA380"
+          ]
+        },
+        {
+          "family": "03012070",
+          "topic": "visual approach aid",
+          "filters": {
+            "state": [
+              "WV"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA19CA525"
+          ]
+        },
+        {
+          "family": "03013010",
+          "topic": "meteo equip coverage/avail",
+          "filters": {
+            "state": [
+              "VA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA14CA185"
+          ]
+        },
+        {
+          "family": "03013035",
+          "topic": "other weather service",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR12CA086"
+          ]
+        },
+        {
+          "family": "03014015",
+          "topic": "approach control procedure",
+          "filters": {
+            "state": [
+              "KS"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN11FA302"
+          ]
+        },
+        {
+          "family": "03014045",
+          "topic": "missed approach procedure",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN13LA016"
+          ]
+        },
+        {
+          "family": "03014070",
+          "topic": "traffic congestion",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2009,
+            "yearTo": 2014
+          },
+          "relevant": [
+            "CEN10FA443"
+          ]
+        },
+        {
+          "family": "03016020",
+          "topic": "datalink",
+          "filters": {
+            "state": [
+              "MD"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "MIA08MA203"
+          ]
+        },
+        {
+          "family": "03017010",
+          "topic": "airport lighting",
+          "filters": {
+            "state": [
+              "CT"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA26LA015"
+          ]
+        },
+        {
+          "family": "03017015",
+          "topic": "runway lighting",
+          "filters": {
+            "state": [
+              "IL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA18CA069"
+          ]
+        },
+        {
+          "family": "03017020",
+          "topic": "taxiway lighting",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN13LA170"
+          ]
+        },
+        {
+          "family": "03017030",
+          "topic": "runway markings/signage",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA22LA433"
+          ]
+        },
+        {
+          "family": "03017035",
+          "topic": "runway/landing area condition",
+          "filters": {
+            "state": [
+              "WA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "LAX08CA216",
+            "WPR10FA384"
+          ]
+        },
+        {
+          "family": "03017037",
+          "topic": "runway/landing area length",
+          "filters": {
+            "state": [
+              "AK"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ANC08CA108",
+            "ANC10CA085",
+            "ANC10LA005",
+            "ANC14CA037"
+          ]
+        },
+        {
+          "family": "03017040",
+          "topic": "taxiway markings/signage",
+          "filters": {
+            "state": [
+              "IL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16CA280"
+          ]
+        },
+        {
+          "family": "03017045",
+          "topic": "taxiway condition",
+          "filters": {
+            "state": [
+              "TN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA15CA173"
+          ]
+        },
+        {
+          "family": "03017050",
+          "topic": "airport communication",
+          "filters": {
+            "state": [
+              "OK"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN23LA423"
+          ]
+        },
+        {
+          "family": "03017055",
+          "topic": "ramp facilities",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN11IA270"
+          ]
+        },
+        {
+          "family": "03017070",
+          "topic": "ground support/equipment",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR26LA182"
+          ]
+        },
+        {
+          "family": "03017080",
+          "topic": "security",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR12CA375"
+          ]
+        },
+        {
+          "family": "03021010",
+          "topic": "mountainous/hilly terrain",
+          "filters": {
+            "state": [
+              "NY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA13CA369",
+            "ERA22LA307",
+            "ERA22LA363"
+          ]
+        },
+        {
+          "family": "03021015",
+          "topic": "rough terrain",
+          "filters": {
+            "state": [
+              "SC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA10LA187",
+            "ERA14CA200",
+            "ERA15CA048",
+            "ERA22LA032"
+          ]
+        },
+        {
+          "family": "03021017",
+          "topic": "sloped/uneven",
+          "filters": {
+            "state": [
+              "NY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA13CA231",
+            "ERA14CA453",
+            "ERA16CA313"
+          ]
+        },
+        {
+          "family": "03021020",
+          "topic": "water",
+          "filters": {
+            "state": [
+              "MS"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN24LA112"
+          ]
+        },
+        {
+          "family": "03021025",
+          "topic": "high elevation",
+          "filters": {
+            "state": [
+              "AK"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ANC25LA064"
+          ]
+        },
+        {
+          "family": "03021030",
+          "topic": "snowy/icy",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN09CA121",
+            "CHI08CA074",
+            "GAA16CA093"
+          ]
+        },
+        {
+          "family": "03021035",
+          "topic": "wet/muddy",
+          "filters": {
+            "state": [
+              "NM"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA17CA044",
+            "WPR22LA178"
+          ]
+        },
+        {
+          "family": "03022010",
+          "topic": "pole",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN20LA401",
+            "CEN22LA074"
+          ]
+        },
+        {
+          "family": "03022012",
+          "topic": "runway/taxi/approach light",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CHI08CA107",
+            "GAA16CA334",
+            "GAA19CA330"
+          ]
+        },
+        {
+          "family": "03022015",
+          "topic": "sign/marker",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN10CA454",
+            "CEN18LA315",
+            "GAA18CA460",
+            "GAA19CA119"
+          ]
+        },
+        {
+          "family": "03022017",
+          "topic": "tower/antenna (incl guy wires)",
+          "filters": {
+            "state": [
+              "TN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA14CA040"
+          ]
+        },
+        {
+          "family": "03022020",
+          "topic": "tree(s)",
+          "filters": {
+            "state": [
+              "NE"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN17LA272",
+            "CEN25LA080"
+          ]
+        },
+        {
+          "family": "03022022",
+          "topic": "residence/building",
+          "filters": {
+            "state": [
+              "AZ"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "LAX08CA057",
+            "WPR24LA320"
+          ]
+        },
+        {
+          "family": "03022025",
+          "topic": "ground vehicle",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN15LA216",
+            "GAA20CA063"
+          ]
+        },
+        {
+          "family": "03022027",
+          "topic": "wall/barricade",
+          "filters": {
+            "state": [
+              "MO"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN15CA065"
+          ]
+        },
+        {
+          "family": "03022030",
+          "topic": "wind sock",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16CA415",
+            "GAA19CA122"
+          ]
+        },
+        {
+          "family": "03022035",
+          "topic": "person",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN15CA029"
+          ]
+        },
+        {
+          "family": "03022040",
+          "topic": "aircraft",
+          "filters": {
+            "state": [
+              "MD"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA13CA423",
+            "GAA17CA205",
+            "GAA19CA468"
+          ]
+        },
+        {
+          "family": "03022042",
+          "topic": "airport structure",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN20CA064",
+            "CEN20CA120",
+            "GAA18CA545"
+          ]
+        },
+        {
+          "family": "03022045",
+          "topic": "animal(s)/bird(s)",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN10CA460",
+            "CEN11CA586",
+            "CEN13CA528",
+            "CEN22LA441",
+            "CEN26LA035",
+            "CHI08CA192",
+            "GAA17CA244",
+            "GAA17CA420"
+          ]
+        },
+        {
+          "family": "03022050",
+          "topic": "ground equipment",
+          "filters": {
+            "state": [
+              "LA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16CA439"
+          ]
+        },
+        {
+          "family": "03022052",
+          "topic": "hidden/submerged object",
+          "filters": {
+            "state": [
+              "ME"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA19CA350",
+            "GAA19CA513"
+          ]
+        },
+        {
+          "family": "03022055",
+          "topic": "debris/dirt/foreign object",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN14CA362",
+            "CEN15LA242"
+          ]
+        },
+        {
+          "family": "03022057",
+          "topic": "water/moisture",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA19CA325"
+          ]
+        },
+        {
+          "family": "03022060",
+          "topic": "snow/ice",
+          "filters": {
+            "state": [
+              "MT"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR14CA075",
+            "WPR25LA074"
+          ]
+        },
+        {
+          "family": "03023010",
+          "topic": "wet",
+          "filters": {
+            "state": [
+              "NY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA09CA112",
+            "ERA13CA231",
+            "ERA14CA238",
+            "ERA24LA353"
+          ]
+        },
+        {
+          "family": "03023020",
+          "topic": "soft",
+          "filters": {
+            "state": [
+              "KS"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN20CA052",
+            "DEN08CA063",
+            "DFW08CA156",
+            "GAA15CA136",
+            "GAA16CA200"
+          ]
+        },
+        {
+          "family": "03023030",
+          "topic": "choppy",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN17LA283",
+            "CEN20CA348",
+            "CEN24LA255"
+          ]
+        },
+        {
+          "family": "03031010",
+          "topic": "low temperature",
+          "filters": {
+            "state": [
+              "AR"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN24FA095"
+          ]
+        },
+        {
+          "family": "03031015",
+          "topic": "high temperature",
+          "filters": {
+            "state": [
+              "NC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA24LA230",
+            "WPR21FA210"
+          ]
+        },
+        {
+          "family": "03031035",
+          "topic": "temperature inversion",
+          "filters": {
+            "state": [
+              "CO"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN25LA251"
+          ]
+        },
+        {
+          "family": "03031040",
+          "topic": "thermal lifting",
+          "filters": {
+            "state": [
+              "CO"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN13CA079"
+          ]
+        },
+        {
+          "family": "03032010",
+          "topic": "terrain induced turbulence",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16CA244"
+          ]
+        },
+        {
+          "family": "03032015",
+          "topic": "clear air turbulence",
+          "filters": {
+            "state": [
+              "NC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA16CA053",
+            "DCA24LA144",
+            "ERA13CA195"
+          ]
+        },
+        {
+          "family": "03032020",
+          "topic": "convective turbulence",
+          "filters": {
+            "state": [
+              "IL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA19CA208",
+            "DCA20CA122"
+          ]
+        },
+        {
+          "family": "03032025",
+          "topic": "wake turbulence",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN13FA438",
+            "WPR18FA200",
+            "WPR24LA253"
+          ]
+        },
+        {
+          "family": "03033010",
+          "topic": "thunderstorm",
+          "filters": {
+            "state": [
+              "NE"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA15CA131"
+          ]
+        },
+        {
+          "family": "03033025",
+          "topic": "lightning",
+          "filters": {
+            "state": [
+              "AK"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ANC11LA004"
+          ]
+        },
+        {
+          "family": "03033030",
+          "topic": "hail",
+          "filters": {
+            "state": [
+              "TN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA25LA197"
+          ]
+        },
+        {
+          "family": "03034020",
+          "topic": "windshear",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "LAX08CA237",
+            "WPR22LA212",
+            "WPR25LA198"
+          ]
+        },
+        {
+          "family": "03034025",
+          "topic": "variable wind",
+          "filters": {
+            "state": [
+              "AZ"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ANC25LA049",
+            "GAA17CA503",
+            "WPR11CA237",
+            "WPR14CA342",
+            "WPR21LA093"
+          ]
+        },
+        {
+          "family": "03034035",
+          "topic": "downdraft",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA17CA421",
+            "GAA18CA301",
+            "LAX08CA250",
+            "WPR09CA311",
+            "WPR11CA342",
+            "WPR13CA401",
+            "WPR18LA227",
+            "WPR20CA095",
+            "WPR21LA056",
+            "WPR21LA360",
+            "WPR24LA247"
+          ]
+        },
+        {
+          "family": "03034040",
+          "topic": "crosswind",
+          "filters": {
+            "state": [
+              "WY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA15LA025",
+            "GAA17CA141",
+            "GAA17CA192",
+            "GAA19CA285",
+            "GAA19CA575",
+            "WPR12CA068",
+            "WPR13FA405",
+            "WPR24LA242"
+          ]
+        },
+        {
+          "family": "03034055",
+          "topic": "high wind",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN09CA044",
+            "CEN11CA654",
+            "CEN11IA270",
+            "CEN13CA133"
+          ]
+        },
+        {
+          "family": "03034060",
+          "topic": "dust devil/whirlwind",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN25LA155",
+            "DFW08CA203"
+          ]
+        },
+        {
+          "family": "03035010",
+          "topic": "low ceiling",
+          "filters": {
+            "state": [
+              "OH"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN11FA401",
+            "CEN11FA629"
+          ]
+        },
+        {
+          "family": "03035015",
+          "topic": "low visibility",
+          "filters": {
+            "state": [
+              "NJ"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA09CA110",
+            "ERA20FA020"
+          ]
+        },
+        {
+          "family": "03035020",
+          "topic": "haze/smoke",
+          "filters": {
+            "state": [
+              "NH"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA21LA041"
+          ]
+        },
+        {
+          "family": "03035025",
+          "topic": "clouds",
+          "filters": {
+            "state": [
+              "IL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN20CA182"
+          ]
+        },
+        {
+          "family": "03035030",
+          "topic": "obscuration",
+          "filters": {
+            "state": [
+              "AZ"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR09LA125"
+          ]
+        },
+        {
+          "family": "03035035",
+          "topic": "rain",
+          "filters": {
+            "state": [
+              "IL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN09CA448"
+          ]
+        },
+        {
+          "family": "03035045",
+          "topic": "snow",
+          "filters": {
+            "state": [
+              "OR"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR12FA237"
+          ]
+        },
+        {
+          "family": "03035055",
+          "topic": "fog",
+          "filters": {
+            "state": [
+              "MD"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "MIA08MA203",
+            "NYC08LA310"
+          ]
+        },
+        {
+          "family": "03035060",
+          "topic": "whiteout",
+          "filters": {
+            "state": [
+              "NY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA15CA127"
+          ]
+        },
+        {
+          "family": "03035070",
+          "topic": "below approach minima",
+          "filters": {
+            "state": [
+              "SC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA21LA101"
+          ]
+        },
+        {
+          "family": "03036015",
+          "topic": "low light",
+          "filters": {
+            "state": [
+              "MT"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16CA097"
+          ]
+        },
+        {
+          "family": "03036020",
+          "topic": "dark",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2017,
+            "yearTo": 2017
+          },
+          "relevant": [
+            "GAA17CA559",
+            "GAA18CA048",
+            "WPR17LA092",
+            "WPR18FA035"
+          ]
+        },
+        {
+          "family": "03036025",
+          "topic": "flat light",
+          "filters": {
+            "state": [
+              "MT"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16CA097",
+            "GAA17CA225",
+            "WPR24LA090"
+          ]
+        },
+        {
+          "family": "03036030",
+          "topic": "glare",
+          "filters": {
+            "state": [
+              "MA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA12CA035",
+            "ERA21LA079",
+            "ERA23FA077"
+          ]
+        },
+        {
+          "family": "03041010",
+          "topic": "positioning/available space",
+          "filters": {
+            "state": [
+              "NY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA23LA114"
+          ]
+        },
+        {
+          "family": "03041015",
+          "topic": "access to equipment/controls",
+          "filters": {
+            "state": [
+              "KY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA09CA156"
+          ]
+        },
+        {
+          "family": "03041020",
+          "topic": "visibility",
+          "filters": {
+            "state": [
+              "GA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA19CA138"
+          ]
+        },
+        {
+          "family": "03041040",
+          "topic": "noise",
+          "filters": {
+            "state": [
+              "WA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR09CA283"
+          ]
+        },
+        {
+          "family": "03041050",
+          "topic": "controls and displays",
+          "filters": {
+            "state": [
+              "AK"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ANC14CA018"
+          ]
+        },
+        {
+          "family": "03042010",
+          "topic": "time/schedule pressure",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN26LA145"
+          ]
+        },
+        {
+          "family": "03042040",
+          "topic": "other pressure/demand",
+          "filters": {
+            "state": [
+              "MA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "OPS09IA008"
+          ]
+        }
+      ]
+    },
+    {
+      "area": "aircraft_systems",
+      "class": "broad",
+      "required": 14,
+      "unexposedInterpretableFamilies": 29,
+      "eligiblePredicateUpperBound": 0,
+      "shortfallAtLeast": 14,
+      "feasibleFamilies": [],
+      "candidates": []
+    },
+    {
+      "area": "aircraft_systems",
+      "class": "narrow",
+      "required": 14,
+      "unexposedInterpretableFamilies": 29,
+      "eligiblePredicateUpperBound": 20,
+      "shortfallAtLeast": 0,
+      "feasibleFamilies": [
+        "01022340",
+        "01022421",
+        "01022437",
+        "01022730",
+        "01022750",
+        "01023120",
+        "01023213",
+        "01023240",
+        "01023297",
+        "01023310",
+        "01035520",
+        "01035750",
+        "01035755",
+        "01046720",
+        "01057110",
+        "01057320",
+        "01057697",
+        "01058011",
+        "01058510",
+        "01071015"
+      ],
+      "candidates": [
+        {
+          "family": "01022340",
+          "topic": "communications system: interphone",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA22LA015"
+          ]
+        },
+        {
+          "family": "01022421",
+          "topic": "electrical power system: ac generator-alternator",
+          "filters": {
+            "state": [
+              "SC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA12LA450"
+          ]
+        },
+        {
+          "family": "01022437",
+          "topic": "electrical power system: dc indicating system",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA18TA263"
+          ]
+        },
+        {
+          "family": "01022730",
+          "topic": "flight control system: elevator control system",
+          "filters": {
+            "state": [
+              "AZ"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR11CA112",
+            "WPR11CA197",
+            "WPR20LA176"
+          ]
+        },
+        {
+          "family": "01022750",
+          "topic": "flight control system: te flap control system",
+          "filters": {
+            "state": [
+              "NY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA09CA112",
+            "ERA16LA286",
+            "ERA22LA363",
+            "ERA24LA224"
+          ]
+        },
+        {
+          "family": "01023120",
+          "topic": "indicating/recording systems: indep instrument (clock, etc)",
+          "filters": {
+            "state": [
+              "KS"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN10LA068"
+          ]
+        },
+        {
+          "family": "01023213",
+          "topic": "landing gear system: main gear strut/axle/truck",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA18CA203",
+            "WPR10LA457"
+          ]
+        },
+        {
+          "family": "01023240",
+          "topic": "landing gear system: landing gear brakes system",
+          "filters": {
+            "state": [
+              "WA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA18CA373",
+            "WPR09CA260",
+            "WPR11CA007"
+          ]
+        },
+        {
+          "family": "01023297",
+          "topic": "landing gear system: land gear sys wiring",
+          "filters": {
+            "state": [
+              "KY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA10LA103"
+          ]
+        },
+        {
+          "family": "01023310",
+          "topic": "lighting system: flight compartment lighting",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN13CA133"
+          ]
+        },
+        {
+          "family": "01035520",
+          "topic": "empennage structure: elevators",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN10IA084"
+          ]
+        },
+        {
+          "family": "01035750",
+          "topic": "wing structure: flight surfaces (wing)",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2021,
+            "yearTo": 2025
+          },
+          "relevant": [
+            "WPR22LA183"
+          ]
+        },
+        {
+          "family": "01035755",
+          "topic": "wing structure: spoilers",
+          "filters": {
+            "state": [
+              "WA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR12CA288"
+          ]
+        },
+        {
+          "family": "01046720",
+          "topic": "rotorcraft flight control: tail rotor control system",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16CA075"
+          ]
+        },
+        {
+          "family": "01057110",
+          "topic": "power plant: engine cowling system",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR20LA035"
+          ]
+        },
+        {
+          "family": "01057320",
+          "topic": "engine fuel and control: fuel controlling system",
+          "filters": {
+            "state": [
+              "VA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA25LA011"
+          ]
+        },
+        {
+          "family": "01057697",
+          "topic": "engine controls: eng cntl sys wiring",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA24LA200"
+          ]
+        },
+        {
+          "family": "01058011",
+          "topic": "engine starting: starter",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA22LA159"
+          ]
+        },
+        {
+          "family": "01058510",
+          "topic": "engine (reciprocating): recip eng front section",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN21LA138"
+          ]
+        },
+        {
+          "family": "01071015",
+          "topic": "fluids: hydraulic fluid",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2013,
+            "yearTo": 2017
+          },
+          "relevant": [
+            "WPR13LA274"
+          ]
+        }
+      ]
+    },
+    {
+      "area": "personnel",
+      "class": "broad",
+      "required": 14,
+      "unexposedInterpretableFamilies": 48,
+      "eligiblePredicateUpperBound": 1,
+      "shortfallAtLeast": 13,
+      "feasibleFamilies": [
+        "02063040"
+      ],
+      "candidates": [
+        {
+          "family": "02063040",
+          "topic": "use of equip/info: aircraft control",
+          "filters": {
+            "state": [
+              "FL",
+              "TX",
+              "WI"
+            ],
+            "yearFrom": 2026,
+            "yearTo": 2026,
+            "category": [
+              "AIR"
+            ]
+          },
+          "relevant": [
+            "CEN26LA077",
+            "CEN26LA092",
+            "CEN26LA105",
+            "CEN26LA120",
+            "CEN26LA121",
+            "CEN26LA125",
+            "CEN26LA138",
+            "CEN26LA139",
+            "CEN26LA157",
+            "CEN26LA182",
+            "CEN26LA193",
+            "CEN26LA195",
+            "CEN26LA196",
+            "CEN26LA198",
+            "CEN26LA212",
+            "CEN26LA244",
+            "DCA26LA142",
+            "ERA26LA090",
+            "ERA26LA131",
+            "ERA26LA184",
+            "ERA26LA203"
+          ]
+        }
+      ]
+    },
+    {
+      "area": "personnel",
+      "class": "narrow",
+      "required": 14,
+      "unexposedInterpretableFamilies": 48,
+      "eligiblePredicateUpperBound": 40,
+      "shortfallAtLeast": 0,
+      "feasibleFamilies": [
+        "02011030",
+        "02011530",
+        "02012020",
+        "02012030",
+        "02013015",
+        "02013020",
+        "02013035",
+        "02013510",
+        "02021020",
+        "02021025",
+        "02022015",
+        "02022025",
+        "02022035",
+        "02022040",
+        "02022515",
+        "02022520",
+        "02022525",
+        "02023015",
+        "02031015",
+        "02031020",
+        "02031030",
+        "02031035",
+        "02031050",
+        "02031510",
+        "02031515",
+        "02031525",
+        "02032020",
+        "02032025",
+        "02032035",
+        "02041020",
+        "02041045",
+        "02051015",
+        "02051035",
+        "02061015",
+        "02063010",
+        "02063030",
+        "02063040",
+        "02063525",
+        "02063538",
+        "02064020"
+      ],
+      "candidates": [
+        {
+          "family": "02011030",
+          "topic": "physical characteristic: physical limitation",
+          "filters": {
+            "state": [
+              "WA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR13LA360"
+          ]
+        },
+        {
+          "family": "02011530",
+          "topic": "sensory ability/limitation: vestibular function",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR22LA069"
+          ]
+        },
+        {
+          "family": "02012020",
+          "topic": "impairment/incapacitation: illicit drug",
+          "filters": {
+            "state": [
+              "AR"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN21LA107"
+          ]
+        },
+        {
+          "family": "02012030",
+          "topic": "impairment/incapacitation: otc medication",
+          "filters": {
+            "state": [
+              "NH"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA14FA417"
+          ]
+        },
+        {
+          "family": "02013015",
+          "topic": "health/fitness: diet",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DEN08LA096"
+          ]
+        },
+        {
+          "family": "02013020",
+          "topic": "health/fitness: use of medication/drugs",
+          "filters": {
+            "state": [
+              "OR"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR12FA274",
+            "WPR21FA233"
+          ]
+        },
+        {
+          "family": "02013035",
+          "topic": "health/fitness: predisposing condition",
+          "filters": {
+            "state": [
+              "NC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA10LA302",
+            "ERA15FA245"
+          ]
+        },
+        {
+          "family": "02013510",
+          "topic": "alertness/fatigue: lack of sleep",
+          "filters": {
+            "state": [
+              "AR"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN26LA033"
+          ]
+        },
+        {
+          "family": "02021020",
+          "topic": "personality/attitude: complacency",
+          "filters": {
+            "state": [
+              "MN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN13CA559"
+          ]
+        },
+        {
+          "family": "02021025",
+          "topic": "personality/attitude: motivation/respond to pressure",
+          "filters": {
+            "state": [
+              "NE"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16CA355",
+            "GAA18CA408"
+          ]
+        },
+        {
+          "family": "02022015",
+          "topic": "perception/orientation/illusion: visual illusion/disorientation",
+          "filters": {
+            "state": [
+              "WY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR11LA233",
+            "WPR25LA201"
+          ]
+        },
+        {
+          "family": "02022025",
+          "topic": "perception/orientation/illusion: spatial disorientation",
+          "filters": {
+            "state": [
+              "MD"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA09LA200",
+            "ERA20FA060"
+          ]
+        },
+        {
+          "family": "02022035",
+          "topic": "perception/orientation/illusion: situational awareness",
+          "filters": {
+            "state": [
+              "NC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA13LA075",
+            "GAA17CA546"
+          ]
+        },
+        {
+          "family": "02022040",
+          "topic": "perception/orientation/illusion: perception",
+          "filters": {
+            "state": [
+              "MO"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN17LA206",
+            "GAA15CA166"
+          ]
+        },
+        {
+          "family": "02022515",
+          "topic": "mental/emotional state: anxiety/panic",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN11FA433"
+          ]
+        },
+        {
+          "family": "02022520",
+          "topic": "mental/emotional state: confusion",
+          "filters": {
+            "state": [
+              "GA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA19CA138"
+          ]
+        },
+        {
+          "family": "02022525",
+          "topic": "mental/emotional state: boredom",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR23LA212"
+          ]
+        },
+        {
+          "family": "02023015",
+          "topic": "cognitive limitation: cognitive overload",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR26LA071"
+          ]
+        },
+        {
+          "family": "02031015",
+          "topic": "experience/qualifications: total experience",
+          "filters": {
+            "state": [
+              "SC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CHI08LA125",
+            "ERA09CA196"
+          ]
+        },
+        {
+          "family": "02031020",
+          "topic": "experience/qualifications: total experience in position",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA09LA458",
+            "ERA19FA112",
+            "ERA22LA108"
+          ]
+        },
+        {
+          "family": "02031030",
+          "topic": "experience/qualifications: total instrument experience",
+          "filters": {
+            "state": [
+              "AZ"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN20FA034"
+          ]
+        },
+        {
+          "family": "02031035",
+          "topic": "experience/qualifications: recent experience",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN09CA166",
+            "CEN10CA237",
+            "CEN26LA244"
+          ]
+        },
+        {
+          "family": "02031050",
+          "topic": "experience/qualifications: recent instrument experience",
+          "filters": {
+            "state": [
+              "MD"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "MIA08MA203"
+          ]
+        },
+        {
+          "family": "02031510",
+          "topic": "training: total instruct/training recvd",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN14FA140",
+            "CEN14FA145"
+          ]
+        },
+        {
+          "family": "02031515",
+          "topic": "training: initial instruct/training",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA22LA062"
+          ]
+        },
+        {
+          "family": "02031525",
+          "topic": "training: recent instruct/training recvd",
+          "filters": {
+            "state": [
+              "MO"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN14LA441"
+          ]
+        },
+        {
+          "family": "02032020",
+          "topic": "knowledge: knowledge of meteorologic cond",
+          "filters": {
+            "state": [
+              "CO"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN22LA110",
+            "CEN22LA130"
+          ]
+        },
+        {
+          "family": "02032025",
+          "topic": "knowledge: knowledge of regulatory reqs",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16LA199"
+          ]
+        },
+        {
+          "family": "02032035",
+          "topic": "knowledge: aeronautical knowledge",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA16LA199"
+          ]
+        },
+        {
+          "family": "02041020",
+          "topic": "action: incorrect action sequence",
+          "filters": {
+            "state": [
+              "NM"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN14CA488",
+            "CEN15TA017"
+          ]
+        },
+        {
+          "family": "02041045",
+          "topic": "action: unneccessary action",
+          "filters": {
+            "state": [
+              "NY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA13CA090",
+            "ERA22LA228"
+          ]
+        },
+        {
+          "family": "02051015",
+          "topic": "intentional act: suicide",
+          "filters": {
+            "state": [
+              "TN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA24LA346"
+          ]
+        },
+        {
+          "family": "02051035",
+          "topic": "intentional act: interference",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA21LA293"
+          ]
+        },
+        {
+          "family": "02061015",
+          "topic": "planning/preparation: weight/balance calculations",
+          "filters": {
+            "state": [
+              "MS"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA11LA196",
+            "ERA17LA286"
+          ]
+        },
+        {
+          "family": "02063010",
+          "topic": "use of equip/info: use of automation",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "OPS17IA014"
+          ]
+        },
+        {
+          "family": "02063030",
+          "topic": "use of equip/info: use of checklist",
+          "filters": {
+            "state": [
+              "NM"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN09CA118",
+            "CEN09CA223",
+            "CEN09CA258",
+            "CEN09LA137",
+            "WPR23LA002"
+          ]
+        },
+        {
+          "family": "02063040",
+          "topic": "use of equip/info: aircraft control",
+          "filters": {
+            "state": [
+              "MT"
+            ],
+            "yearFrom": 2025,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR25LA074",
+            "WPR25LA194",
+            "WPR25LA221",
+            "WPR25LA239",
+            "WPR25LA243",
+            "WPR25LA251",
+            "WPR26LA105",
+            "WPR26LA146"
+          ]
+        },
+        {
+          "family": "02063525",
+          "topic": "communication (personnel): language/accent",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA17CA082"
+          ]
+        },
+        {
+          "family": "02063538",
+          "topic": "communication (personnel): issuing instructions",
+          "filters": {
+            "state": [
+              "MA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA21LA196"
+          ]
+        },
+        {
+          "family": "02064020",
+          "topic": "workload management: task allocation",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN10LA529"
+          ]
+        }
+      ]
+    },
+    {
+      "area": "occurrence",
+      "class": "broad",
+      "required": 14,
+      "unexposedInterpretableFamilies": 75,
+      "eligiblePredicateUpperBound": 17,
+      "shortfallAtLeast": 0,
+      "feasibleFamilies": [
+        "ev060",
+        "ev080",
+        "ev090",
+        "ev092",
+        "ev093",
+        "ev095",
+        "ev096",
+        "ev230",
+        "ev241",
+        "ev300",
+        "ev310",
+        "ev360",
+        "ev370",
+        "ev380",
+        "ev400",
+        "ev470",
+        "ev490"
+      ],
+      "candidates": [
+        {
+          "family": "ev060",
+          "topic": "attempted remediation/recovery",
+          "filters": {
+            "state": [
+              "MA",
+              "MT",
+              "NC"
+            ],
+            "yearFrom": 2018,
+            "yearTo": 2023
+          },
+          "relevant": [
+            "ERA18LA175",
+            "ERA18TA179",
+            "ERA19TA051",
+            "ERA20CA142",
+            "ERA21LA014",
+            "ERA22LA063",
+            "ERA22LA432",
+            "GAA18CA240",
+            "GAA18CA372",
+            "GAA18CA404",
+            "GAA18CA437",
+            "GAA18CA481",
+            "GAA18CA482",
+            "GAA19CA105",
+            "GAA19CA261",
+            "GAA19CA280",
+            "GAA19CA408",
+            "GAA19CA499",
+            "GAA20CA041",
+            "WPR20CA053",
+            "WPR20CA124",
+            "WPR20CA217",
+            "WPR21LA163"
+          ]
+        },
+        {
+          "family": "ev080",
+          "topic": "ground handling event",
+          "filters": {
+            "state": [
+              "CA",
+              "FL",
+              "KS",
+              "MD",
+              "MS"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN10CA300",
+            "CEN20CA087",
+            "DCA11CA073",
+            "DCA16CA133",
+            "DCA16CA139",
+            "DCA16CA207",
+            "DCA18CA074",
+            "DCA19CA186",
+            "ERA11LA044",
+            "ERA13CA182",
+            "ERA14LA111",
+            "ERA20CA303",
+            "ERA20LA237",
+            "ERA22FA036",
+            "GAA16CA162",
+            "SEA08LA182",
+            "WPR10FA199",
+            "WPR11CA123",
+            "WPR11CA174",
+            "WPR11LA300",
+            "WPR20CA127"
+          ]
+        },
+        {
+          "family": "ev090",
+          "topic": "abnormal runway contact",
+          "filters": {
+            "state": [
+              "AR",
+              "NM",
+              "SC"
+            ],
+            "yearFrom": 2013,
+            "yearTo": 2019,
+            "category": [
+              "AIR"
+            ]
+          },
+          "relevant": [
+            "CEN13LA237",
+            "CEN14CA386",
+            "CEN14CA488",
+            "CEN14LA432",
+            "CEN17LA359",
+            "ERA14CA225",
+            "GAA15CA076",
+            "GAA15CA288",
+            "GAA15CA297",
+            "GAA16CA310",
+            "GAA16CA426",
+            "GAA16CA433",
+            "GAA17CA226",
+            "GAA17CA382",
+            "GAA17CA414",
+            "GAA18CA036",
+            "GAA18CA252",
+            "GAA18CA279",
+            "GAA18CA442",
+            "GAA18CA451",
+            "GAA18CA480",
+            "GAA18CA549",
+            "GAA19CA035",
+            "GAA19CA259",
+            "GAA20CA059"
+          ]
+        },
+        {
+          "family": "ev092",
+          "topic": "hard landing",
+          "filters": {
+            "state": [
+              "NJ",
+              "VA"
+            ],
+            "yearFrom": 2015,
+            "yearTo": 2021,
+            "category": [
+              "AIR"
+            ]
+          },
+          "relevant": [
+            "DCA19CA167",
+            "ERA15CA150",
+            "ERA16CA203",
+            "ERA17CA216",
+            "ERA20CA304",
+            "ERA21LA092",
+            "ERA21LA106",
+            "ERA21LA128",
+            "ERA21LA337",
+            "GAA15CA035",
+            "GAA16CA134",
+            "GAA16CA340",
+            "GAA17CA024",
+            "GAA17CA139",
+            "GAA17CA162",
+            "GAA17CA208",
+            "GAA17CA253",
+            "GAA17CA540",
+            "GAA18CA228",
+            "GAA18CA574",
+            "GAA19CA264",
+            "WPR19TA142"
+          ]
+        },
+        {
+          "family": "ev093",
+          "topic": "dragged wing, rotor, float or other",
+          "filters": {
+            "state": [
+              "AK",
+              "FL",
+              "NY",
+              "WA"
+            ],
+            "yearFrom": 2010,
+            "yearTo": 2015,
+            "category": [
+              "AIR"
+            ]
+          },
+          "relevant": [
+            "ANC10CA051",
+            "ANC11CA024",
+            "ANC11CA034",
+            "ANC12CA030",
+            "ANC12CA039",
+            "ANC12CA098",
+            "ANC13CA087",
+            "ANC15CA016",
+            "ERA10CA223",
+            "ERA10CA273",
+            "ERA10CA425",
+            "ERA12CA359",
+            "ERA13CA120",
+            "ERA13FA225",
+            "ERA14CA136",
+            "ERA14CA155",
+            "ERA14CA166",
+            "WPR10CA246",
+            "WPR10CA461",
+            "WPR12CA388",
+            "WPR13CA140",
+            "WPR14CA306"
+          ]
+        },
+        {
+          "family": "ev095",
+          "topic": "landing gear not configured",
+          "filters": {
+            "state": [
+              "MI",
+              "NC",
+              "OH",
+              "TN",
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2010
+          },
+          "relevant": [
+            "CEN09CA058",
+            "CEN09CA169",
+            "CEN09CA474",
+            "CEN09IA416",
+            "CEN10CA152",
+            "CEN10FA164",
+            "CEN10LA128",
+            "CEN10LA564",
+            "CHI08CA088",
+            "CHI08CA110",
+            "CHI08CA163",
+            "CHI08CA236",
+            "CHI08CA259",
+            "DEN08CA083",
+            "DFW08CA193",
+            "ERA09CA254",
+            "ERA09LA130",
+            "ERA10CA132",
+            "ERA10CA156",
+            "ERA10CA201",
+            "ERA10LA004"
+          ]
+        },
+        {
+          "family": "ev096",
+          "topic": "nose over/nose down",
+          "filters": {
+            "state": [
+              "MT",
+              "NJ",
+              "VA"
+            ],
+            "yearFrom": 2018,
+            "yearTo": 2022
+          },
+          "relevant": [
+            "ERA19LA199",
+            "ERA20CA113",
+            "ERA21LA055",
+            "ERA21LA096",
+            "ERA21LA294",
+            "ERA21LA337",
+            "ERA21LA358",
+            "ERA21LA375",
+            "ERA22LA012",
+            "GAA18CA220",
+            "GAA18CA240",
+            "GAA18CA369",
+            "GAA18CA372",
+            "GAA18CA472",
+            "GAA18CA513",
+            "GAA19CA261",
+            "GAA19CA408",
+            "WPR19CA069",
+            "WPR20CA124",
+            "WPR21LA096",
+            "WPR21LA138",
+            "WPR22LA129"
+          ]
+        },
+        {
+          "family": "ev230",
+          "topic": "loss of control on ground",
+          "filters": {
+            "state": [
+              "FL",
+              "ID"
+            ],
+            "yearFrom": 2010,
+            "yearTo": 2010
+          },
+          "relevant": [
+            "ERA10CA137",
+            "ERA10CA145",
+            "ERA10CA182",
+            "ERA10CA225",
+            "ERA10CA257",
+            "ERA10CA352",
+            "ERA10CA360",
+            "ERA10CA445",
+            "ERA11CA039",
+            "ERA11CA096",
+            "ERA11IA026",
+            "ERA11LA063",
+            "WPR10CA291",
+            "WPR10CA301",
+            "WPR10CA368",
+            "WPR10CA378",
+            "WPR10CA425",
+            "WPR10CA444",
+            "WPR10LA160",
+            "WPR10LA241",
+            "WPR10LA421",
+            "WPR10LA457",
+            "WPR10LA472"
+          ]
+        },
+        {
+          "family": "ev241",
+          "topic": "aerodynamic stall/spin",
+          "filters": {
+            "state": [
+              "AL",
+              "IL",
+              "LA",
+              "NY",
+              "PA",
+              "TX"
+            ],
+            "yearFrom": 2018,
+            "yearTo": 2018
+          },
+          "relevant": [
+            "CEN18FA147",
+            "CEN18FA265",
+            "CEN18FA267",
+            "CEN18LA092",
+            "CEN18LA114",
+            "CEN18LA228",
+            "CEN18LA257",
+            "CEN18LA344",
+            "CEN18LA378",
+            "ERA18FA141",
+            "ERA18FA208",
+            "ERA18LA191",
+            "GAA18CA231",
+            "GAA18CA291",
+            "GAA18CA300",
+            "GAA18CA335",
+            "GAA18CA401",
+            "GAA18CA413",
+            "GAA18CA507",
+            "GAA18CA583",
+            "WPR18LA142"
+          ]
+        },
+        {
+          "family": "ev300",
+          "topic": "runway excursion",
+          "filters": {
+            "state": [
+              "ID",
+              "MA"
+            ],
+            "yearFrom": 2009,
+            "yearTo": 2010
+          },
+          "relevant": [
+            "ERA09CA251",
+            "ERA09CA277",
+            "ERA10CA122",
+            "ERA10CA124",
+            "ERA10CA289",
+            "ERA10CA496",
+            "WPR09CA233",
+            "WPR09CA304",
+            "WPR09CA332",
+            "WPR09CA346",
+            "WPR09CA392",
+            "WPR09CA444",
+            "WPR09LA201",
+            "WPR10CA109",
+            "WPR10CA291",
+            "WPR10CA329",
+            "WPR10CA346",
+            "WPR10CA378",
+            "WPR10CA405",
+            "WPR10CA425",
+            "WPR10CA444",
+            "WPR10LA160",
+            "WPR10LA241",
+            "WPR10LA421",
+            "WPR10LA457"
+          ]
+        },
+        {
+          "family": "ev310",
+          "topic": "runway incursion, animal",
+          "filters": {
+            "state": [
+              "AL",
+              "CA",
+              "LA",
+              "MO",
+              "VA",
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN10CA460",
+            "CEN12IA383",
+            "CEN20LA429",
+            "CEN22LA441",
+            "CEN24LA190",
+            "CEN26LA035",
+            "ERA12CA185",
+            "ERA14CA097",
+            "ERA14CA412",
+            "ERA21LA186",
+            "ERA22LA371",
+            "ERA23LA368",
+            "GAA15CA108",
+            "GAA15CA278",
+            "GAA16CA396",
+            "GAA17CA446",
+            "GAA17CA532",
+            "GAA18CA349",
+            "GAA18CA402",
+            "WPR09CA456",
+            "WPR20CA312",
+            "WPR24LA244"
+          ]
+        },
+        {
+          "family": "ev360",
+          "topic": "turbulence encounter",
+          "filters": {
+            "state": [
+              "FL",
+              "IL",
+              "NC"
+            ],
+            "yearFrom": 2017,
+            "yearTo": 2024
+          },
+          "relevant": [
+            "DCA17CA101",
+            "DCA18CA055",
+            "DCA18CA251",
+            "DCA18CA316",
+            "DCA19CA208",
+            "DCA19CA213",
+            "DCA20CA071",
+            "DCA20CA122",
+            "DCA21LA109",
+            "DCA21LA176",
+            "DCA21LA209",
+            "DCA22LA001",
+            "DCA23LA050",
+            "DCA23LA107",
+            "DCA23LA305",
+            "DCA23LA378",
+            "DCA23LA411",
+            "DCA23LA477",
+            "DCA24LA144",
+            "ERA18LA112",
+            "ERA22LA404"
+          ]
+        },
+        {
+          "family": "ev370",
+          "topic": "landing area undershoot",
+          "filters": {
+            "state": [
+              "AK",
+              "FL",
+              "ID",
+              "NM",
+              "NY",
+              "OK",
+              "WI"
+            ],
+            "yearFrom": 2013,
+            "yearTo": 2018,
+            "category": [
+              "AIR"
+            ]
+          },
+          "relevant": [
+            "ANC14CA066",
+            "ANC16CA040",
+            "ANC16CA055",
+            "ANC18CA052",
+            "CEN13CA569",
+            "CEN15LA413",
+            "ERA14CA213",
+            "ERA14CA298",
+            "GAA15CA069",
+            "GAA15CA159",
+            "GAA16CA124",
+            "GAA17CA116",
+            "GAA17CA521",
+            "GAA17CA580",
+            "GAA17LA090",
+            "GAA18CA082",
+            "GAA18CA088",
+            "GAA18CA126",
+            "GAA18CA375",
+            "GAA18CA406",
+            "WPR13CA401"
+          ]
+        },
+        {
+          "family": "ev380",
+          "topic": "landing area overshoot",
+          "filters": {
+            "state": [
+              "AK",
+              "NC",
+              "TX",
+              "VA"
+            ],
+            "yearFrom": 2018,
+            "yearTo": 2024
+          },
+          "relevant": [
+            "ANC20CA075",
+            "ANC20CA090",
+            "ANC21LA088",
+            "ANC22LA029",
+            "ANC22LA071",
+            "ANC22LA075",
+            "ANC23LA014",
+            "ANC24LA061",
+            "CEN18LA172",
+            "CEN21LA078",
+            "CEN21LA163",
+            "CEN21LA308",
+            "CEN21LA458",
+            "CEN24LA037",
+            "ERA20CA189",
+            "ERA20LA070",
+            "ERA21LA299",
+            "ERA22LA302",
+            "ERA24LA189",
+            "ERA24LA321",
+            "ERA25LA011"
+          ]
+        },
+        {
+          "family": "ev400",
+          "topic": "other weather encounter",
+          "filters": {
+            "state": [
+              "ID",
+              "MN"
+            ],
+            "yearFrom": 2021,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN21LA228",
+            "CEN21LA370",
+            "CEN22LA389",
+            "CEN23LA177",
+            "CEN23LA375",
+            "CEN23LA400",
+            "CEN24LA041",
+            "CEN26LA158",
+            "WPR21LA360",
+            "WPR22LA029",
+            "WPR23LA237",
+            "WPR23LA292",
+            "WPR24LA149",
+            "WPR24LA170",
+            "WPR24LA311",
+            "WPR25LA125",
+            "WPR25LA186",
+            "WPR25LA198",
+            "WPR25LA297",
+            "WPR26LA188",
+            "WPR26LA195"
+          ]
+        },
+        {
+          "family": "ev470",
+          "topic": "collision with terrain/object (non-cfit)",
+          "filters": {
+            "state": [
+              "AR",
+              "CO",
+              "LA",
+              "MI",
+              "NV",
+              "OH"
+            ],
+            "yearFrom": 2025,
+            "yearTo": 2026,
+            "category": [
+              "AIR"
+            ]
+          },
+          "relevant": [
+            "CEN25LA102",
+            "CEN25LA118",
+            "CEN25LA147",
+            "CEN25LA161",
+            "CEN25LA241",
+            "CEN25LA244",
+            "CEN26LA017",
+            "CEN26LA033",
+            "CEN26LA053",
+            "CEN26LA063",
+            "CEN26LA169",
+            "CEN26LA209",
+            "ERA25LA176",
+            "ERA25LA212",
+            "ERA25LA243",
+            "ERA25LA245",
+            "ERA25LA325",
+            "ERA26LA105",
+            "ERA26LA237",
+            "WPR25LA117",
+            "WPR26LA087"
+          ]
+        },
+        {
+          "family": "ev490",
+          "topic": "collision during takeoff/landing",
+          "filters": {
+            "state": [
+              "ID",
+              "KS",
+              "NY"
+            ],
+            "yearFrom": 2017,
+            "yearTo": 2021
+          },
+          "relevant": [
+            "CEN18LA148",
+            "CEN18LA286",
+            "CEN20CA052",
+            "CEN21LA302",
+            "CEN21LA362",
+            "CEN21LA448",
+            "ERA20CA110",
+            "ERA20CA214",
+            "GAA17CA157",
+            "GAA17CA390",
+            "GAA17CA576",
+            "GAA18CA301",
+            "GAA19CA323",
+            "GAA20CA008",
+            "WPR17LA122",
+            "WPR19CA197",
+            "WPR20CA043",
+            "WPR21LA237",
+            "WPR21LA255",
+            "WPR21LA304",
+            "WPR22LA036",
+            "WPR22LA037"
+          ]
+        }
+      ]
+    },
+    {
+      "area": "occurrence",
+      "class": "narrow",
+      "required": 14,
+      "unexposedInterpretableFamilies": 75,
+      "eligiblePredicateUpperBound": 71,
+      "shortfallAtLeast": 0,
+      "feasibleFamilies": [
+        "ev010",
+        "ev020",
+        "ev030",
+        "ev040",
+        "ev050",
+        "ev060",
+        "ev080",
+        "ev081",
+        "ev082",
+        "ev090",
+        "ev091",
+        "ev092",
+        "ev093",
+        "ev094",
+        "ev095",
+        "ev096",
+        "ev097",
+        "ev110",
+        "ev130",
+        "ev150",
+        "ev160",
+        "ev170",
+        "ev180",
+        "ev190",
+        "ev193",
+        "ev194",
+        "ev200",
+        "ev210",
+        "ev230",
+        "ev231",
+        "ev232",
+        "ev241",
+        "ev260",
+        "ev270",
+        "ev271",
+        "ev280",
+        "ev281",
+        "ev300",
+        "ev310",
+        "ev320",
+        "ev330",
+        "ev332",
+        "ev333",
+        "ev334",
+        "ev336",
+        "ev337",
+        "ev338",
+        "ev340",
+        "ev341",
+        "ev342",
+        "ev343",
+        "ev350",
+        "ev360",
+        "ev361",
+        "ev362",
+        "ev370",
+        "ev380",
+        "ev390",
+        "ev400",
+        "ev401",
+        "ev402",
+        "ev420",
+        "ev430",
+        "ev440",
+        "ev441",
+        "ev450",
+        "ev460",
+        "ev470",
+        "ev480",
+        "ev490",
+        "ev990"
+      ],
+      "candidates": [
+        {
+          "family": "ev010",
+          "topic": "aircraft loading event",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN16LA310",
+            "CEN23LA326"
+          ]
+        },
+        {
+          "family": "ev020",
+          "topic": "aircraft servicing event",
+          "filters": {
+            "state": [
+              "KS"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN25LA101"
+          ]
+        },
+        {
+          "family": "ev030",
+          "topic": "preflight or dispatch event",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN15LA216",
+            "CEN15LA433"
+          ]
+        },
+        {
+          "family": "ev040",
+          "topic": "aircraft maintenance event",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2013,
+            "yearTo": 2021
+          },
+          "relevant": [
+            "CEN20LA294",
+            "CEN21LA138",
+            "CEN21LA319",
+            "GAA15CA125"
+          ]
+        },
+        {
+          "family": "ev050",
+          "topic": "aircraft inspection event",
+          "filters": {
+            "state": [
+              "NM"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN15LA109",
+            "WPR24LA100",
+            "WPR26LA089"
+          ]
+        },
+        {
+          "family": "ev060",
+          "topic": "attempted remediation/recovery",
+          "filters": {
+            "state": [
+              "MT"
+            ],
+            "yearFrom": 2018,
+            "yearTo": 2023
+          },
+          "relevant": [
+            "GAA18CA240",
+            "GAA18CA372",
+            "GAA18CA404",
+            "GAA18CA437",
+            "GAA18CA481",
+            "GAA18CA482",
+            "GAA19CA261",
+            "GAA19CA408",
+            "WPR20CA053",
+            "WPR20CA124",
+            "WPR20CA217",
+            "WPR21LA163"
+          ]
+        },
+        {
+          "family": "ev080",
+          "topic": "ground handling event",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA11CA073",
+            "DCA16CA133",
+            "DCA16CA139",
+            "DCA18CA074",
+            "DCA19CA186",
+            "SEA08LA182",
+            "WPR10FA199",
+            "WPR11CA123",
+            "WPR11CA174",
+            "WPR11LA300",
+            "WPR20CA127"
+          ]
+        },
+        {
+          "family": "ev081",
+          "topic": "aircraft, propeller or rotor contact with person",
+          "filters": {
+            "state": [
+              "NC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA13LA075",
+            "ERA14LA212"
+          ]
+        },
+        {
+          "family": "ev082",
+          "topic": "propeller, jet or rotor blast/suction",
+          "filters": {
+            "state": [
+              "WA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR10CA132"
+          ]
+        },
+        {
+          "family": "ev090",
+          "topic": "abnormal runway contact",
+          "filters": {
+            "state": [
+              "CO"
+            ],
+            "yearFrom": 2018,
+            "yearTo": 2025
+          },
+          "relevant": [
+            "CEN19LA183",
+            "CEN20CA079",
+            "CEN20CA161",
+            "CEN21LA196",
+            "CEN21LA248",
+            "CEN23LA032",
+            "CEN24LA359",
+            "CEN25LA210",
+            "CEN25LA329",
+            "GAA18CA473",
+            "GAA19CA165",
+            "GAA19CA490"
+          ]
+        },
+        {
+          "family": "ev091",
+          "topic": "tailstrike",
+          "filters": {
+            "state": [
+              "GA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA13CA065",
+            "DCA17LA145",
+            "DCA22LA178"
+          ]
+        },
+        {
+          "family": "ev092",
+          "topic": "hard landing",
+          "filters": {
+            "state": [
+              "VA"
+            ],
+            "yearFrom": 2015,
+            "yearTo": 2020
+          },
+          "relevant": [
+            "ERA15CA150",
+            "ERA17CA216",
+            "ERA20CA304",
+            "ERA21LA092",
+            "GAA16CA134",
+            "GAA17CA024",
+            "GAA17CA139",
+            "GAA17CA208",
+            "GAA17CA540",
+            "GAA18CA228",
+            "GAA18CA574",
+            "WPR19TA142"
+          ]
+        },
+        {
+          "family": "ev093",
+          "topic": "dragged wing, rotor, float or other",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN09CA358",
+            "CEN09LA486",
+            "CEN11CA523",
+            "CEN12CA409",
+            "CEN20LA125",
+            "CEN22LA440",
+            "CEN26LA011"
+          ]
+        },
+        {
+          "family": "ev094",
+          "topic": "landing gear collapse",
+          "filters": {
+            "state": [
+              "MD"
+            ],
+            "yearFrom": 2009,
+            "yearTo": 2011
+          },
+          "relevant": [
+            "ERA10CA183",
+            "ERA11CA061",
+            "ERA11CA248",
+            "ERA11CA408",
+            "ERA11LA491"
+          ]
+        },
+        {
+          "family": "ev095",
+          "topic": "landing gear not configured",
+          "filters": {
+            "state": [
+              "ME"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA10LA390"
+          ]
+        },
+        {
+          "family": "ev096",
+          "topic": "nose over/nose down",
+          "filters": {
+            "state": [
+              "MT"
+            ],
+            "yearFrom": 2015,
+            "yearTo": 2023
+          },
+          "relevant": [
+            "GAA16CA285",
+            "GAA16CA369",
+            "GAA16CA376",
+            "GAA16CA406",
+            "GAA18CA220",
+            "GAA18CA240",
+            "GAA18CA372",
+            "GAA19CA261",
+            "GAA19CA408",
+            "WPR19CA069",
+            "WPR20CA124",
+            "WPR21LA096",
+            "WPR21LA138",
+            "WPR22LA129",
+            "WPR23LA254",
+            "WPR23LA280"
+          ]
+        },
+        {
+          "family": "ev097",
+          "topic": "roll over",
+          "filters": {
+            "state": [
+              "VA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA18CA060",
+            "GAA18CA448",
+            "GAA19CA047"
+          ]
+        },
+        {
+          "family": "ev110",
+          "topic": "cabin safety event",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN09CA358",
+            "CEN11LA092",
+            "CEN12LA248"
+          ]
+        },
+        {
+          "family": "ev130",
+          "topic": "emergency descent initiated",
+          "filters": {
+            "state": [
+              "WY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR21LA108"
+          ]
+        },
+        {
+          "family": "ev150",
+          "topic": "fire/smoke (non-impact)",
+          "filters": {
+            "state": [
+              "IL"
+            ],
+            "yearFrom": 2018,
+            "yearTo": 2024
+          },
+          "relevant": [
+            "CEN18FA259",
+            "CEN22LA122",
+            "CEN25FA056"
+          ]
+        },
+        {
+          "family": "ev160",
+          "topic": "explosion (non-impact)",
+          "filters": {
+            "state": [
+              "KS"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN21LA274"
+          ]
+        },
+        {
+          "family": "ev170",
+          "topic": "fire/smoke (post-impact)",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR09LA299",
+            "WPR20CA269"
+          ]
+        },
+        {
+          "family": "ev180",
+          "topic": "explosion (post-impact)",
+          "filters": {
+            "state": [
+              "TN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA16FA006"
+          ]
+        },
+        {
+          "family": "ev190",
+          "topic": "fuel related",
+          "filters": {
+            "state": [
+              "AR"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN23LA419"
+          ]
+        },
+        {
+          "family": "ev193",
+          "topic": "fuel contamination",
+          "filters": {
+            "state": [
+              "SC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA15CA295",
+            "ERA16LA018",
+            "ERA17LA334"
+          ]
+        },
+        {
+          "family": "ev194",
+          "topic": "wrong fuel",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR21LA342"
+          ]
+        },
+        {
+          "family": "ev200",
+          "topic": "ground collision",
+          "filters": {
+            "state": [
+              "WV"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA09CA534"
+          ]
+        },
+        {
+          "family": "ev210",
+          "topic": "icing encounter",
+          "filters": {
+            "state": [
+              "KY"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA15CA100"
+          ]
+        },
+        {
+          "family": "ev230",
+          "topic": "loss of control on ground",
+          "filters": {
+            "state": [
+              "NY"
+            ],
+            "yearFrom": 2021,
+            "yearTo": 2025
+          },
+          "relevant": [
+            "CEN23LA252",
+            "ERA21LA231",
+            "ERA21LA251",
+            "ERA21LA310",
+            "ERA22LA135",
+            "ERA22LA158",
+            "ERA23LA186",
+            "ERA23LA343",
+            "ERA23LA374",
+            "ERA24LA042",
+            "ERA24LA175",
+            "ERA24LA196",
+            "ERA24LA238",
+            "ERA24LA268",
+            "ERA24LA317",
+            "ERA24LA324",
+            "ERA24LA353",
+            "ERA24LA401",
+            "ERA25LA276"
+          ]
+        },
+        {
+          "family": "ev231",
+          "topic": "dynamic rollover",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR23LA214",
+            "WPR24LA247",
+            "WPR26LA188"
+          ]
+        },
+        {
+          "family": "ev232",
+          "topic": "ground resonance",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN12LA247"
+          ]
+        },
+        {
+          "family": "ev241",
+          "topic": "aerodynamic stall/spin",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2011,
+            "yearTo": 2017
+          },
+          "relevant": [
+            "CEN11FA645",
+            "CEN11LA194",
+            "CEN12LA407",
+            "CEN12LA540",
+            "CEN13CA498",
+            "CEN13LA455",
+            "CEN14LA045",
+            "CEN16LA132",
+            "GAA16CA244",
+            "GAA16LA329",
+            "GAA17CA336"
+          ]
+        },
+        {
+          "family": "ev260",
+          "topic": "near midair collision",
+          "filters": {
+            "state": [
+              "PA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA18IA265"
+          ]
+        },
+        {
+          "family": "ev270",
+          "topic": "abrupt maneuver",
+          "filters": {
+            "state": [
+              "NE"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN09CA328",
+            "GAA16CA470",
+            "GAA18CA408"
+          ]
+        },
+        {
+          "family": "ev271",
+          "topic": "inflight upset",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA12CA521",
+            "ERA19FA265"
+          ]
+        },
+        {
+          "family": "ev280",
+          "topic": "course deviation",
+          "filters": {
+            "state": [
+              "CA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR24LA207"
+          ]
+        },
+        {
+          "family": "ev281",
+          "topic": "approach-vfr pattern final course deviation",
+          "filters": {
+            "state": [
+              "NH"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA17CA087"
+          ]
+        },
+        {
+          "family": "ev300",
+          "topic": "runway excursion",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2009,
+            "yearTo": 2010
+          },
+          "relevant": [
+            "WPR09CA233",
+            "WPR09CA304",
+            "WPR09CA332",
+            "WPR09CA346",
+            "WPR09CA392",
+            "WPR09CA444",
+            "WPR09LA201",
+            "WPR10CA109",
+            "WPR10CA291",
+            "WPR10CA329",
+            "WPR10CA346",
+            "WPR10CA378",
+            "WPR10CA405",
+            "WPR10CA425",
+            "WPR10CA444",
+            "WPR10LA160",
+            "WPR10LA241",
+            "WPR10LA421",
+            "WPR10LA457"
+          ]
+        },
+        {
+          "family": "ev310",
+          "topic": "runway incursion, animal",
+          "filters": {
+            "state": [
+              "VA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA14CA097",
+            "ERA14CA412",
+            "ERA23LA368",
+            "GAA16CA396",
+            "GAA17CA446",
+            "GAA18CA349"
+          ]
+        },
+        {
+          "family": "ev320",
+          "topic": "runway incursion, vehicle/aircraft/person",
+          "filters": {
+            "state": [
+              "WA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR21LA251"
+          ]
+        },
+        {
+          "family": "ev330",
+          "topic": "system/component malfunction (non-power)",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2009,
+            "yearTo": 2009
+          },
+          "relevant": [
+            "CEN09CA169",
+            "CEN09CA382",
+            "CEN09IA578",
+            "CEN10LA052"
+          ]
+        },
+        {
+          "family": "ev332",
+          "topic": "electrical system malfunction",
+          "filters": {
+            "state": [
+              "IA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "GAA18CA545"
+          ]
+        },
+        {
+          "family": "ev333",
+          "topic": "flight control system malfunction",
+          "filters": {
+            "state": [
+              "MD"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA12FA395"
+          ]
+        },
+        {
+          "family": "ev334",
+          "topic": "flight instrument malfunction",
+          "filters": {
+            "state": [
+              "IN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN09LA276",
+            "CEN12LA532"
+          ]
+        },
+        {
+          "family": "ev336",
+          "topic": "communication system malfunction",
+          "filters": {
+            "state": [
+              "FL"
+            ],
+            "yearFrom": 2012,
+            "yearTo": 2023
+          },
+          "relevant": [
+            "DCA22LA015"
+          ]
+        },
+        {
+          "family": "ev337",
+          "topic": "aircraft structural failure",
+          "filters": {
+            "state": [
+              "SC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA11LA415",
+            "ERA16FA001"
+          ]
+        },
+        {
+          "family": "ev338",
+          "topic": "part(s) separation from aircraft",
+          "filters": {
+            "state": [
+              "MA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA22LA187"
+          ]
+        },
+        {
+          "family": "ev340",
+          "topic": "powerplant system/component malfunction",
+          "filters": {
+            "state": [
+              "WV"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "NYC08LA196"
+          ]
+        },
+        {
+          "family": "ev341",
+          "topic": "loss of engine power (total)",
+          "filters": {
+            "state": [
+              "NJ"
+            ],
+            "yearFrom": 2019,
+            "yearTo": 2023
+          },
+          "relevant": [
+            "ERA19LA280",
+            "ERA21LA241",
+            "ERA22LA053",
+            "ERA22LA217"
+          ]
+        },
+        {
+          "family": "ev342",
+          "topic": "loss of engine power (partial)",
+          "filters": {
+            "state": [
+              "NJ"
+            ],
+            "yearFrom": 2011,
+            "yearTo": 2017
+          },
+          "relevant": [
+            "ERA12LA425",
+            "ERA13LA300",
+            "ERA14LA141",
+            "ERA17CA251",
+            "ERA17LA023",
+            "ERA17LA110"
+          ]
+        },
+        {
+          "family": "ev343",
+          "topic": "uncontained engine failure",
+          "filters": {
+            "state": [
+              "OR"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ENG12IA012"
+          ]
+        },
+        {
+          "family": "ev350",
+          "topic": "security/criminal event",
+          "filters": {
+            "state": [
+              "CO"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN15FA101"
+          ]
+        },
+        {
+          "family": "ev360",
+          "topic": "turbulence encounter",
+          "filters": {
+            "state": [
+              "IL"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN10LA218",
+            "CHI08IA200",
+            "DCA19CA208",
+            "DCA20CA122",
+            "DCA21LA209",
+            "DCA23LA305",
+            "DCA23LA411"
+          ]
+        },
+        {
+          "family": "ev361",
+          "topic": "wake turbulence encounter",
+          "filters": {
+            "state": [
+              "AZ"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA18CA289",
+            "GAA16CA372",
+            "WPR12FA067"
+          ]
+        },
+        {
+          "family": "ev362",
+          "topic": "clear air turbulence encounter",
+          "filters": {
+            "state": [
+              "TX"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN22LA166",
+            "DCA08FA064",
+            "DCA14CA014",
+            "DCA16CA181"
+          ]
+        },
+        {
+          "family": "ev370",
+          "topic": "landing area undershoot",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN13CA569",
+            "CEN15LA413",
+            "CEN24LA097",
+            "GAA15CA159",
+            "GAA17LA090"
+          ]
+        },
+        {
+          "family": "ev380",
+          "topic": "landing area overshoot",
+          "filters": {
+            "state": [
+              "LA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN13CA226",
+            "CEN15CA246",
+            "CEN18LA346",
+            "CEN25LA045"
+          ]
+        },
+        {
+          "family": "ev390",
+          "topic": "windshear or thunderstorm",
+          "filters": {
+            "state": [
+              "AZ"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "SEA08LA119",
+            "WPR14CA396",
+            "WPR14FA186"
+          ]
+        },
+        {
+          "family": "ev400",
+          "topic": "other weather encounter",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2021,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR21LA360",
+            "WPR22LA029",
+            "WPR23LA237",
+            "WPR23LA292",
+            "WPR24LA149",
+            "WPR24LA170",
+            "WPR24LA311",
+            "WPR25LA125",
+            "WPR25LA186",
+            "WPR25LA198",
+            "WPR25LA297",
+            "WPR26LA188",
+            "WPR26LA195"
+          ]
+        },
+        {
+          "family": "ev401",
+          "topic": "vfr encounter with imc",
+          "filters": {
+            "state": [
+              "NE"
+            ],
+            "yearFrom": 2015,
+            "yearTo": 2017
+          },
+          "relevant": [
+            "CEN16FA005",
+            "CEN16FA073"
+          ]
+        },
+        {
+          "family": "ev402",
+          "topic": "loss of visual reference",
+          "filters": {
+            "state": [
+              "MO"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN11CA314"
+          ]
+        },
+        {
+          "family": "ev420",
+          "topic": "collision avoidance alert",
+          "filters": {
+            "state": [
+              "NC"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "ERA10LA041"
+          ]
+        },
+        {
+          "family": "ev430",
+          "topic": "stall warning/stick shaker/pusher",
+          "filters": {
+            "state": [
+              "AR"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN21LA415",
+            "GAA15CA288"
+          ]
+        },
+        {
+          "family": "ev440",
+          "topic": "off-field or emergency landing",
+          "filters": {
+            "state": [
+              "MT"
+            ],
+            "yearFrom": 2019,
+            "yearTo": 2023
+          },
+          "relevant": [
+            "WPR19CA069",
+            "WPR21LA315",
+            "WPR22LA024",
+            "WPR22LA262",
+            "WPR22LA301",
+            "WPR22LA313"
+          ]
+        },
+        {
+          "family": "ev441",
+          "topic": "ditching",
+          "filters": {
+            "state": [
+              "WI"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN25LA257",
+            "CEN25LA378"
+          ]
+        },
+        {
+          "family": "ev450",
+          "topic": "hazardous material leak/spill",
+          "filters": {
+            "state": [
+              "KS"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN21LA286"
+          ]
+        },
+        {
+          "family": "ev460",
+          "topic": "evacuation",
+          "filters": {
+            "state": [
+              "GA"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "DCA25LA084"
+          ]
+        },
+        {
+          "family": "ev470",
+          "topic": "collision with terrain/object (non-cfit)",
+          "filters": {
+            "state": [
+              "MI"
+            ],
+            "yearFrom": 2024,
+            "yearTo": 2025
+          },
+          "relevant": [
+            "CEN24LA181",
+            "CEN24LA201",
+            "CEN25LA050",
+            "CEN25LA102",
+            "CEN25LA147",
+            "CEN25LA241",
+            "CEN25LA244"
+          ]
+        },
+        {
+          "family": "ev480",
+          "topic": "external load event (rotorcraft)",
+          "filters": {
+            "state": [
+              "MN"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "CEN23LA385"
+          ]
+        },
+        {
+          "family": "ev490",
+          "topic": "collision during takeoff/landing",
+          "filters": {
+            "state": [
+              "ID"
+            ],
+            "yearFrom": 2017,
+            "yearTo": 2021
+          },
+          "relevant": [
+            "GAA17CA157",
+            "GAA18CA301",
+            "GAA19CA323",
+            "WPR17LA122",
+            "WPR19CA197",
+            "WPR20CA043",
+            "WPR21LA237",
+            "WPR21LA255",
+            "WPR21LA304",
+            "WPR22LA036",
+            "WPR22LA037"
+          ]
+        },
+        {
+          "family": "ev990",
+          "topic": "missing aircraft",
+          "filters": {
+            "state": [
+              "OR"
+            ],
+            "yearFrom": 2008,
+            "yearTo": 2026
+          },
+          "relevant": [
+            "WPR20FAMS2"
+          ]
+        }
+      ]
+    }
+  ],
+  "provenInfeasible": true,
+  "limits": "Same original predicate grammar: one unseen code family, one state narrow/up to eight states broad, optional same-aircraft category, contiguous 2008-2026 years. No subtraction of exposed gold, no alternate modifiers of old topics. Counts are upper bounds; shared gold and semantic leakage can only reduce them.",
+  "hashes": {
+    "corpus": "f71ddcae244e1a0c04510cd4adbeaa6472eab0f599259f36c695f8c9b7fab595",
+    "exclusions": "c25da9a322810ceec45fa3272af73ed17d1c6bfde62a2e8365699a8195927f6b",
+    "power": "7646c7dc1c238e53f342fad2c6f6d204a77eaeb3677f3d91ef8688c7dcad3e08"
+  }
+}
