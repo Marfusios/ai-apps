@@ -830,20 +830,26 @@ intervals too wide), not cleared, and it only reorders the retrieved cases.
 
 ### Evidence automatic filters and v3 rollout
 
-`AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default), `attributed.v1` or, on dev only,
-`state-explicit.v1.3`. Unknown values fail startup. Live accepts `none` and `attributed.v1`;
+`AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default), an attributed policy or, on dev
+only, `state-explicit.v1.3`. Unknown values fail startup. Only a variant whose fields the Task 30
+confirmation cleared belongs on the live allowlist (`LIVE_EVIDENCE_AUTO_FILTERS`,
+`shared/evidence-auto-filters.ts`), which is `none`, `attributed.v1-state` and
+`attributed.v1-state-years`; the attributed variants differ only in their fields (the same rules,
+prompt, caps and settings):
+
+- `attributed.v1-state`: the state only; live (the state passed the confirmation).
+- `attributed.v1-state-years`: the state and the years; live (the years passed under the forced rule).
+- `attributed.v1`: state, years and category; dev-only, because its category field failed the
+  confirmation. On live the aircraft category therefore always stays a suggestion.
+
 `state-explicit.v1.3` fails startup on live: it did not clear the 2026-10-25 security re-check
 ("Find accidents involving aircraft maintained within Alaska" still got an automatic AK filter).
-The default stays `none`. Nothing is enabled on live without the Task 30 evaluation and the
-owner's decision, and only the variant the confirmation clears belongs on the live allowlist
-(`LIVE_EVIDENCE_AUTO_FILTERS`, `shared/evidence-auto-filters.ts`): it names `attributed.v1` with all
-three fields today, so if the confirmation clears fewer fields, register that subset as its own
-policy and replace `attributed.v1` with it in the release that follows the confirmation.
+The default stays `none`, and nothing is enabled on live without the owner's decision.
 
 **`attributed.v1`** (Task 30) applies the scope's suggested state, years and aircraft category on
 its own when the question names them explicitly and a separate check says each describes the
-accident itself. Every other suggested field stays a suggestion, and edited searches never add
-automatic filters.
+accident itself; its subsets apply only their own fields. Every other suggested field stays a
+suggestion, and edited searches never add automatic filters.
 
 - Deterministic candidates (`shared/automatic-candidates.ts`; `state-mention.v1`,
   `year-mention.v1`, `category-mention.v1`): the question's own words must name exactly the
@@ -962,7 +968,7 @@ To enable it on an environment, in two steps:
    the new client before the next step: an older tab reads only automatic `state` and rejects a
    page with automatic years or a category. `none` on this reader is also the rollback.
 3. **Then enable**, only with the variant the confirmation cleared on the live allowlist (above):
-   set `AVIATION_EVIDENCE_AUTO_FILTERS=attributed.v1` (or the confirmed subset) and run
+   set `AVIATION_EVIDENCE_AUTO_FILTERS` to `attributed.v1-state` or `attributed.v1-state-years` and run
    `pnpm worker ai-preflight` with those settings **before** `pnpm app:up`. It counts the check's
    real request: the fixed prompt and schema, the most values one check takes (the eight longest
    state labels, the longest year value and the three longest category labels) with a
@@ -972,8 +978,8 @@ To enable it on an environment, in two steps:
    2,356 for the cached prefix, and 982 for the output at its bounds (cap 1,200). At runtime a
    request over the input cap is refused unbilled, and an answer over the output cap truncates
    (billed); either way that search applies nothing.
-4. Run `pnpm app:up`, check that `/api/config` reports `aiAutomaticFilters:
-   ['state', 'years', 'category']` after its cache expires, and that automatic filters are
+4. Run `pnpm app:up`, check that `/api/config` reports the variant's fields in `aiAutomaticFilters`
+   (`['state']` or `['state', 'years']`) after its cache expires, and that automatic filters are
    disclosed and removable without a visitor quota unit.
 5. Monitor the private `autoFilterReason`, `autoFilterFields` and `attributionOutcome` mix (kept
    on failed searches too, once the check has settled), the `evidence.attribution` spans and the
@@ -1003,6 +1009,7 @@ guard, two applications lost from v1.1. The pipeline's separate case-search inte
 yields 363 TP / 0 FP / 37 FN. Neither result proves semantic attribution for future wording. v1.1
 and v1.2 were never deployed and are no longer accepted.
 `GET /api/config` reports `aiAutomaticFilters: []` for `none`, `['state']` for v1.3 and
+`attributed.v1-state`, `['state', 'years']` for `attributed.v1-state-years` and
 `['state', 'years', 'category']` for attributed.v1. The field is optional for cached pre-deploy
 configs: missing means unknown, so the client uses cautious "suggests filters" wording. Client
 copy follows this field, not a fixed claim about states.
@@ -1015,6 +1022,8 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
 | `attributed.v1` | `5c0448bfc72e3d0c425ee1b54766074fdb643634dd2c257085557487e464ec76` |
+| `attributed.v1-state` | `535b846bc484d34be85f4d2943f3d884f6df11f610fa2c8b612671e85cce4a96` |
+| `attributed.v1-state-years` | `ad44e703077c41524057d5b3a1c93e253ba26ce82d4e53bcfd0d38b30c4ce02d` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check

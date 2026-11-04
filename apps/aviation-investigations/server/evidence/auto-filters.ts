@@ -1,8 +1,10 @@
 /**
  * Which scope suggestions a question search applies on its own: `none`, the dev-only state guard
- * `state-explicit.v1.3` (deterministic, state only), or `attributed.v1` (deterministic candidates,
- * then one attribution check, server/evidence/pipeline.ts). The policy object is hashed into the
- * identity every saved search records.
+ * `state-explicit.v1.3` (deterministic, state only), or an attributed policy (deterministic
+ * candidates, then one attribution check, server/evidence/pipeline.ts): `attributed.v1` (state,
+ * years and category; dev-only) and its confirmed subsets `attributed.v1-state` and
+ * `attributed.v1-state-years`, which differ from it only in their fields. The policy object is
+ * hashed into the identity every saved search records.
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -44,21 +46,28 @@ function attributed<const V extends string>(version: V, fields: readonly Automat
   });
 }
 
-/** Built on first use: the behavioural fingerprints cost a few hundred milliseconds, which importers that never select a policy (the worker CLI) need not pay. */
-const register = () => Object.freeze({
-  none: Object.freeze({ version: 'none', guard: null, behaviour: null, field: null, appliesTo: 'question-case-search' }),
-  'state-explicit.v1.3': Object.freeze({ version: 'state-explicit.v1.3', guard: STATE_GUARD_VERSION, behaviour: Object.freeze({ version: STATE_PROBE_VERSION, sha256: stateGuardFingerprint() }), field: 'state', appliesTo: 'question-case-search' }),
-  'attributed.v1': attributed('attributed.v1', AUTOMATIC_FIELDS),
-} as const);
-type Registry = ReturnType<typeof register>;
-let policies: Registry | undefined;
+/**
+ * Each policy is built on first use: a behavioural fingerprint costs several hundred milliseconds,
+ * which importers that never select a policy (the worker CLI), or a server running another one,
+ * need not pay.
+ */
+const builders = {
+  none: () => Object.freeze({ version: 'none', guard: null, behaviour: null, field: null, appliesTo: 'question-case-search' } as const),
+  'state-explicit.v1.3': () => Object.freeze({ version: 'state-explicit.v1.3', guard: STATE_GUARD_VERSION,
+    behaviour: Object.freeze({ version: STATE_PROBE_VERSION, sha256: stateGuardFingerprint() }), field: 'state', appliesTo: 'question-case-search' } as const),
+  'attributed.v1': () => attributed('attributed.v1', AUTOMATIC_FIELDS),
+  // The confirmed subsets (Task 30 confirmation): the same rules, prompt, caps and settings, fewer fields.
+  'attributed.v1-state': () => attributed('attributed.v1-state', ['state']),
+  'attributed.v1-state-years': () => attributed('attributed.v1-state-years', ['state', 'years']),
+} as const satisfies Record<EvidenceAutoFilterVersion, () => unknown>;
+type Registry = { readonly [V in EvidenceAutoFilterVersion]: ReturnType<(typeof builders)[V]> };
+const built: { -readonly [V in EvidenceAutoFilterVersion]?: Registry[V] } = {};
 export type EvidenceAutoFilterPolicy = Registry[EvidenceAutoFilterVersion];
 export type AttributedAutoFilterPolicy = Extract<EvidenceAutoFilterPolicy, { attribution: unknown }>;
 export type AttributionStageConfig = AttributedAutoFilterPolicy['attribution'];
 export function autoFilterPolicy<V extends EvidenceAutoFilterVersion = EvidenceAutoFilterVersion>(version: V = DEFAULT_EVIDENCE_AUTO_FILTERS as V): Registry[V] {
-  const policy = (policies ??= register())[version];
-  if (!policy) throw new Error('unknown evidence automatic filter policy');
-  return policy;
+  if (!Object.hasOwn(builders, version)) throw new Error('unknown evidence automatic filter policy');
+  return (built[version] ??= builders[version]() as Registry[V]) as Registry[V];
 }
 export const autoFilterIdentity = (policy: EvidenceAutoFilterPolicy) => ({ version: policy.version,
   sha256: createHash('sha256').update(canonicalConfig(policy)).digest('hex') });
