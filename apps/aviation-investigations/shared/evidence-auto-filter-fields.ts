@@ -16,4 +16,6 @@ export const EVIDENCE_AUTO_FILTER_FIELDS: Readonly<Record<EvidenceAutoFilterVers
   none: Object.freeze([]),
   'state-explicit.v1.3': Object.freeze(['state'] as const),
   'attributed.v1': Object.freeze(['state', 'years', 'category'] as const),
+  'attributed.v1-state-years': Object.freeze(['state', 'years'] as const),
+  'attributed.v1-state': Object.freeze(['state'] as const),
 });
