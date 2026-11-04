@@ -469,7 +469,7 @@ export interface LlmProvider {
   countEvidenceScopeTokens?(input: EvidenceScopeInput, ctx: StageCtx): Promise<number>;
   rerank?(input: RerankInput, ctx: StageCtx, config: EvidenceRankingConfig): Promise<StageResult<RerankOutput>>;
   countRerankTokens?(input: RerankInput, ctx: StageCtx, config: EvidenceRankingConfig): Promise<number>;
-  /** The automatic-filter attribution check (`attr.a2`, on `ATTRIBUTION_MODEL`). */
+  /** The automatic-filter attribution check (`attr.a3`, on `ATTRIBUTION_MODEL`). */
   evidenceAttribution?(input: AttributionInput, ctx: StageCtx): Promise<StageResult<AttributionOutput>>;
   countEvidenceAttributionTokens?(input: AttributionInput, ctx: StageCtx): Promise<number>;
   scope(input: ScopeInput, ctx: StageCtx): Promise<StageResult<ScopeOutput>>;

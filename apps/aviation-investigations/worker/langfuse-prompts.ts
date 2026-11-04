@@ -15,7 +15,7 @@ const attributionUser = renderAttributionUser({ question: '{{question}}', candid
 export const MIRRORED_PROMPTS = [
   { name: 'aircase-scope.e3', system: EVIDENCE_SCOPE_SYSTEM, user: renderEvidenceScopeUser({ question: '{{question}}' }), schema: EvidenceScopeWireOutputSchema },
   { name: 'aircase-rerank.r1', system: RERANK_SYSTEM, user: `${RERANK_USER_TEMPLATE}{{input_json}}`, schema: RerankOutputSchema },
-  { name: 'aircase-attr.a2', system: ATTRIBUTION_SYSTEM, user: attributionUser, schema: AttributionWireOutputSchema },
+  { name: 'aircase-attr.a3', system: ATTRIBUTION_SYSTEM, user: attributionUser, schema: AttributionWireOutputSchema },
 ].map(({ name, system, user, schema }) => ({ name, type: 'chat' as const,
   prompt: [{ role: 'system', content: system }, { role: 'user', content: user }],
   config: { outputSchema: z.toJSONSchema(schema) },
