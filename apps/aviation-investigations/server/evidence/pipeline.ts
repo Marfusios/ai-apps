@@ -3,7 +3,7 @@ import { attributionStage, automaticFieldsOf, automaticState, assertAutoFilterPo
 import { attributedFilters, attributionInput, checkedAttribution, type AutoFieldReason } from './attribution.js';
 import { attributionWorstCaseUsd } from './pricing.js';
 import type { RerankInput } from '../ai/prompts/rerank.r1.js';
-import type { AttributionOutput } from '../ai/prompts/attribution.a1.js';
+import type { AttributionOutput } from '../ai/prompts/attribution.a2.js';
 import type { EvidenceNote, EvidenceScopeSuggestion, EvidenceAutomaticFilters } from '../../shared/contracts/evidence.js';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import { automaticCandidates, type AutomaticField } from '../../shared/automatic-candidates.js';
@@ -48,6 +48,11 @@ export interface RankingObserver {
   onRetrieved?: (cases: number) => void;
   onOrdered?: (applied: boolean, skipped: boolean) => void;
   onExecution?: (execution: RankingExecution) => void;
+  /**
+   * Private, enums only: an attributed policy's facts once its decision is made and any check has
+   * settled, so a search that then stops or fails still records what the check did.
+   */
+  onAttribution?: (facts: Pick<RankingExecution, 'attributionOutcome' | 'autoFilterFields'>) => void;
   onStage?: (stage: RankingPhase) => void;
   onFallback?: (failure: { stage: 'scope' | 'rerank' | 'attribution'; outcome: RankingFailureOutcome }) => void;
 }
@@ -200,10 +205,9 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
     // Still the scope phase: candidates, then at most one attribution check, metered like scope.
     const fields = automaticFieldsOf(policy);
     const { candidates, reasons } = automaticCandidates(input.question, suggestion.filters, input.filters, fields);
-    let answer: AttributionOutput | null = null;
+    let answer: AttributionOutput | null = null, stopped = false;
     if (candidates.length) {
       const request = attributionInput(input.question, candidates);
-      let stopped = false;
       attributionOutcome = await stageSpan('evidence.attribution', { stage: 'attribution', model: attribution.model, provider: llm.name, promptVersion: attribution.prompt.version }, async span => {
         try {
           const result = await metered({ stage: 'attribution', provider: llm.name, model: attribution.model, worstCaseUsd: attributionWorstCaseUsd(attribution) },
@@ -224,12 +228,15 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
         }
       });
       if (attributionOutcome !== 'applied') fallback('attribution', attributionOutcome);
+    }
+    const decision = attributedFilters(input.question, candidates, answer);
+    autoFilterFields = Object.fromEntries(fields.map(f => [f, decision.fields[f] ?? `not_candidate:${reasons[f]}`]));
+    try { observer.onAttribution?.({ attributionOutcome, autoFilterFields: { ...autoFilterFields } }); } catch { /* private diagnostics only */ }
+    if (candidates.length) {
       // A failed check is a fallback; a stopped search (deletion, shutdown, cancel) is not.
       if (stopped) throw new RankingFailure('scope', [...usage]);
       input.signal.throwIfAborted();
     }
-    const decision = attributedFilters(input.question, candidates, answer);
-    autoFilterFields = Object.fromEntries(fields.map(f => [f, decision.fields[f] ?? `not_candidate:${reasons[f]}`]));
     automatic = { filters: decision.filters, reason: decision.filters ? 'applied' : 'not_applied' };
   }
   const appliedFilters = automatic.filters ? { ...input.filters, ...automatic.filters } : input.filters;

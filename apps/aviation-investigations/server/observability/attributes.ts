@@ -192,7 +192,7 @@ export function genAiAttributes(a: Readonly<Record<string, string | number>>): R
     'gen_ai.request.model': a.model,
     'langfuse.observation.type': 'generation',
     'langfuse.observation.model.name': a.model,
-    ...(['scope.e3', 'rerank.r1', 'attr.a1'].includes(String(a.promptVersion)) ? {
+    ...(['scope.e3', 'rerank.r1', 'attr.a2'].includes(String(a.promptVersion)) ? {
       'langfuse.observation.prompt.name': `aircase-${a.promptVersion}`,
       'langfuse.observation.prompt.version': 1,
     } : {}),

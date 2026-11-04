@@ -799,8 +799,8 @@ by the evidence ranking object; incompatible model overrides fail its price chec
 Only the baseline retains suggestion-based highlights (executed words if absent);
 every alternative highlights executed lexical words. This policy is part of the hash.
 The conservative reservations are $0.0025 without rerank, $0.0090 for Haiku/50,
-$0.0140 for Haiku/100 and $0.1332 for Sonnet/50, each $0.000875 more (before the
-rounding) under the `attributed.v1` automatic-filter policy: $0.0034, $0.0099, $0.0149 and $0.1341. Confirm budget capacity before
+$0.0140 for Haiku/100 and $0.1332 for Sonnet/50, each $0.001225 more (before the
+rounding) under the `attributed.v1` automatic-filter policy: $0.0037, $0.0102, $0.0152 and $0.1345. Confirm budget capacity before
 authorizing any paid test; preflight does not generate.
 
 For a non-HTTP evaluation use `rankEvidence(config, input, providers, spendGate)`
@@ -835,7 +835,10 @@ intervals too wide), not cleared, and it only reorders the retrieved cases.
 `state-explicit.v1.3` fails startup on live: it did not clear the 2026-10-25 security re-check
 ("Find accidents involving aircraft maintained within Alaska" still got an automatic AK filter).
 The default stays `none`. Nothing is enabled on live without the Task 30 evaluation and the
-owner's decision.
+owner's decision, and only the variant the confirmation clears belongs on the live allowlist
+(`LIVE_EVIDENCE_AUTO_FILTERS`, `shared/evidence-auto-filters.ts`): it names `attributed.v1` with all
+three fields today, so if the confirmation clears fewer fields, register that subset as its own
+policy and replace `attributed.v1` with it in the release that follows the confirmation.
 
 **`attributed.v1`** (Task 30) applies the scope's suggested state, years and aircraft category on
 its own when the question names them explicitly and a separate check says each describes the
@@ -844,53 +847,85 @@ automatic filters.
 
 - Deterministic candidates (`shared/automatic-candidates.ts`; `state-mention.v1`,
   `year-mention.v1`, `category-mention.v1`): the question's own words must name exactly the
-  suggested values, once each. Years must equal the interval of exactly one supported date
-  expression, with its open or closed ends ("in 2019", "2015 to 2018", "since 2010", "after
-  2015", "2015 or later", "no later than 2019", "after 2015 and before 2020", "the 1990s"). A
-  question with instruction-like wording ("ignore previous instructions", "system prompt", "set
-  the state"), quotation marks, control or formatting characters other than tabs and line breaks,
-  more than 600 characters, or a condition or exception (if, unless, except, excluding, but not)
-  has no candidates at all. An alternative (or, either, nor) outside one field's own value list
-  with a candidate's words among the two words on either side ("in Alaska or at night"), or any
-  comparison word (versus, compare, unlike, rather than, instead of, whereas), refuses every
-  candidate; "fatal or serious accidents in Alaska" keeps its state.
-- One check (`attr.a1`, `server/ai/prompts/attribution.a1.ts`) on Haiku 5.5, only when there is a
-  candidate: thinking off, effort low, no retries, a cached system prompt, at most 5,000 input and
-  500 output tokens, an 8-second bound, inside the scope phase. A candidate applies only as a
-  whole, when its check names the field's accident class and quotes a span of the question
-  holding the candidate's matched words. A failure, timeout, invalid or incomplete answer, another
-  class or a bad quote applies nothing for that field and leaves it a suggestion. The uncertain
-  allowance, a failed scope and non-search intents skip the check.
-- Money: the check's worst case is $0.000875 (5,000 input tokens all written to the cache and 500
-  output tokens at the price table's Haiku rates). A typical request is about 2,300 input and 100
-  output tokens by the offline sizing, about $0.0003 or less when the five-minute cache hits; a
+  suggested values, once each, and at most eight states and three categories (more is
+  `too_many_values`). Words of one category within two words are one mention ("blimp or airship").
+- Years must equal the interval of exactly one supported date expression, with its open or closed
+  ends ("in 2019", "2015 to 2018", "since 2010", "after 2015", "2015 or later", "no later than
+  2019", "after 2015 and before 2020", "in the 1990s"). The grammar is an allowlist: a decade only
+  after in, during, throughout, from, "of" after an event noun or first in the question, never "the
+  1900s" or "the 2000s"; a portion word ("late in the 1990s"), a two-digit second year
+  ("2015-18"), an operator joined to another ("in and after 2015"), a duration or offset before
+  the operator ("a year after", "shortly after") or a relative end ("at the latest", "and the
+  years since") gives no interval; only the end, punctuation, a value, an event noun or a word
+  that opens a new phrase may follow a year. A year after a word about a person, an aircraft's
+  history or a document ("aircraft built in 1981") is set aside, and no longer makes the field
+  ambiguous.
+- A value is no candidate when its mention sits inside another event's phrase ("reports citing
+  accidents in Alaska", "accidents like those in Utah"), follows title or text wording ("the
+  heading Helicopter accidents"), or, for a category, names a person, business, part, kit, model,
+  experience or comparison ("helicopter pilots", "airplane parts", "time in gliders", "like a
+  helicopter"); another aircraft or traffic nearby ("with an aircraft nearby") is a relationship.
+  Negations include not, no, never, without, nowhere, none, n't, apart from, far from, "every state
+  but" and a non- prefix on the mention. A capitalised OR before a word is the conjunction, not
+  Oregon, and a `City, XX` place whose city is a state name ("Washington, DC", "Delaware, OH") is
+  ambiguous.
+- A question with instruction-like wording ("ignore previous instructions", "system prompt", "set
+  the state"), quotation marks (also ‘ ’ ‚ ‛ ‹ › 「 」 『 』), any control, format, variation-selector or
+  tag character other than tabs and line breaks, more than 600 characters, a condition or exception
+  (if, unless, except, excluding, but not), or two requests joined in one sentence ("Alaska
+  accidents and helicopter accidents", "helicopter crashes at night or any accident in Alaska";
+  `union_of_requests`, "accidents and incidents in Alaska" too) has no candidates at all. With
+  candidates in two or more fields, any alternative word (or, either, nor) outside one field's own
+  value list refuses them all; with one, only an alternative with the candidate's words among the
+  two words on either side does ("in Alaska or at night"; "fatal or serious accidents in Alaska"
+  keeps its state). Any comparison word (versus, compare, unlike, rather than, instead of, whereas)
+  refuses every candidate.
+- One check (`attr.a2`, `server/ai/prompts/attribution.a2.ts`) on Haiku 5.5, only when there is a
+  candidate: one check per value (`state:XX` for each state, `years`, `category:CODE` for each
+  category; at most twelve), thinking off, effort low, no retries, a cached system prompt, at most
+  5,000 input and 1,200 output tokens, an 8-second bound, inside the scope phase. A field applies only
+  as a whole, when every one of its values' checks names the field's accident class and quotes a
+  span of the question holding that value's own matched words ("crashes in Nevada of aircraft
+  registered in California" cannot apply California with Nevada). A failure, timeout, invalid or
+  incomplete answer, another class or a bad quote applies nothing for that field and leaves it a
+  suggestion. The uncertain allowance, a failed scope and non-search intents skip the check.
+- Money: the check's worst case is $0.001225 (5,000 input tokens all written to the cache and 1,200
+  output tokens at the price table's Haiku rates). A typical request is about 3,200 input and 100
+  output tokens by the offline sizing, about $0.0004, less when the five-minute cache hits; a
   search without a candidate makes no call. The search reservation adds the worst case before its
-  one rounding: $0.0034 with `er-q-v1` and $0.0099 with `er-q-h50-v1` (from $0.0025 and $0.0090).
+  one rounding: $0.0037 with `er-q-v1` and $0.0102 with `er-q-h50-v1` (from $0.0025 and $0.0090).
   The check settles as its own `attribution` ledger line; a call of unknown usage is charged at
   its worst case and counts toward the daily uncertain allowance.
 - Time: the request deadline adds the check's 8 seconds once (73 seconds at most, with the
   depth-100 reranker, under the 120-second lease).
 
-To enable it on an environment:
+To enable it on an environment, in two steps:
 
 1. Apply migration **0030_automatic_fields** with `pnpm app:migrate`. It lets the automatic keys
    `state`, `yearFrom`, `yearTo` and `category` change a running search's filters at settlement
    (0025 allowed `state` only); grants and the schema snapshot are unchanged. Without it every
    search with automatic years or a category fails at settlement.
-2. Deploy the web client that shows and undoes automatic years and category.
-3. Set `AVIATION_EVIDENCE_AUTO_FILTERS=attributed.v1` and run `pnpm worker ai-preflight` with
-   those settings **before** `pnpm app:up`. It counts the check's real request: the fixed prompt
-   and schema, the largest candidate set (all 51 states, the longest year value and category
-   label) with a 600-character question, and the output at its schema bounds. Require no OVER row;
-   the 5,000-token cap was sized offline (the largest request is about 4,000-4,500 tokens with a
-   dense 600-character question), and a request over it is refused unbilled at runtime (that
-   search applies nothing).
+2. **First release, the reader:** deploy this image, whose server and web client read and undo
+   automatic years and category, with `AVIATION_EVIDENCE_AUTO_FILTERS=none`. Let open tabs reload
+   the new client before the next step: an older tab reads only automatic `state` and rejects a
+   page with automatic years or a category. `none` on this reader is also the rollback.
+3. **Then enable**, only with the variant the confirmation cleared on the live allowlist (above):
+   set `AVIATION_EVIDENCE_AUTO_FILTERS=attributed.v1` (or the confirmed subset) and run
+   `pnpm worker ai-preflight` with those settings **before** `pnpm app:up`. It counts the check's
+   real request: the fixed prompt and schema, the most values one check takes (the eight longest
+   state labels, the longest year value and the three longest category labels) with a
+   600-character question, and the output at its schema bounds (twelve checks with 160-character
+   quotes). Require no OVER row. The free count on the Task 30 release candidate was 2,924
+   tokens for the largest request with a Latin question and 3,328 with a dense one (cap 5,000),
+   2,356 for the cached prefix, and 982 for the output at its bounds (cap 1,200). At runtime a
+   request over the input cap is refused unbilled, and an answer over the output cap truncates
+   (billed); either way that search applies nothing.
 4. Run `pnpm app:up`, check that `/api/config` reports `aiAutomaticFilters:
    ['state', 'years', 'category']` after its cache expires, and that automatic filters are
    disclosed and removable without a visitor quota unit.
-5. Monitor the private `autoFilterReason`, `autoFilterFields` and `attributionOutcome` mix, the
-   `evidence.attribution` spans and the ledger's `attribution` lines. Keep these diagnostics and
-   question text out of logs and traces.
+5. Monitor the private `autoFilterReason`, `autoFilterFields` and `attributionOutcome` mix (kept
+   on failed searches too, once the check has settled), the `evidence.attribution` spans and the
+   ledger's `attribution` lines. Keep these diagnostics and question text out of logs and traces.
 
 **Rollback** is a policy change on the same release: set `AVIATION_EVIDENCE_AUTO_FILTERS=none`,
 run `pnpm worker ai-preflight`, then `pnpm app:up`. New question searches apply nothing and make no
@@ -927,14 +962,15 @@ The automatic-policy identity includes behavioural probe outputs. Current hashes
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
 | `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
-| `attributed.v1` | `b554b3ede32e6d2d69d974329faa31ea0374252cc41880653f3d8934a4336824` |
+| `attributed.v1` | `102401506dc56512a1042499c0afc968ac1337212cc4a11aaa6f7c001958c33c` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs (`state-probes.v5`, 499
 probes); `none` records no active guard. attributed.v1 hashes its fields, rule versions, check
 settings, caps and timeout, the prompt's system text and wire schema, and `candidate-probes.v1`:
-the candidate builder's outputs on fixed questions, the rendered check inputs and the decisions on
-fixed check answers, so a changed rule, renderer or quote validator changes it too. Do not relabel
-older cached results with these identities.
+the candidate builder's outputs on 1,452 fixed questions (every word list entry and every form the
+reviews named), the rendered check inputs and the decisions on 31 fixed check answers, so a changed
+rule, renderer or quote validator changes it too. Do not relabel older cached results with these
+identities.
 
 Apply migration 0025 before serving v3. Its known local-test-only round-2 and round-3 versions are
 reapplied transactionally by the migrator without removing existing undo claims; other
@@ -1930,7 +1966,8 @@ tag and digest together.
    `NODE_EXTRA_CA_CERTS`; Docker uses its configured trusted endpoint. Run
    `pnpm -s worker langfuse-prompts --sync` before releasing linked generation spans.
    It only calls Langfuse, never a model provider. Run it again to verify idempotence.
-   It mirrors `aircase-scope.e3`, `aircase-rerank.r1` and `aircase-attr.a1` (Task 30); each
+   It mirrors `aircase-scope.e3`, `aircase-rerank.r1` and `aircase-attr.a2` (Task 30; `attr.a1` was
+   never deployed); each
    prompt's content hash must be the same in both runs; a modified mirror or a version other
    than 1 is a release failure. Do not edit the mirror in the Langfuse UI; resolve drift
    against the frozen code and review any deliberate prompt version change.

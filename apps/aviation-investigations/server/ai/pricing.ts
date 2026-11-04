@@ -116,14 +116,15 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
  * Includes the strict object envelope and maximum-length Unicode suggested terms. */
 export const EVIDENCE_SCOPE_CAPS = Object.freeze({ input: 10_000, output: 2_500 });
 /**
- * The automatic-filter attribution check (`attr.a1`, Haiku 5.5): a question of at most 600
- * characters and at most three candidates. Offline sizing puts the fixed prompt and schema near
- * 2,200-2,400 tokens and the largest request (all 51 states, a 600-character dense question) near
- * 4,000-4,500, so input is capped at 5,000. Its worst case is priced like scope's, with the cached
- * prefix (`CACHED_PREFIX_MAX`) bounded by the input cap, so the whole input is a cache write:
- * 5,000 × $0.10 + 500 × $0.50 + 5,000 × $0.025 premium per million = $0.000875.
+ * The automatic-filter attribution check (`attr.a2`, Haiku 5.5): a question of at most 600
+ * characters and at most twelve values (eight states, the year range, three categories), one
+ * check each. The free preflight counted twelve checks at their schema bounds at 982 output
+ * tokens, so output is capped at 1,200; the largest request was 3,328 tokens, so input stays
+ * capped at 5,000. Its worst case is priced like scope's, with the cached prefix
+ * (`CACHED_PREFIX_MAX`) bounded by the input cap, so the whole input is a cache write:
+ * 5,000 × $0.10 + 1,200 × $0.50 + 5,000 × $0.025 premium per million = $0.001225.
  */
-export const ATTRIBUTION_CAPS = Object.freeze({ input: 5_000, output: 500 });
+export const ATTRIBUTION_CAPS = Object.freeze({ input: 5_000, output: 1_200 });
 
 export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; readonly output: number }>> = {
   scope: { input: 6_500, output: 600 },

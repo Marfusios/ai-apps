@@ -8,7 +8,7 @@
 import { RerankInputSchema, RerankOutputSchema, RERANK_SYSTEM, RERANK_VERSION, renderRerankUser } from './prompts/rerank.r1.js';
 import { assertEvidenceRanking, type EvidenceRankingConfig } from '../evidence/ranking-config.js';
 import { ATTRIBUTION_CAPS, EVIDENCE_SCOPE_CAPS } from './pricing.js';
-import { AttributionInputSchema, AttributionWireOutputSchema, ATTRIBUTION_SYSTEM, ATTRIBUTION_VERSION, renderAttributionUser } from './prompts/attribution.a1.js';
+import { AttributionInputSchema, AttributionWireOutputSchema, ATTRIBUTION_SYSTEM, ATTRIBUTION_VERSION, renderAttributionUser } from './prompts/attribution.a2.js';
 import { EvidenceScopeInputSchema, EvidenceScopeWireOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from './prompts/scope.e1.js';
 import Anthropic, {
   APIConnectionError,

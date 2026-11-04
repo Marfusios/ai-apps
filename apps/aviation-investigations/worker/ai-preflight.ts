@@ -29,9 +29,9 @@ import { evidenceReservation } from '../server/evidence/pricing.js';
 import type { EvidenceRankingConfig } from '../server/evidence/ranking-config.js';
 import { attributionStage, type EvidenceAutoFilterPolicy } from '../server/evidence/auto-filters.js';
 import { attributionInput } from '../server/evidence/attribution.js';
-import { ATTRIBUTION_VERSION, renderAttributionUser } from '../server/ai/prompts/attribution.a1.js';
-import { AUTOMATIC_QUESTION_MAX_CHARS, CATEGORY_WORDS } from '../shared/automatic-candidates.js';
-import { AIRCRAFT_CATEGORY, US_STATE_CODES } from '../shared/vocab.js';
+import { ATTRIBUTION_VERSION, renderAttributionUser } from '../server/ai/prompts/attribution.a2.js';
+import { AUTOMATIC_MAX_CATEGORIES, AUTOMATIC_MAX_STATES, AUTOMATIC_QUESTION_MAX_CHARS, CATEGORY_WORDS } from '../shared/automatic-candidates.js';
+import { AIRCRAFT_CATEGORY, US_STATE, US_STATE_CODES } from '../shared/vocab.js';
 import { FACET_VALUES } from '../shared/contracts/search.js';
 import { BRIEF_FILTER_FACETS } from '../shared/contracts/briefs.js';
 import { EVIDENCE_SCOPE_CAPS } from '../server/ai/pricing.js';
@@ -427,25 +427,29 @@ export function evidencePreflightRequests() {
 
 /**
  * The attribution check at its largest: a 600-character question (longer ones are never
- * candidates; Latin, and dense text the provider counts with more tokens) and three candidates:
- * all 51 states, the longest year value and the longest category label. The output holds three
- * checks with the longest `about` and 160-character quotes. Never truncated to fit.
+ * candidates; Latin, and dense text the provider counts with more tokens) and the most values
+ * one check takes: the eight longest state labels, the longest year value and the three longest
+ * category labels. The output holds one check per value with the longest `about` and
+ * 160-character quotes. Never truncated to fit.
  */
 export function attributionPreflightRequests() {
-  const longestCategory = Object.keys(CATEGORY_WORDS).sort((a, b) => AIRCRAFT_CATEGORY[b]!.length - AIRCRAFT_CATEGORY[a]!.length)[0]!;
+  const longest = (codes: readonly string[], label: (code: string) => string, n: number) =>
+    [...codes].sort((a, b) => label(b).length - label(a).length || a.localeCompare(b)).slice(0, n);
+  // Witnesses do not reach the check's input.
   const most = [
-    { field: 'state' as const, state: [...US_STATE_CODES], witnesses: [] },
+    { field: 'state' as const, state: longest(US_STATE_CODES, code => US_STATE[code]!, AUTOMATIC_MAX_STATES), witnesses: [] },
     { field: 'years' as const, yearTo: 1999, witnesses: [] },
-    { field: 'category' as const, category: [longestCategory], witnesses: [] },
+    { field: 'category' as const, category: longest(Object.keys(CATEGORY_WORDS), code => AIRCRAFT_CATEGORY[code]!, AUTOMATIC_MAX_CATEGORIES), witnesses: [] },
   ];
   const dense = '整備直後に発動機の出力が低下し、操縦士は農地に不時着した。'.repeat(30).slice(0, AUTOMATIC_QUESTION_MAX_CHARS);
+  const latin = attributionInput(exactly(AUTOMATIC_QUESTION_MAX_CHARS), most);
   return {
     fixed: attributionInput('Find helicopter accidents in Ohio.', [{ field: 'state', state: ['OH'], witnesses: [] }]),
     worst: [
-      { label: `most candidates, ${AUTOMATIC_QUESTION_MAX_CHARS}-character Latin question`, latin: true, input: attributionInput(exactly(AUTOMATIC_QUESTION_MAX_CHARS), most) },
-      { label: `most candidates, ${AUTOMATIC_QUESTION_MAX_CHARS}-character dense question`, latin: false, input: attributionInput(dense, most) },
+      { label: `most values, ${AUTOMATIC_QUESTION_MAX_CHARS}-character Latin question`, latin: true, input: latin },
+      { label: `most values, ${AUTOMATIC_QUESTION_MAX_CHARS}-character dense question`, latin: false, input: attributionInput(dense, most) },
     ],
-    output: JSON.stringify({ result: { checks: (['state', 'years', 'category'] as const).map((id, i) => ({ id, about: 'departure_or_destination', quote: exactly(160, i) })) } }),
+    output: JSON.stringify({ result: { checks: latin.candidates.map((c, i) => ({ id: c.id, about: 'departure_or_destination', quote: exactly(160, i) })) } }),
   };
 }
 

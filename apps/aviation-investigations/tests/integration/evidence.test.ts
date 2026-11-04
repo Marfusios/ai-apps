@@ -1378,6 +1378,24 @@ describe('attributed.v1: automatic years and aircraft category', () => {
     expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence automatic filters unavailable')).toMatchObject({ stage: 'attribution', failure: 'timeout' });
     expect(h.logs.join('')).not.toContain(question);
   });
+  it('a search stopped during the check keeps what the check did in its private facts (review M6)', async () => {
+    let started!: () => void;
+    const reached = new Promise<void>(r => { started = r; });
+    const h = withFields({ evidenceScope: { output: scope }, evidenceAttribution: async (_input, ctx) => {
+      started(); await new Promise<void>(r => ctx.signal.addEventListener('abort', () => r(), { once: true }));
+      return { fail: 'timeout', billing: { kind: 'uncertain' } };
+    } });
+    const request = h.request({ question }); await reached;
+    h.svc.beginShutdown();
+    expect((await request).statusCode).toBe(503);
+    const [row] = await db.select().from(evidenceSearches);
+    expect(row).toMatchObject({ status: 'failed', data: { attributionOutcome: 'aborted',
+      autoFilterFields: { state: 'not_candidate:empty', years: 'attribution_unavailable', category: 'attribution_unavailable' } } });
+    // The paid check's line is the uncertain worst case; nothing was retrieved.
+    const lines = await db.execute(sql`SELECT stage, uncertain FROM cost_ledger ORDER BY id`);
+    expect(lines.rows).toEqual([{ stage: 'scope', uncertain: false }, { stage: 'attribution', uncertain: true }]);
+    expect(h.embed).not.toHaveBeenCalled();
+  });
   it('the database lets only automatic keys change a running search\'s filters', async () => {
     let entered!: () => void, release!: () => void;
     const reached = new Promise<void>(r => { entered = r; });

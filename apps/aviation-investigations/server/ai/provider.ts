@@ -5,7 +5,7 @@
  * (`AI_LLM_PROVIDER`); there is no per-request routing or failover.
  */
 import type { RerankInput, RerankOutput } from './prompts/rerank.r1.js';
-import type { AttributionInput, AttributionOutput } from './prompts/attribution.a1.js';
+import type { AttributionInput, AttributionOutput } from './prompts/attribution.a2.js';
 import type { EvidenceRankingConfig } from '../evidence/ranking-config.js';
 import { z } from 'zod';
 import type { EvidenceScopeInput, EvidenceScopeOutput } from './prompts/scope.e1.js';
@@ -469,7 +469,7 @@ export interface LlmProvider {
   countEvidenceScopeTokens?(input: EvidenceScopeInput, ctx: StageCtx): Promise<number>;
   rerank?(input: RerankInput, ctx: StageCtx, config: EvidenceRankingConfig): Promise<StageResult<RerankOutput>>;
   countRerankTokens?(input: RerankInput, ctx: StageCtx, config: EvidenceRankingConfig): Promise<number>;
-  /** The automatic-filter attribution check (`attr.a1`, on `ATTRIBUTION_MODEL`). */
+  /** The automatic-filter attribution check (`attr.a2`, on `ATTRIBUTION_MODEL`). */
   evidenceAttribution?(input: AttributionInput, ctx: StageCtx): Promise<StageResult<AttributionOutput>>;
   countEvidenceAttributionTokens?(input: AttributionInput, ctx: StageCtx): Promise<number>;
   scope(input: ScopeInput, ctx: StageCtx): Promise<StageResult<ScopeOutput>>;
