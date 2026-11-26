@@ -528,10 +528,22 @@ prune` removes the untagged layers that `dev` rebuilds leave behind.
 
 ### Release command
 
-After the reviewed merge, create an **annotated** tag on the clean release commit,
-named `YYYY.MM.DD-<first seven characters of HEAD>` (for example with
-`git tag -a <tag> -m <release-note>`). Exactly one tag matching that form may name HEAD;
-its suffix must match the commit. The command creates no tags, merges or pushes.
+Releases come from `main`, and nothing deploys on a push or a merge. Changes reach `main`
+through reviewed pull requests, while the release checkout (the one the importer runs
+from) stays on the released commit. The importer starts only while that checkout is clean
+and its HEAD equals the commit pinned in the importer config, so any other commit, pull or
+untracked file there stops the daily run until a release re-pins it. Release in one
+session, outside the 03:30 to 06:00 Europe/Prague quiet window:
+
+1. In the release checkout, on `main`, fast-forward to the reviewed merge with
+   `git pull --ff-only`.
+2. Create an **annotated** tag on that commit, named
+   `YYYY.MM.DD-<first seven characters of HEAD>` (for example with
+   `git tag -a <tag> -m <release-note>`), and push it with `git push origin <tag>`.
+   Exactly one tag matching that form may name HEAD; its suffix must match the commit.
+3. Run the dry run, then the release, as below.
+
+The command creates no tags, merges or pushes.
 
 Use a **tmux or screen session** for the release so a dropped SSH connection does not
 interrupt it. The launcher uses `node --import tsx`, without the tsx CLI's signal relay.
@@ -552,7 +564,7 @@ files need owner-only permissions (no group or other access); they are not rewri
 {
   "version": "aircase-release.v1",
   "checkout": "/abs/ai-apps",
-  "branch": "aviation-casebook",
+  "branch": "main",
   "importerConfig": "/abs/private/importer.json",
   "publicUrl": "https://example.org",
   "logDir": "/abs/private/release-logs",
