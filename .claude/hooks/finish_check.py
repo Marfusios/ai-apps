@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -123,32 +124,50 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run) -> list[str]:
     return problems
 
 
+def release(process: subprocess.Popen[bytes], reader: threading.Thread) -> None:
+    """Close the pipe unless the reader is still blocked in it, in which case it is abandoned."""
+    if not reader.is_alive():
+        process.stdout.close()
+
+
 def run_command(argv: Sequence[str], cwd: Path, timeout_seconds: int) -> tuple[int, str]:
-    """Run a command and return its exit code and combined output; the hook never waits longer than the timeout plus a grace."""
+    """Run a command and return its exit code and combined output; nothing here waits without a bound."""
     try:
         process = subprocess.Popen(list(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, text=True, errors="replace",
-                                   start_new_session=os.name != "nt")
+                                   stderr=subprocess.STDOUT, bufsize=0, start_new_session=os.name != "nt")
     except OSError as error:
         return 127, f"could not run {argv[0]}: {error}"
+    chunks: list[bytes] = []
+
+    def read_output() -> None:
+        fd = process.stdout.fileno()
+        try:
+            while chunk := os.read(fd, 65536):
+                chunks.append(chunk)
+        except OSError:
+            pass
+
+    # An unbuffered pipe read by our own thread has no lock that close() could wait on, so a reader
+    # stuck behind a surviving grandchild can simply be abandoned.
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
     try:
-        output, _ = process.communicate(timeout=timeout_seconds)
+        process.wait(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
         # Grandchildren are killed on POSIX only; on Windows a survivor is left to finish, but the hook still returns 124.
         if os.name != "nt":
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(process.pid, signal.SIGKILL)
         process.kill()
-        collected = ""
-        try:
-            collected, _ = process.communicate(timeout=KILL_GRACE)
-        except subprocess.TimeoutExpired as late:
-            if isinstance(late.output, str):
-                collected = late.output
-        finally:
-            process.stdout.close()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=KILL_GRACE)
+        reader.join(KILL_GRACE)
+        release(process, reader)
+        collected = b"".join(chunks).decode("utf-8", errors="replace")
         return 124, f"timed out after {timeout_seconds} seconds" + (f"\n{tail(collected)}" if collected.strip() else "")
-    return process.returncode, output
+    reader.join(KILL_GRACE)
+    release(process, reader)
+    return process.returncode, b"".join(chunks).decode("utf-8", errors="replace")
 
 
 def main() -> None:

@@ -6,6 +6,8 @@ import json
 import os
 import tempfile
 import shutil
+import subprocess
+import sys
 import time
 import unittest
 from collections.abc import Sequence
@@ -314,10 +316,26 @@ class RunCommandTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("sh"), "needs a POSIX shell")
     def test_timeout_returns_promptly_even_when_a_grandchild_holds_the_pipe(self) -> None:
         started = time.monotonic()
-        code, output = finish_check.run_command(["sh", "-c", "sleep 6 & wait"], Path.cwd(), 1)
-        self.assertLess(time.monotonic() - started, 5 + 1 + 3)
+        code, output = finish_check.run_command(["sh", "-c", "sleep 30 & wait"], Path.cwd(), 1)
+        self.assertLess(time.monotonic() - started, 10)
         self.assertEqual(code, 124)
         self.assertIn("timed out after 1 seconds", output)
+
+    @unittest.skipUnless(shutil.which("sh"), "needs a POSIX shell")
+    def test_a_process_that_hit_the_timeout_with_a_grandchild_still_exits_cleanly(self) -> None:
+        script = ("import sys\n"
+                  "from pathlib import Path\n"
+                  "from factory.tests.hookload import load_hook\n"
+                  "code, output = load_hook('finish_check').run_command(['sh', '-c', 'sleep 30 & wait'], Path.cwd(), 1)\n"
+                  "print(code, output)\n")
+        started = time.monotonic()
+        child = subprocess.run([sys.executable, "-W", "error", "-c", script], cwd=finish_check.REPO_ROOT, capture_output=True,
+                               text=True, timeout=60)
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertEqual(child.returncode, 0, child.stderr)
+        self.assertIn("124 timed out after 1 seconds", child.stdout)
+        self.assertNotIn("Fatal Python error", child.stderr)
+        self.assertNotIn("Exception ignored", child.stderr)
 
     def test_output_and_exit_code_are_returned(self) -> None:
         code, output = finish_check.run_command(
