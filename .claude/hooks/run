@@ -1,0 +1,30 @@
+#!/bin/sh
+# Run the hook script named by $1 with the first Python 3.11 or newer found. Exit 2, which blocks the tool
+# call, when that is impossible: a guard that cannot run must not wave things through.
+hook=${1-}
+case $0 in
+    */*) dir=${0%/*} ;;
+    *) dir=. ;;
+esac
+case $hook in
+    '' | *[!A-Za-z0-9_]*)
+        echo "hook launcher: give the name of a hook in $dir" >&2
+        exit 2 ;;
+esac
+if [ ! -f "$dir/$hook.py" ]; then
+    echo "hook launcher: there is no $hook hook in $dir" >&2
+    exit 2
+fi
+shift
+check='import sys; sys.exit(sys.version_info < (3, 11))'
+for python in python3 python; do
+    if "$python" -c "$check" </dev/null >/dev/null 2>&1; then
+        exec "$python" "$dir/$hook.py" "$@"
+    fi
+done
+# The Windows launcher takes the version as a second word, so it is tried on its own.
+if py -3 -c "$check" </dev/null >/dev/null 2>&1; then
+    exec py -3 "$dir/$hook.py" "$@"
+fi
+echo "hook launcher: no Python 3.11 or newer found to run the $hook hook" >&2
+exit 2
