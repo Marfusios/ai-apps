@@ -123,71 +123,31 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run) -> list[str]:
     return problems
 
 
-def windows_job(pid: int) -> Callable[[], None] | None:
-    """Put the process in a job object that kills all its members; return the function that does so.
-
-    taskkill /T cannot find the grandchildren of an MSYS shell, because MSYS forks without a lasting parent link.
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    class Basic(ctypes.Structure):
-        _fields_ = [("user_time", ctypes.c_int64), ("job_user_time", ctypes.c_int64), ("flags", wintypes.DWORD),
-                    ("min_set", ctypes.c_size_t), ("max_set", ctypes.c_size_t), ("active", wintypes.DWORD),
-                    ("affinity", ctypes.c_size_t), ("priority", wintypes.DWORD), ("scheduling", wintypes.DWORD)]
-
-    class Extended(ctypes.Structure):
-        _fields_ = [("basic", Basic), ("io", ctypes.c_uint64 * 6), ("memory", ctypes.c_size_t * 4)]
-
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.CreateJobObjectW.restype = kernel.OpenProcess.restype = wintypes.HANDLE
-    kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
-    kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-    kernel.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    job = kernel.CreateJobObjectW(None, None)
-    process = kernel.OpenProcess(0x0101, False, pid)  # PROCESS_TERMINATE | PROCESS_SET_QUOTA
-    if not job or not process:
-        return None
-    limits = Extended()
-    limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    ok = (kernel.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits))
-          and kernel.AssignProcessToJobObject(job, process))
-    kernel.CloseHandle(process)
-    if not ok:
-        kernel.CloseHandle(job)
-        return None
-
-    def kill() -> None:
-        kernel.TerminateJobObject(job, 1)
-        kernel.CloseHandle(job)  # closing also kills whatever is left, should the kill never be called
-
-    return kill
-
-
 def run_command(argv: Sequence[str], cwd: Path, timeout_seconds: int) -> tuple[int, str]:
-    """Run a command and return its exit code and combined output; a timeout kills the whole process tree."""
+    """Run a command and return its exit code and combined output; the hook never waits longer than the timeout plus a grace."""
     try:
         process = subprocess.Popen(list(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, errors="replace",
                                    start_new_session=os.name != "nt")
     except OSError as error:
         return 127, f"could not run {argv[0]}: {error}"
-    kill_job = windows_job(process.pid) if os.name == "nt" else None
     try:
         output, _ = process.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
-        if kill_job:
-            kill_job()
-        else:
+        # Grandchildren are killed on POSIX only; on Windows a survivor is left to finish, but the hook still returns 124.
+        if os.name != "nt":
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(process.pid, signal.SIGKILL)
         process.kill()
+        collected = ""
         try:
-            process.communicate(timeout=KILL_GRACE)  # a short, bounded wait: the hook itself must never hang
-        except subprocess.TimeoutExpired:
-            pass
-        return 124, f"timed out after {timeout_seconds} seconds"
+            collected, _ = process.communicate(timeout=KILL_GRACE)
+        except subprocess.TimeoutExpired as late:
+            if isinstance(late.output, str):
+                collected = late.output
+        finally:
+            process.stdout.close()
+        return 124, f"timed out after {timeout_seconds} seconds" + (f"\n{tail(collected)}" if collected.strip() else "")
     return process.returncode, output
 
 
