@@ -17,14 +17,14 @@ FIX = ("Give the reason on the same line (for ESLint after ` -- `, otherwise at 
        "argument), or remove the marker. For a focused test, remove `.only`.")
 
 NOT_AN_ATTRIBUTE = r"(?<![\w.$])"
-FOCUSED = re.compile(r"\b(?:describe|it|test|suite|context)\.only\(|"
-                     + NOT_AN_ATTRIBUTE + r"(?:fit|fdescribe)\(\s*['\"`]")  # a bare fit(data) is a model call
+FOCUSED = re.compile(r"\b(?:describe|it|test|suite|context)(?:\.\w+)*\.only(?:\.\w+)*\(|"  # it.concurrent.only.each(
+                     + NOT_AN_ATTRIBUTE + r"(?:fdescribe\(|fit\(\s*['\"`])")  # a bare fit(data) is a model call
 SKIPPED = re.compile(r"\b(?:describe|it|test)\.skip\(|" + NOT_AN_ATTRIBUTE + r"x(?:it|describe|test)\(|"
                      r"@pytest\.mark\.skip\b(?!if)|@unittest\.skip(?![A-Za-z])|\bt\.Skip\(\)|#\[ignore\b|"
                      r"@Disabled\b|@Ignore\b")
-SUPPRESSION = re.compile(r"eslint-disable|@ts-ignore|@ts-expect-error|@ts-nocheck|biome-ignore|# noqa|# type: ignore|"
-                         r"# pylint: disable|# pyright: ignore|//nolint|#!?\[allow\([^)]*\)\]?|@SuppressWarnings|"
-                         r"istanbul ignore|c8 ignore|v8 ignore|pragma: no cover")
+SUPPRESSION = re.compile(r"eslint-disable|@ts-ignore|@ts-expect-error|@ts-nocheck|biome-ignore|#\s*noqa|"
+                         r"#\s*type:\s*ignore|#\s*pylint:\s*disable|#\s*pyright:\s*ignore|//\s*nolint|#!?\[allow\([^)]*\)\]?|"
+                         r"@SuppressWarnings|istanbul ignore|c8 ignore|v8 ignore|pragma: no cover", re.IGNORECASE)
 # What may stand between a marker and its reason: an attached rule (":errcheck"), a bracket group, a rule id such as
 # "no-console" or "E501", and the position words of the coverage markers.
 RULE_LIST = re.compile(r"[:=]\S+|[\[(][^\])]*[\])]|[\w./@-]*[\d_./-][\w./@-]*|(?:next|start|stop|file|if|else)\b")
@@ -65,7 +65,7 @@ def problems(line: str) -> bool:
             return True
     for match in SUPPRESSION.finditer(line):
         # ESLint's own syntax puts the reason after ` -- `, so its rule names can never count as one
-        reason = line.partition(" -- ")[2] if match.group() == "eslint-disable" else suppression_reason(line[match.end():])
+        reason = line.partition(" -- ")[2] if match.group().lower() == "eslint-disable" else suppression_reason(line[match.end():])
         if not has_reason(reason):
             return True
     return False

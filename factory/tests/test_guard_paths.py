@@ -136,10 +136,20 @@ class MainTests(unittest.TestCase):
     def test_harmless_edit_prints_nothing(self):
         self.assertEqual(self.run_hook(self.event("file_path", "apps/a.ts")), "")
 
-    def test_missing_or_odd_path_is_allowed(self):
-        self.assertEqual(self.run_hook({"tool_name": "Write", "tool_input": {}}), "")
-        self.assertEqual(self.run_hook(self.event("file_path", 7)), "")
-        self.assertEqual(self.run_hook({"tool_name": "Write", "tool_input": "x"}), "")
+    def test_a_write_tool_without_a_usable_path_is_denied(self):
+        for tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+            for tool_input in ({}, {"file_path": 7}, {"notebook_path": ["a"]}, "x"):
+                with self.subTest(tool=tool, tool_input=tool_input):
+                    output = json.loads(self.run_hook({"tool_name": tool, "tool_input": tool_input}))
+                    decision = output["hookSpecificOutput"]
+                    self.assertEqual(decision["permissionDecision"], "deny")
+                    self.assertIn("no path to inspect", decision["permissionDecisionReason"])
+
+    def test_input_that_names_no_write_tool_is_allowed(self):
+        self.assertEqual(self.run_hook({}), "")
+        self.assertEqual(self.run_hook({"tool_input": {}}), "")
+        self.assertEqual(self.run_hook({"tool_name": "Read", "tool_input": {}}), "")
+        self.assertEqual(self.run_hook({"tool_name": "Bash", "tool_input": {"command": "ls"}}), "")
 
     def test_unreadable_configuration_falls_back_to_the_default_roots(self):
         with mock.patch.object(guard_paths, "load", side_effect=ValueError("broken")):

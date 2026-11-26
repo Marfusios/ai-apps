@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
 from factory.config import Config, is_writable, load  # noqa: E402  the path must be set before this import
 
 FALLBACK_WRITABLE = ("apps/", "packages/")
+WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 CREDENTIAL_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 CREDENTIAL_PARTS = {"secrets", "credentials"}
 ON_WINDOWS = os.name == "nt"
@@ -71,6 +72,8 @@ def main() -> NoReturn:
     if isinstance(tool_input, dict):
         path = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not isinstance(path, str) or not path:
+        if data.get("tool_name") in WRITE_TOOLS:  # the input shape may have changed: fail closed
+            hooklib.emit(Decision("deny", "The path guard was given no path to inspect for this write."))
         hooklib.emit(Decision("allow"))
     project = hooklib.project_dir(data)
     cwd = data.get("cwd")

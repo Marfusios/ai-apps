@@ -32,6 +32,11 @@ class FindViolationsTests(unittest.TestCase):
                      "suite.only('x', f)", "context.only('x', f)", "fit('x', () => {})",
                      "fdescribe('x', () => {})", "it.only('x', f) // while debugging the import step")
 
+    def test_focus_chains_and_fdescribe_with_any_argument_are_violations(self):
+        self.flagged("fdescribe(name, () => {})", "it.concurrent.only('x', f)", "it.only.each([1, 2])('x', f)",
+                     "test.only.each(table)('x', f)", "describe.only.each([[1]])('x', f)",
+                     "test.concurrent.only.each(table)('x', f)")
+
     def test_ordinary_code_resembling_the_markers_is_not_flagged(self):
         self.passes("const total = profit(a) + benefit(b) + outfit(c)", "submit.only(x)", "model.fit(data)",
                     "fit(data, labels)", "const bit = it.onlyOnce(x)", "// the fit() helper", "x = unfit(y)",
@@ -60,6 +65,26 @@ class FindViolationsTests(unittest.TestCase):
                     '@SuppressWarnings("unchecked") // the cast is checked above',
                     "/* istanbul ignore next -- only reached on Windows paths */",
                     "if x:  # pragma: no cover only reached on Windows")
+
+    def test_marker_spellings_in_other_case_or_spacing_are_violations(self):
+        self.flagged("x = f()  # NOQA", "x = f()  #noqa", "x = f()  #  Noqa: E501", "y = g()  # type:ignore",
+                     "y = g()  #type:ignore[arg-type]", "y = g()  # TYPE: IGNORE", "z = h()  # pylint:disable=foo",
+                     "z = h()  #pylint: disable=foo", "z = h()  # PYLINT: DISABLE=foo", "z = h()  # pyright:ignore",
+                     "z = h()  #pyright: ignore[x]", "z = h()  # Pyright: Ignore", "f() // nolint", "f() // NOLINT",
+                     "f() //  NoLint:errcheck", "// ESLINT-DISABLE-NEXT-LINE no-console",
+                     "// Eslint-Disable-Next-Line no-console", "/* ESLINT-DISABLE */", "// @TS-IGNORE",
+                     "/* ISTANBUL IGNORE NEXT */", "if x:  # Pragma: No Cover")
+
+    def test_marker_spellings_in_other_case_or_spacing_pass_with_a_reason(self):
+        self.passes("x = f()  # NOQA: E501 long URL kept on one line", "x = f()  #noqa: E501 long URL kept here",
+                    "y = g()  #type:ignore[arg-type] the stub misses this overload",
+                    "y = g()  # TYPE: IGNORE[arg-type] the stub misses this overload",
+                    "z = h()  # pylint:disable=foo matches the wire format",
+                    "z = h()  # PYLINT: DISABLE=foo matches the wire format",
+                    "z = h()  #pyright:ignore[x] the stub misses this overload",
+                    "z = h()  # Pyright: Ignore[x] the stub misses this overload",
+                    "f() // NOLINT:errcheck best effort cleanup on exit", "f() //nolint:errcheck best effort cleanup",
+                    "// ESLINT-DISABLE-NEXT-LINE no-console -- the CLI prints its result here")
 
     def test_a_reason_needs_two_words_of_three_letters(self):
         self.flagged("// @ts-ignore ok", "// @ts-ignore it is", "x = f()  # noqa: E501 a b",
