@@ -1,6 +1,7 @@
 """Tests for keeping GitHub labels in line with the factory configuration."""
 
 import io
+import json
 import subprocess
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -64,11 +65,9 @@ class MainTest(unittest.TestCase):
         self.assertEqual(fake.calls[0][:3], ["gh", "label", "list"])
 
     def test_up_to_date_message_when_nothing_differs(self):
-        labels = load().labels
-        listing = "[" + ",".join(
-            '{"name": "%s", "color": "%s", "description": "%s"}' % (l.name, l.color, l.description)
-            for l in labels
-        ) + "]"
+        listing = json.dumps(
+            [{"name": l.name, "color": l.color, "description": l.description} for l in load().labels]
+        )
         code, out, _ = run_main(FakeGh(listing=listing))
         self.assertEqual((code, out), (0, "Labels are up to date.\n"))
 
@@ -77,13 +76,64 @@ class MainTest(unittest.TestCase):
         code, out, _ = run_main(fake, "--apply")
         self.assertEqual(code, 0)
         creates = [c for c in fake.calls if c[:3] == ["gh", "label", "create"]]
-        self.assertEqual(len(creates), len(load().labels))
+        labels = load().labels
+        self.assertEqual(len(creates), len(labels))
+        first = labels[0]
         self.assertEqual(
             creates[0],
-            ["gh", "label", "create", "factory:epic", "--color", "5319e7",
-             "--description", creates[0][7], "--force"],
+            ["gh", "label", "create", first.name, "--color", first.color,
+             "--description", first.description, "--force"],
         )
-        self.assertIn("create factory:epic", out)
+        self.assertIn(f"create {first.name}", out)
+
+    def test_apply_updates_a_differing_label_with_force(self):
+        first = load().labels[0]
+        listing = json.dumps([{"name": first.name, "color": "000000", "description": "Old"}])
+        fake = FakeGh(listing=listing)
+        code, out, _ = run_main(fake, "--apply")
+        self.assertEqual(code, 0)
+        self.assertIn(f"update {first.name}", out)
+        self.assertIn(
+            ["gh", "label", "create", first.name, "--color", first.color,
+             "--description", first.description, "--force"],
+            fake.calls,
+        )
+
+    def test_apply_keeps_going_after_a_failure(self):
+        class FailsFirstCreate(FakeGh):
+            def __call__(self, argv):
+                result = super().__call__(argv)
+                if argv[:3] == ["gh", "label", "create"] and len(self.calls) == 2:
+                    return subprocess.CompletedProcess(argv, 1, "", "first failed")
+                return result
+
+        fake = FailsFirstCreate()
+        code, _, err = run_main(fake, "--apply")
+        creates = [c for c in fake.calls if c[:3] == ["gh", "label", "create"]]
+        self.assertEqual(len(creates), len(load().labels))
+        self.assertGreater(len(creates), 1)
+        self.assertEqual(code, 1)
+        self.assertIn(f"Failed to create {load().labels[0].name}: first failed", err)
+
+    def test_missing_gh_exits_one_with_a_single_line(self):
+        def missing(argv):
+            raise FileNotFoundError("gh")
+
+        code, out, err = run_main(missing, "--apply")
+        self.assertEqual((code, out), (1, ""))
+        self.assertTrue(err.startswith("Cannot list labels"))
+        self.assertEqual(len(err.splitlines()), 1)
+
+    def test_listing_of_the_wrong_shape_exits_one_with_a_message(self):
+        for listing in ("null", '{"message": "Bad credentials"}', '[{"color": "ffffff"}]', "[1]",
+                        '[{"name": 5}]'):
+            with self.subTest(listing=listing):
+                fake = FakeGh(listing=listing)
+                code, out, err = run_main(fake, "--apply")
+                self.assertEqual((code, out), (1, ""))
+                self.assertTrue(err.startswith("Cannot list labels"))
+                self.assertEqual(len(err.splitlines()), 1)
+                self.assertEqual(len(fake.calls), 1)
 
     def test_apply_exits_non_zero_when_a_call_fails(self):
         code, _, err = run_main(FakeGh(create_code=1), "--apply")

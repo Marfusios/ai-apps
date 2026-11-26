@@ -38,7 +38,12 @@ def _list_labels(run: Runner) -> list[dict] | None:
     try:
         result = run(["gh", "label", "list", "--limit", "200", "--json", "name,color,description"])
         if result.returncode == 0:
-            return json.loads(result.stdout)
+            found = json.loads(result.stdout)
+            if not isinstance(found, list) or not all(
+                isinstance(item, dict) and isinstance(item.get("name"), str) for item in found
+            ):
+                raise ValueError("gh returned an unexpected label listing")
+            return found
         reason = result.stderr.strip() or f"gh exited with {result.returncode}"
     except (OSError, ValueError) as error:
         reason = str(error)
