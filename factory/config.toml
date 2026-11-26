@@ -1,0 +1,95 @@
+schema = 1
+trusted_logins = ["Marfusios"]
+writable_paths = ["apps/", "packages/"]
+protected_branches = ["main"]
+image_registries = ["docker.io/library/", "docker.elastic.co/"]
+
+[[labels]]
+name = "factory:epic"
+color = "5319e7"
+description = "Run the epic pipeline on this issue"
+applied_by = "person"
+
+[[labels]]
+name = "factory:fix"
+color = "5319e7"
+description = "Go straight to a pull request for this issue"
+applied_by = "person"
+
+[[labels]]
+name = "factory:pause"
+color = "5319e7"
+description = "Start no new runs for this issue or its steps"
+applied_by = "person"
+
+[[labels]]
+name = "factory:halt"
+color = "5319e7"
+description = "On any open issue: start no new runs anywhere"
+applied_by = "person"
+
+[[labels]]
+name = "factory:step"
+color = "1d76db"
+description = "A plan step, created from a merged plan"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "status:queued"
+color = "0e8a16"
+description = "Where the issue is: waiting to start"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "status:design"
+color = "0e8a16"
+description = "Where the issue is: being designed"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "status:plan"
+color = "0e8a16"
+description = "Where the issue is: being planned"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "status:building"
+color = "0e8a16"
+description = "Where the issue is: being built"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "status:needs-human"
+color = "d93f0b"
+description = "Where the issue is: waiting for a person"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "status:done"
+color = "0e8a16"
+description = "Where the issue is: finished"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "stage:design"
+color = "bfd4f2"
+description = "Pull request for a design"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "stage:plan"
+color = "bfd4f2"
+description = "Pull request for a plan"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "stage:step"
+color = "bfd4f2"
+description = "Pull request for a plan step"
+applied_by = "dispatcher"
+
+[[labels]]
+name = "stage:fix"
+color = "bfd4f2"
+description = "Pull request for a fix"
+applied_by = "dispatcher"
