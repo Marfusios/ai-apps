@@ -1,7 +1,9 @@
 """Stop hook: hold an unattended factory run open until it leaves its work in a publishable state."""
 
+import contextlib
 import json
 import os
+import signal
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -11,6 +13,7 @@ import hooklib
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GIT_TIMEOUT = 120
+KILL_GRACE = 5
 DEFAULT_QUICK_TIMEOUT = 600
 OUTPUT_TAIL_LINES = 40
 NO_COMMIT_STAGES = ("revise", "fix")
@@ -95,33 +98,97 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run) -> list[str]:
             problems.append(problem)
         elif not count.strip().isdigit() or int(count) < 1:
             problems.append("There are no commits on top of the base; commit your work.")
-    diff, problem = git(run, repo, "diff", "--name-only", f"{base}...HEAD")
+    # core.quotePath=false keeps non-ASCII names readable instead of octal-escaped and quoted
+    diff, problem = git(run, repo, "-c", "core.quotePath=false", "diff", "--name-only", f"{base}...HEAD")
     changed: list[str] = []
     if diff is None:
         problems.append(problem)
     else:
         changed = [line.strip() for line in diff.splitlines() if line.strip()]
-    settings = factory_config.load()
-    for path in changed:
-        if not factory_config.is_writable(path, settings):
-            problems.append(f"{path} is in a path that factory runs may not write; move the change out of it.")
+    try:
+        settings = factory_config.load()
+    except factory_config.ConfigError as error:
+        settings = None
+        problems.append(f"The factory configuration could not be read, so the writable paths and the apps' quick "
+                        f"commands were not checked; tell the person: {error}")
+    if settings:
+        for path in changed:
+            if not factory_config.is_writable(path, settings):
+                problems.append(f"{path} is in a path that factory runs may not write; move the change out of it.")
     code, output = run([sys.executable, "scripts/check_repo.py"], repo, GIT_TIMEOUT)
     if code != 0:
         problems.append("The repository checks (scripts/check_repo.py) fail; fix what they report:\n" + tail(output))
-    for app in touched_apps(changed):
+    for app in touched_apps(changed) if settings else []:
         problems.extend(check_app(app, repo, env, run, settings.image_registries))
     return problems
 
 
+def windows_job(pid: int) -> Callable[[], None] | None:
+    """Put the process in a job object that kills all its members; return the function that does so.
+
+    taskkill /T cannot find the grandchildren of an MSYS shell, because MSYS forks without a lasting parent link.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class Basic(ctypes.Structure):
+        _fields_ = [("user_time", ctypes.c_int64), ("job_user_time", ctypes.c_int64), ("flags", wintypes.DWORD),
+                    ("min_set", ctypes.c_size_t), ("max_set", ctypes.c_size_t), ("active", wintypes.DWORD),
+                    ("affinity", ctypes.c_size_t), ("priority", wintypes.DWORD), ("scheduling", wintypes.DWORD)]
+
+    class Extended(ctypes.Structure):
+        _fields_ = [("basic", Basic), ("io", ctypes.c_uint64 * 6), ("memory", ctypes.c_size_t * 4)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateJobObjectW.restype = kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    job = kernel.CreateJobObjectW(None, None)
+    process = kernel.OpenProcess(0x0101, False, pid)  # PROCESS_TERMINATE | PROCESS_SET_QUOTA
+    if not job or not process:
+        return None
+    limits = Extended()
+    limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    ok = (kernel.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits))
+          and kernel.AssignProcessToJobObject(job, process))
+    kernel.CloseHandle(process)
+    if not ok:
+        kernel.CloseHandle(job)
+        return None
+
+    def kill() -> None:
+        kernel.TerminateJobObject(job, 1)
+        kernel.CloseHandle(job)  # closing also kills whatever is left, should the kill never be called
+
+    return kill
+
+
 def run_command(argv: Sequence[str], cwd: Path, timeout_seconds: int) -> tuple[int, str]:
+    """Run a command and return its exit code and combined output; a timeout kills the whole process tree."""
     try:
-        done = subprocess.run(list(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, text=True, errors="replace", timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        return 124, f"timed out after {timeout_seconds} seconds"
+        process = subprocess.Popen(list(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, errors="replace",
+                                   start_new_session=os.name != "nt")
     except OSError as error:
         return 127, f"could not run {argv[0]}: {error}"
-    return done.returncode, done.stdout
+    kill_job = windows_job(process.pid) if os.name == "nt" else None
+    try:
+        output, _ = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        if kill_job:
+            kill_job()
+        else:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, signal.SIGKILL)
+        process.kill()
+        try:
+            process.communicate(timeout=KILL_GRACE)  # a short, bounded wait: the hook itself must never hang
+        except subprocess.TimeoutExpired:
+            pass
+        return 124, f"timed out after {timeout_seconds} seconds"
+    return process.returncode, output
 
 
 def main() -> None:

@@ -5,6 +5,8 @@ import io
 import json
 import os
 import tempfile
+import shutil
+import time
 import unittest
 from collections.abc import Sequence
 from pathlib import Path
@@ -37,7 +39,7 @@ class FakeRun:
         self.answers = {
             ("git", "status", "--porcelain"): (0, status),
             ("git", "rev-list", "--count", f"{BASE}..HEAD"): (0, count),
-            ("git", "diff", "--name-only", f"{BASE}...HEAD"): (0, diff),
+            ("git", "-c", "core.quotePath=false", "diff", "--name-only", f"{BASE}...HEAD"): (0, diff),
             ("checker",): checker,
             ("sh", "-c", "make quick"): quick,
         }
@@ -237,6 +239,33 @@ class EvaluateTests(unittest.TestCase):
         self.assertIn("git status --porcelain", problems[0])
         self.assertIn("not a git repository", problems[0])
 
+    def test_non_ascii_path_marks_its_app_as_touched(self) -> None:
+        self.write_result()
+        self.write_app()
+        run = FakeRun(diff="apps/x/café.ts\n", quick=(1, "boom"))
+        problems = self.evaluate(run)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("apps/x", problems[0])
+        diff_calls = [argv for argv in run.commands() if "diff" in argv]
+        self.assertEqual(diff_calls, [("git", "-c", "core.quotePath=false", "diff", "--name-only", f"{BASE}...HEAD")])
+
+    def test_unreadable_factory_config_keeps_the_problems_already_found(self) -> None:
+        from factory import config as factory_config
+
+        self.write_result()
+        self.write_app()
+        broken = self.root / "broken.toml"
+        broken.write_text("not = [valid", encoding="utf-8")
+        run = FakeRun(status=" M apps/x/a.ts\n", checker=(1, "secret found"))
+        with mock.patch.object(factory_config, "DEFAULT_PATH", broken):
+            problems = self.evaluate(run)
+        self.assertEqual(len(problems), 3)
+        self.assertIn("uncommitted", problems[0])
+        self.assertIn("factory configuration", problems[1])
+        self.assertIn(broken.name, problems[1])
+        self.assertIn("scripts/check_repo.py", problems[2])
+        self.assertNotIn(("sh", "-c", "make quick"), run.commands())
+
     def test_touched_apps_ignores_files_outside_an_app(self) -> None:
         paths = ["apps/README.md", "apps/x/a", "apps/x/b/c", "docs/apps/y/z", "apps/w/q"]
         self.assertEqual(finish_check.touched_apps(paths), ["w", "x"])
@@ -279,6 +308,14 @@ class RunCommandTests(unittest.TestCase):
     def test_timeout_returns_124_with_a_message(self) -> None:
         code, output = finish_check.run_command([finish_check.sys.executable, "-c", "import time; time.sleep(5)"],
                                                 Path.cwd(), 1)
+        self.assertEqual(code, 124)
+        self.assertIn("timed out after 1 seconds", output)
+
+    @unittest.skipUnless(shutil.which("sh"), "needs a POSIX shell")
+    def test_timeout_kills_the_whole_process_tree(self) -> None:
+        started = time.monotonic()
+        code, output = finish_check.run_command(["sh", "-c", "sleep 30 & wait"], Path.cwd(), 1)
+        self.assertLess(time.monotonic() - started, 10)
         self.assertEqual(code, 124)
         self.assertIn("timed out after 1 seconds", output)
 
