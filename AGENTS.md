@@ -38,8 +38,8 @@ What you know but leave unwritten there is lost when your session ends.
 
 ## Working in an app
 
-- Read `apps/<app>/README.md` and `apps/<app>/AGENTS.md` before changing the app. They hold its
-  stack, module map and dependency direction, domain vocabulary, commands and pitfalls.
+- Read the root `README.md`, then `apps/<app>/README.md` and `apps/<app>/AGENTS.md`, before you
+  change an app. The app's files hold its stack, module map, vocabulary, commands and pitfalls.
 - Use the commands in `apps/<app>/factory.toml`: `setup` installs, `check` is the quality gate
   (format, lint, types, tests) that CI and the factory run, and `quick` is its fast subset.
 - Change one app per pull request. A change to a package in `packages/` may update its consumers.
@@ -90,8 +90,9 @@ examples, in [docs/engineering.md](docs/engineering.md) before your first change
   In an interactive session the hook asks the person to confirm; in a factory run it refuses.
 
 The `guard_git` hook in `.claude/hooks/`, the permission rules in `.claude/settings.json` and
-rulesets on GitHub enforce these. A refusal is not an obstacle to route around by rephrasing or by
-another route to the same result: stop and ask a person, or in a factory run return `needs_input`.
+rulesets on GitHub block most of these, but not a local rebase, amend or reset: that rule is yours
+to keep. A refusal is not an obstacle to route around by rephrasing or by another route to the
+same result: stop and ask a person, or in a factory run return `needs_input`.
 
 ## Public repository hygiene
 
