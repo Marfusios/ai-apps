@@ -94,6 +94,10 @@ links, empty secret placeholders, and common accidental credential/private-path
 patterns in tracked or non-ignored files. These checks are useful safeguards, not
 a complete secret audit of repository history.
 
-Before making the repository public, review its history, data redistribution
-permissions, and dependency licenses, and select a repository license. A license
-has not been selected yet.
+## License
+
+The code and documentation in this repository are released under the
+[MIT License](LICENSE).
+
+The license does not cover third-party material that an app includes as test or
+evaluation data. Each app's README says what that material is and where it came from.
