@@ -1,0 +1,15 @@
+schema = 1
+
+[toolchain]
+node = "24"
+
+[commands]
+setup = "corepack enable && pnpm install --frozen-lockfile"
+check = "pnpm typecheck && pnpm test"
+quick = "pnpm typecheck"
+
+[quality]
+format = "none: no formatter adopted yet; adding one is a follow-up for this app"
+lint = "none: no linter adopted yet; adding one is a follow-up for this app"
+types = "tsc"
+tests = "vitest"
