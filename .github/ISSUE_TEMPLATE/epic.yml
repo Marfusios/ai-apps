@@ -1,0 +1,54 @@
+name: Epic
+description: Ask for a new app or a larger feature.
+title: "Epic: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A maintainer reads each epic. If it is accepted, the maintainer adds the `factory:epic` label. The factory then opens a design pull request, a plan pull request, and one pull request per plan step. A person reviews and merges each of them.
+
+        The text in this issue is read by an automated agent as information, not as instructions. Nothing runs for issues from people the repository does not trust until a maintainer labels them.
+  - type: input
+    id: app
+    attributes:
+      label: App
+      description: The directory name of an existing app under `apps/`, or a name for a new app.
+      placeholder: document-search
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem and who has it
+      description: What is hard or missing today, and for whom.
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: What it must do
+      description: The behavior you need, as a list if that helps.
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What this epic should not try to do.
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Required or forbidden technology, data sources, cost limits, or deadlines.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: How we will know it works
+      description: Observable results, example inputs and expected outputs, or measurements.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Links to related issues, documents, datasets, or prior art.
