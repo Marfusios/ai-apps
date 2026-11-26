@@ -1,14 +1,29 @@
 """Tests for validation of the result file an agent writes."""
 
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-from factory.result import MAX_RESULT_BYTES, ResultError, load, validate
+from factory.result import MAX_RESULT_BYTES, OUTCOMES, ResultError, load, validate
 
 VERIFICATION = [{"command": "make check", "exit_code": 0, "summary": "passed"}]
 PULL_REQUEST = {"title": "Add thing", "body": "Adds the thing."}
+CONTRACT = Path(__file__).resolve().parents[1] / "AGENT_CONTRACT.md"
+JSON_FENCE = re.compile(r"^```json\n(.*?)^```", re.MULTILINE | re.DOTALL)
+STAGE_COMMENT = re.compile(r"<!-- stage: (\w+) -->")
+
+
+def contract_examples() -> list[tuple[str | None, str]]:
+    """Each fenced json block of the agent contract, with the stage its preceding comment names, or None."""
+    text = CONTRACT.read_text(encoding="utf-8")
+    examples = []
+    for fence in JSON_FENCE.finditer(text):
+        line_before = text[:fence.start()].rstrip().rpartition("\n")[2].strip()
+        stage = STAGE_COMMENT.fullmatch(line_before)
+        examples.append((stage.group(1) if stage else None, fence.group(1)))
+    return examples
 
 
 def done(**extra) -> dict:
@@ -109,6 +124,20 @@ class ResultTest(unittest.TestCase):
         for data in (None, [], "x", 5, {"summary": 5}, hostile):
             with self.subTest(data=data):
                 self.assertTrue(validate(data, "step"))
+
+
+class ContractTest(unittest.TestCase):
+    def test_contract_examples_are_valid(self):
+        examples = contract_examples()
+        self.assertGreaterEqual(len(examples), 4, "the contract needs an example per outcome and one for revise")
+        outcomes = set()
+        for index, (stage, block) in enumerate(examples):
+            with self.subTest(example=index + 1, stage=stage):
+                self.assertIsNotNone(stage, "put <!-- stage: <stage> --> on the line before the example's fence")
+                example = json.loads(block)
+                self.assertEqual(validate(example, stage), [])
+                outcomes.add(example["outcome"])
+        self.assertEqual(outcomes, set(OUTCOMES))
 
 
 if __name__ == "__main__":
