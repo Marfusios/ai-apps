@@ -5,12 +5,15 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from factory.tests.hookload import load_hook
+from factory.tests.hookload import HOOKS_DIR, load_hook
 
 guard = load_hook("guard_git")
 hooklib = guard.hooklib
@@ -19,10 +22,12 @@ PROTECTED = ("main",)
 SUFFIX = "(AGENTS.md, Git rules)"
 ENCODED_FORCE_PUSH = base64.b64encode("git push -f".encode("utf-16-le")).decode("ascii")
 
-GRAPHQL_REF_MUTATIONS = ("deleteRef", "updateRef")
+GRAPHQL_REF_MUTATIONS = ("deleteRef", "updateRef", "updateRefs")
 GRAPHQL_ASKED_MUTATIONS = (
     "mergePullRequest", "enablePullRequestAutoMerge", "createBranchProtectionRule", "updateBranchProtectionRule",
-    "deleteBranchProtectionRule", "createRepositoryRuleset", "updateRepositoryRuleset", "deleteRepositoryRuleset")
+    "deleteBranchProtectionRule", "createRepositoryRuleset", "updateRepositoryRuleset", "deleteRepositoryRuleset",
+    "mergeBranch")
+HOOK_RUNNING_SUBCOMMANDS = ("commit", "push", "merge", "pull", "am", "rebase", "cherry-pick", "revert")
 
 DENY = [
     "git push --force", "git push -f origin feature", "git push origin +feature", "git push --force-with-lease",
@@ -60,12 +65,33 @@ DENY = [
       for name in GRAPHQL_REF_MUTATIONS),
     "gh api graphql -f query='mutation { deleteRef(input: {refId: \"x\"}) { clientMutationId } }'",
     "gh api graphql --raw-field query='mutation { updateRef(input: {}) { clientMutationId } }'",
+    # The words after an unquoted substitution still belong to its command.
+    "git push origin $(git branch --show-current) --force", "git push -u origin $(git branch --show-current) -f",
+    "git push origin $(git branch --show-current):main", "git -C $(git rev-parse --show-toplevel) push --force",
+    "git commit -m $(cat msg.txt) --no-verify", "git push origin `git branch --show-current` --force",
+    # What a substitution prints into a shell is still read.
+    "echo $(echo 'git push -f') | sh", "bash <<< $(echo 'git push -f')", "echo `echo 'git push -f'` | sh",
+    # A # starts a comment only at the start of a word outside quotes, so these still push.
+    'git commit -m "Closes #12" && git push --force', "echo issue#12 && git push -f",
+    # Where the shell's quoting is too intricate to follow, a # that may not start a comment hides nothing.
+    "echo $'a\\' #' ; git push -f", 'git commit -m "$(echo "fix #12")" && git push -f',
+    "echo ${x:-a #} ; git push -f", "(( x = 1 # 2 )) ; git push -f", "echo `echo a # c` ; git push -f",
+    'echo "`echo "a #"`" ; git push -f', 'echo $(echo ")") "a #" ; git push -f',
+    "python - <<'EOF'\ns = 'a\nEOF\necho ' #' ; git push -f\necho \"it's\"",
+    # Skipping hooks in each subcommand that runs them, a function body, and the -X=VALUE form.
+    *(f"git {subcommand} --no-verify" for subcommand in HOOK_RUNNING_SUBCOMMANDS),
+    "function f { git push -f; }; f", "gh api -X=DELETE repos/o/r/git/refs/heads/x",
+    "gh api --method=DELETE repos/o/r/git/refs/heads/x",
 ]
 DENY_ON_MAIN = [
     "git push", "git push origin", "git push origin HEAD", "git push -u origin HEAD",
     # Further spellings the rules imply.
     "git push -o ci.skip origin", "git push origin @", "git push origin 2>&1", "git push origin > push.log",
     "cd sub && git push", "git -C sub push origin HEAD", "sh -c 'git push'",
+    # A destination that a substitution or a variable fills in may be the current branch.
+    "git push -u origin $(git branch --show-current)", 'git push -u origin "$(git rev-parse --abbrev-ref HEAD)"',
+    "git push origin `git branch --show-current`", 'git push origin "$BRANCH"',
+    "git push origin HEAD:refs/heads/$(git branch --show-current)",
 ]
 ALLOW = [
     "git push -u origin feature", "git push origin feature", "git push --tags", "git push -n origin feature",
@@ -94,6 +120,11 @@ ALLOW = [
     "gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"x\"}) { clientMutationId } }'",
     "gh api graphql -f query='query { deleteref: viewer { login } }'",
     "gh api repos/o/r/issues -f title='how deleteRef works'",
+    "git log $(git merge-base main HEAD)..HEAD --oneline", "echo $(git status --short) done",
+    "# Push the branch (we don't touch main)\ngit push -u origin feature",
+    "git push origin feature  # don't push to main", "git status;# it's not on main\ngit push origin feature",
+    "git grep -n -e '--no-verify'", "git log -S '--no-verify'",
+    "gh api repos/o/r/pulls/12/reviews -f event=COMMENT -f body=fine", "gh api repos/o/r/pulls/12/reviews",
 ]
 ASK_INTERACTIVE_DENY_FACTORY = [
     "gh pr merge 12 --squash", "gh pr review 12 --approve", "gh api -X PUT repos/o/r/pulls/12/merge",
@@ -115,6 +146,9 @@ ASK_INTERACTIVE_DENY_FACTORY = [
     "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
     *(f"gh api graphql -f query='mutation {{ {name}(input: {{}}) {{ clientMutationId }} }}'"
       for name in GRAPHQL_ASKED_MUTATIONS),
+    # Approving through the reviews endpoint is the API form of gh pr review --approve.
+    "gh api -X POST repos/o/r/pulls/12/reviews -f event=APPROVE", "gh api repos/o/r/pulls/12/reviews -F event=APPROVE",
+    "gh api repos/o/r/pulls/12/reviews --raw-field=event=APPROVE -f body=ok",
 ]
 
 
@@ -176,6 +210,12 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(actions(broken("addComment")), ("allow", "allow"))
         self.assertEqual(actions("gh api -X PATCH repos/o/r/git/refs/heads/x -f sha=abc \"oops"), ("deny", "deny"))
         self.assertEqual(actions("gh api -X POST repos/o/r/git/refs -f sha=abc \"oops"), ("allow", "allow"))
+        self.assertEqual(actions("gh api repos/o/r/pulls/1/reviews -f event=APPROVE \"oops"), ("ask", "deny"))
+
+    def test_an_apostrophe_in_a_comment_does_not_send_the_command_to_the_text_scan(self):
+        with mock.patch.object(guard.Inspection, "scan", side_effect=AssertionError("reached the text scan")):
+            self.assertEqual(actions("# Push the branch (we don't touch main)\ngit push -u origin feature"),
+                             ("allow", "allow"))
 
     def test_nesting_deeper_than_five_is_denied(self):
         self.assertEqual(actions("eval " * 5 + "git status"), ("allow", "allow"))
@@ -223,6 +263,19 @@ class DecideTest(unittest.TestCase):
                 self.assertEqual(calls, expected)
 
 
+class TextScanSpeedTest(unittest.TestCase):
+    def test_a_long_command_that_cannot_be_tokenised_is_answered_in_time(self):
+        # A hook that runs past its timeout does not block the call, so the scan must stay fast on long scripts.
+        line = "git push origin feature && git commit -m wip && gh api graphql --raw-field q=x && gh pr review 3 -c\n"
+        command = "'" + line * (100_000 // len(line)) + "gh pr merge 3 --squash"
+        for factory_run, expected in ((False, "ask"), (True, "deny")):
+            with self.subTest(factory_run=factory_run):
+                start = time.perf_counter()
+                decision = decide(command, factory_run=factory_run)
+                self.assertLess(time.perf_counter() - start, 2.0)
+                self.assertEqual(decision.action, expected)
+
+
 class MainTest(unittest.TestCase):
     def run_main(self, payload: object, factory_run: bool = False) -> tuple[int, str]:
         raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode("utf-8")
@@ -268,6 +321,20 @@ class MainTest(unittest.TestCase):
         self.assertEqual(guard.protected_branches(), ("main",))
         with mock.patch("factory.config.load", side_effect=TypeError("bug")):
             self.assertEqual(guard.protected_branches(), ("main", "master"))
+
+    def test_an_installed_package_named_factory_does_not_replace_the_configuration(self):
+        event = json.dumps(self.bash("git push origin main"))
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory, "factory")
+            package.mkdir()
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / "config.py").write_text("from types import SimpleNamespace\n\n\ndef load():\n"
+                                               "    return SimpleNamespace(protected_branches=())\n", encoding="utf-8")
+            env = {**os.environ, "PYTHONPATH": directory, "PYTHONDONTWRITEBYTECODE": "1", "FACTORY_RUN": "0"}
+            result = subprocess.run([sys.executable, str(HOOKS_DIR / "guard_git.py")], input=event, env=env,
+                                    capture_output=True, text=True, timeout=60)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
 
     def test_failing_text_scan_denies(self):
         with mock.patch.object(guard, "decide", side_effect=RuntimeError("bug")), \

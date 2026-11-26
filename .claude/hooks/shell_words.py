@@ -4,12 +4,17 @@ import base64
 import os
 import re
 import shlex
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
 PUNCTUATION = "();<>|&\n"
 REDIRECTIONS = {"<", ">", ">>", "<>", ">|", "<&", ">&", "&>", "&>>", "<<", "<<<"}
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?[ \t]*(\\?)(['\"]?)([\w.-]+)\2")
+# The word an unquoted substitution leaves in its command; its $ marks a value the shell fills in.
+SUBSTITUTED = "$SUBSTITUTED"
+COMMENT_STARTS = frozenset(" \t\n;&|()<>")  # a # after one of these, or first in the text, begins a comment
+# ${...} and $(...) with no quotes, brackets or comments inside, whose end is therefore plain to see.
+PLAIN_EXPANSION = re.compile(r"\$\{[^{}'\"`\s;&|()<>\\$]*\}|\$\([^()'\"`\\$#\n]*\)")
 POWERSHELL_CONTINUATION = re.compile(r"(?<=[ \t])`\n")
 ASSIGNMENT = re.compile(r"(?:\$env:)?([A-Za-z_]\w*)=(.*)", re.IGNORECASE | re.DOTALL)
 RESERVED = {"!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac"}
@@ -58,14 +63,15 @@ def unfold(text: str) -> str:
 
 def parse(text: str) -> Script:
     """Read shell text into its commands; raises ValueError when quotes do not balance."""
-    body = drop_text_heredocs(text)
-    parts = segments(tokenize(body))
+    body = drop_text_heredocs(strip_comments(text))
+    parts = segments(tokenize(mask_substitutions(body)))
+    substituted = substitutions(body)
     commands = []
     for part in parts:
         name, args, assignments = command_of(part)
         commands.append(Command(name, args, assignments, nested_texts(name, args)))
-    stdin_texts = stdin_feed(parts) if any(reads_stdin(c.name, c.args) for c in commands) else []
-    return Script(substitutions(body), commands, stdin_texts)
+    stdin_texts = stdin_feed(parts, substituted) if any(reads_stdin(c.name, c.args) for c in commands) else []
+    return Script(substituted, commands, stdin_texts)
 
 
 def enter(cwd: str, target: str) -> str:
@@ -140,7 +146,24 @@ def command_words(part: list[str]) -> list[str]:
 
 def substitutions(text: str, quoting: bool = True) -> list[str]:
     """Commands in $(...) and backticks that a shell runs: unescaped and, where quotes count, not single-quoted."""
-    found, quote, index = [], "", 0
+    return [command for _, _, command, _ in substitution_spans(text, quoting)]
+
+
+def mask_substitutions(text: str) -> str:
+    """The text with each unquoted substitution replaced by one word, so that the words after it stay in its command.
+
+    The substituted commands are inspected on their own; one inside double quotes already stays within its word."""
+    pieces, last = [], 0
+    for start, end, _, quoted in substitution_spans(text):
+        if not quoted:
+            pieces += [text[last:start], SUBSTITUTED]
+            last = end
+    return "".join(pieces) + text[last:]
+
+
+def substitution_spans(text: str, quoting: bool = True) -> Iterator[tuple[int, int, str, bool]]:
+    """Each substitution a shell runs: where it starts and ends, its command, and whether it is inside double quotes."""
+    quote, index = "", 0
     while index < len(text):
         char = text[index]
         if quote == "'":
@@ -154,14 +177,13 @@ def substitutions(text: str, quoting: bool = True) -> list[str]:
         elif char == "`":
             end = text.find("`", index + 1)
             end = len(text) if end < 0 else end
-            found.append(text[index + 1:end])
+            yield index, end + 1, text[index + 1:end], quote == '"'
             index = end
         elif text.startswith("$(", index):
             end = closing_paren(text, index + 2)
-            found.append(text[index + 2:end])
+            yield index, end + 1, text[index + 2:end], quote == '"'
             index = end
         index += 1
-    return found
 
 
 def closing_paren(text: str, start: int) -> int:
@@ -218,6 +240,89 @@ def writes_text_only(line: str, heredoc_count: int) -> bool:
     return counted and all(name in ("cat", "tee") for name in feeding) and not names & (SHELLS | EVALS)
 
 
+def strip_comments(text: str) -> str:
+    """The text without its comments, each running from a # that starts a word outside quotes to the end of its line.
+
+    Heredoc bodies and backtick spans stay as they are. Where the quoting is too intricate to follow exactly, the rest
+    of the text is kept whole: a comment left in only makes the inspection stricter, while text wrongly taken for one
+    could hide a command."""
+    kept, start, index, delimiters = [], 0, 0, []
+    while index is not None and index < len(text):
+        char = text[index]
+        if char == "#" and (index == 0 or text[index - 1] in COMMENT_STARTS):
+            end = text.find("\n", index)
+            kept.append(text[start:index])
+            start = index = len(text) if end < 0 else end
+        elif char == "\n" and delimiters:
+            index, delimiters = heredoc_end(text, index + 1, delimiters), []
+        elif text.startswith("<<<", index):
+            index += 3
+        elif text.startswith("<<", index):
+            heredoc = HEREDOC.match(text, index)
+            delimiters += [heredoc[3]] if heredoc else []
+            index = heredoc.end() if heredoc else None
+        else:
+            index = after_quoting(text, index)
+    return "".join(kept) + text[start:]
+
+
+def after_quoting(text: str, index: int) -> int | None:
+    """The index after the character, quoted string or expansion at index; None where its end cannot be told."""
+    char = text[index]
+    if char == "\\":
+        return index + 2
+    if char == "'":
+        end = text.find("'", index + 1)
+        return None if end < 0 or text[index - 1:index] == "$" else end + 1  # $'...' lets \' escape a quote
+    if char == '"':
+        return double_quote_end(text, index + 1)
+    if char == "`":
+        return backtick_end(text, index + 1)
+    if text.startswith("((", index):
+        return None  # arithmetic, where a # is no comment
+    if text.startswith("${", index):
+        plain = PLAIN_EXPANSION.match(text, index)
+        return plain.end() if plain else None
+    return index + 1
+
+
+def double_quote_end(text: str, index: int) -> int | None:
+    """The index after the quote closing a double-quoted string whose text starts at index, or None."""
+    while index is not None and index < len(text):
+        char = text[index]
+        if char == '"':
+            return index + 1
+        if char == "\\":
+            index += 2
+        elif char == "`":
+            index = backtick_end(text, index + 1)
+        elif char == "$" and text[index + 1:index + 2] in ("(", "{"):
+            plain = PLAIN_EXPANSION.match(text, index)  # quotes inside a substitution start afresh
+            index = plain.end() if plain else None
+        else:
+            index += 1
+    return None
+
+
+def backtick_end(text: str, index: int) -> int | None:
+    """The index after the backtick closing a substitution whose text starts at index, or None."""
+    while index < len(text):
+        if text[index] == "`":
+            return index + 1
+        index += 2 if text[index] == "\\" else 1
+    return None
+
+
+def heredoc_end(text: str, index: int, delimiters: list[str]) -> int:
+    """The index of the newline ending the last of the heredoc bodies that begin at index, or the text's length."""
+    for delimiter in delimiters:
+        closing = re.compile(rf"^\t*{re.escape(delimiter)}$", re.MULTILINE).search(text, index)
+        if not closing:
+            return len(text)
+        index = closing.end() + 1
+    return index - 1
+
+
 def executable(word: str) -> str:
     """A command word's program name: its base name in lower case, without .exe."""
     return re.split(r"[\\/]", word)[-1].lower().removesuffix(".exe")
@@ -234,6 +339,8 @@ def command_of(part: list[str]) -> tuple[str, list[str], list[str]]:
             index += 1
         elif words[index] in RESERVED:
             index += 1
+        elif words[index] == "function":
+            index += 2  # the keyword and the name of the function whose body follows
         elif name in WRAPPERS:
             index = skip_options(words, index + 1, WRAPPERS[name])
             if name == "timeout" and index < len(words):
@@ -298,9 +405,14 @@ def reads_stdin(name: str, args: list[str]) -> bool:
     return name in POSIX_SHELLS and any(re.fullmatch(r"-[A-Za-z]*s[A-Za-z]*", arg) for arg in args)
 
 
-def stdin_feed(parts: list[list[str]]) -> list[str]:
-    """Text that may reach a shell reading stdin: herestrings, and what echo or printf print."""
+def stdin_feed(parts: list[list[str]], substituted: list[str]) -> list[str]:
+    """Text that may reach a shell reading stdin: herestrings, and what echo or printf print, also in substitutions."""
     feed = [part[i + 1] for part in parts for i, token in enumerate(part[:-1]) if token == "<<<"]
+    for command in substituted:
+        try:
+            parts = parts + segments(tokenize(strip_comments(command)))  # brackets split nested substitutions out
+        except ValueError:
+            continue  # what it prints cannot be told, but the substitution is still inspected as a command
     for part in parts:
         name, args, _ = command_of(part)
         if name in PRINTERS:

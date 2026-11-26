@@ -43,33 +43,52 @@ API_FIELD_OPTIONS = {"-f", "--raw-field", "-F", "--field", "--input"}
 SETTINGS_PATHS = ("/rulesets", "/protection", "/actions/permissions", "/actions/secrets", "/actions/variables",
                   "/hooks", "/keys", "/collaborators", "/environments", "/pages", "/vulnerability-alerts",
                   "/private-vulnerability-reporting")
-GRAPHQL_REF_MUTATIONS = ("deleteRef", "updateRef")
-GRAPHQL_MERGE_MUTATIONS = ("mergePullRequest", "enablePullRequestAutoMerge")
+GRAPHQL_REF_MUTATIONS = ("deleteRef", "updateRef", "updateRefs")
+GRAPHQL_MERGE_MUTATIONS = ("mergePullRequest", "enablePullRequestAutoMerge", "mergeBranch")
 GRAPHQL_SETTINGS_MUTATIONS = tuple(f"{verb}{noun}" for noun in ("BranchProtectionRule", "RepositoryRuleset")
                                    for verb in ("create", "update", "delete"))
+HOOK_RUNNERS = {"commit", "push", "merge", "pull", "am", "rebase", "cherry-pick", "revert"}
 
 
-def graphql_pattern(names: tuple[str, ...]) -> str:
-    """A text pattern for gh api graphql with one of the mutation names, which GraphQL spells case-sensitively."""
-    return r"\bgh\b.*\bapi\b.*\bgraphql\b.*(?-i:\b(?:" + "|".join(names) + r")\b)"
+def mutation_names(names: tuple[str, ...]) -> str:
+    """A pattern for one of the GraphQL mutation names, which GraphQL spells case-sensitively."""
+    return r"(?-i:\b(?:" + "|".join(names) + r")\b)"
 
 
-GIT_PUSH = re.compile(r"\bgit\b.*\bpush\b", re.IGNORECASE | re.DOTALL)
-TEXT_RULES = [(rule, re.compile(pattern, re.IGNORECASE | re.DOTALL)) for rule, pattern in (
-    ("G1", GIT_PUSH.pattern + r".*(?:--force|--mirror|\s-\w*f|\s\+)"),
-    ("G2", GIT_PUSH.pattern + r".*(?:--delete|--prune|\s-\w*d|\s:)"),
-    ("G3", GIT_PUSH.pattern + r".*--(?:all|branches)\b"),
-    ("G4", r"--no-verify|core\.hookspath|\bhusky=0|\bgit\b.*\bcommit\b.*\s-\w*n"),
-    ("G5", r"\bgit\b.*\bfilter-(?:branch|repo)\b"),
-    ("G6", r"\bgh\b.*\bapi\b(?=.*(?:\b(?:delete|patch)\b|-x(?:delete|patch))).*/git/refs/"),
-    ("G6", graphql_pattern(GRAPHQL_REF_MUTATIONS)),
-    ("G7", graphql_pattern(GRAPHQL_MERGE_MUTATIONS)),
-    ("G8", graphql_pattern(GRAPHQL_SETTINGS_MUTATIONS)),
-    ("G7", r"\bgh\b.*(?:\bpr\s+merge\b|\bpr\s+review\b.*(?:--approve|\s-a\b)|\bapi\b.*/merges?\b)"),
-    ("G8", r"\bgh\b.*(?:\brepo\s+(?:edit|delete|rename|archive|unarchive)\b|\b(?:secret|variable)\s+(?:set|delete|remove)\b"
-           r"|\bworkflow\s+(?:enable|disable)\b|\bapi\b.*(?:" + "|".join(map(re.escape, SETTINGS_PATHS))
-           + r"|\brepos/[^/\s]+/[^/\s]+(?:\s|$)))"),
+# The fallback text scan. A rule matches when one of its sequences of patterns appears in order. Each pattern is
+# searched from where the one before it ended, which takes time in proportion to the text; a single expression
+# chaining them with .* backtracks in time that grows with the cube of the text, past the hook's timeout.
+GIT, PUSH, GH, API, GRAPHQL = r"\bgit\b", r"\bpush\b", r"\bgh\b", r"\bapi\b", r"\bgraphql\b"
+REF_WRITE, REFS = r"\b(?:delete|patch)\b|-x(?:delete|patch)", "/git/refs/"
+TEXT_RULES = [(rule, [tuple(re.compile(pattern, re.IGNORECASE) for pattern in sequence) for sequence in sequences])
+              for rule, sequences in (
+    ("G1", [(GIT, PUSH, r"--force|--mirror|\s-\w*f|\s\+")]),
+    ("G2", [(GIT, PUSH, r"--delete|--prune|\s-\w*d|\s:")]),
+    ("G3", [(GIT, PUSH, r"--(?:all|branches)\b")]),
+    ("G4", [(r"--no-verify|core\.hookspath|\bhusky=0",), (GIT, r"\bcommit\b", r"\s-\w*n")]),
+    ("G5", [(GIT, r"\bfilter-(?:branch|repo)\b")]),
+    ("G6", [(GH, API, REF_WRITE, REFS), (GH, API, REFS, REF_WRITE)]),
+    ("G6", [(GH, API, GRAPHQL, mutation_names(GRAPHQL_REF_MUTATIONS))]),
+    ("G7", [(GH, API, GRAPHQL, mutation_names(GRAPHQL_MERGE_MUTATIONS))]),
+    ("G8", [(GH, API, GRAPHQL, mutation_names(GRAPHQL_SETTINGS_MUTATIONS))]),
+    ("G7", [(GH, r"\bpr\s+merge\b"), (GH, r"\bpr\s+review\b", r"--approve|\s-a\b"), (GH, API, r"/merges?\b"),
+            (GH, API, r"\bevent=approve\b")]),
+    ("G8", [(GH, r"\brepo\s+(?:edit|delete|rename|archive|unarchive)\b|\b(?:secret|variable)\s+(?:set|delete|remove)\b"
+                 r"|\bworkflow\s+(?:enable|disable)\b"),
+            (GH, API, "|".join(map(re.escape, SETTINGS_PATHS)) + r"|\brepos/[^/\s]+/[^/\s]+(?:\s|$)")]),
 )]
+GIT_PUSH = tuple(re.compile(pattern, re.IGNORECASE) for pattern in (GIT, PUSH))
+
+
+def in_order(text: str, patterns: Sequence[re.Pattern[str]]) -> bool:
+    """True when the patterns match in text one after another."""
+    position = 0
+    for pattern in patterns:
+        match = pattern.search(text, position)
+        if not match:
+            return False
+        position = match.end()
+    return True
 
 
 def reason(rule: str) -> str:
@@ -147,10 +166,10 @@ class Inspection:
     def scan(self, text: str, cwd: str) -> Iterator[str]:
         """Rules found by a conservative scan of text the tokeniser cannot read, with its quotes removed."""
         flat = re.sub(r"['\"]", "", text)
-        for rule, pattern in TEXT_RULES:
-            if pattern.search(flat):
+        for rule, sequences in TEXT_RULES:
+            if any(in_order(flat, sequence) for sequence in sequences):
                 yield rule
-        if GIT_PUSH.search(flat):
+        if in_order(flat, GIT_PUSH):
             names = "|".join(map(re.escape, self.protected))
             named = bool(names) and re.search(rf"(?:\s|:|heads/)(?:{names})(?![\w./-])", flat)
             if named or self.branch(cwd) in self.protected:
@@ -187,7 +206,7 @@ def git_rule(args: list[str], cwd: str, protected: tuple[str, ...], branch: Call
         return rule
     commit = subcommand == "commit"
     letters, longs, operands = parse_options(rest, "mFCct" if commit else "", "uS" if commit else "")
-    if abbreviates(longs, "no-verify") or (commit and "n" in letters):
+    if (subcommand in HOOK_RUNNERS and abbreviates(longs, "no-verify")) or (commit and "n" in letters):
         return "G4"
     if any(config.partition("=")[0].lower() == "core.hookspath" for config in configs):
         return "G4"
@@ -209,7 +228,7 @@ def push_rule(args: list[str], directory: str, protected: tuple[str, ...],
     if abbreviates(longs, "all", "branches") or any(is_protected(destination(r), protected) for r in refspecs):
         return "G3"
     # With no refspec git pushes the current branch; --tags alone pushes only tags.
-    uses_current = (not refspecs and "tags" not in longs) or any(destination(r) in ("HEAD", "@") for r in refspecs)
+    uses_current = (not refspecs and "tags" not in longs) or any(may_be_current(destination(r)) for r in refspecs)
     return "G3" if uses_current and branch(directory) in protected else None
 
 
@@ -217,6 +236,11 @@ def destination(refspec: str) -> str:
     """The remote ref a push refspec writes: the part after the colon, or the source when there is none."""
     source, _, target = refspec.lstrip("+").partition(":")
     return target or source
+
+
+def may_be_current(ref: str) -> bool:
+    """True for HEAD, and for a ref that a substitution or variable fills in, as with $(git branch --show-current)."""
+    return ref in ("HEAD", "@") or "$" in ref or "`" in ref
 
 
 def is_protected(ref: str, protected: tuple[str, ...]) -> bool:
@@ -242,7 +266,7 @@ def gh_rule(args: list[str]) -> str | None:
 
 def api_rule(args: list[str]) -> str | None:
     """The rule a gh api call breaks, if any: G6, G7 or G8."""
-    method, path = api_call(args)
+    method, path, fields = api_call(args)
     if path == "graphql":
         return graphql_rule(" ".join(args))
     if method in ("DELETE", "PATCH") and "/git/refs/" in f"/{path}/":
@@ -250,6 +274,8 @@ def api_rule(args: list[str]) -> str | None:
     if method == "GET":
         return None
     if path.endswith(("/merge", "/merges")):
+        return "G7"
+    if path.endswith("/reviews") and any(field.lower() == "event=approve" for field in fields):
         return "G7"
     if any(fragment in f"/{path}" for fragment in SETTINGS_PATHS) or re.fullmatch(r"repos/[^/]+/[^/]+", path):
         return "G8"
@@ -260,29 +286,33 @@ def graphql_rule(text: str) -> str | None:
     """The rule a gh api graphql call breaks, judged by the mutation names anywhere in its text."""
     for rule, names in (("G6", GRAPHQL_REF_MUTATIONS), ("G7", GRAPHQL_MERGE_MUTATIONS),
                         ("G8", GRAPHQL_SETTINGS_MUTATIONS)):
-        if re.search(r"\b(?:" + "|".join(names) + r")\b", text):
+        if re.search(mutation_names(names), text):
             return rule
     return None
 
 
-def api_call(args: list[str]) -> tuple[str, str]:
-    """The HTTP method and the endpoint path, without host, query or outer slashes, of a gh api call."""
-    method, fields, operands, index = "", False, [], 0
+def api_call(args: list[str]) -> tuple[str, str, list[str]]:
+    """The HTTP method, the endpoint path without host, query or outer slashes, and the fields of a gh api call."""
+    method, writes, fields, operands, index = "", False, [], [], 0
     while index < len(args):
         arg = args[index]
         index += 1
         if not arg.startswith("-"):
             operands.append(arg)
             continue
-        option, _, value = arg.partition("=") if arg.startswith("--") else (arg[:2], "", arg[2:])
+        # gh reads -X=DELETE like -XDELETE and -X DELETE
+        option, _, value = arg.partition("=") if arg.startswith("--") else (arg[:2], "", arg[2:].removeprefix("="))
         if option in API_VALUE_OPTIONS and not value and "=" not in arg:
             value = args[index] if index < len(args) else ""
             index += 1
         if option in ("-X", "--method"):
             method = value.upper()
-        fields = fields or option in API_FIELD_OPTIONS
+        if option in API_FIELD_OPTIONS:
+            writes = True
+            fields += [value] if option != "--input" else []
     path = re.sub(r"^[a-z]+://[^/]+", "", operands[0] if operands else "", flags=re.IGNORECASE)
-    return method or ("POST" if fields else "GET"), path.split("?")[0].strip("/").removeprefix("api/v3/")
+    path = path.split("?")[0].strip("/").removeprefix("api/v3/")
+    return method or ("POST" if writes else "GET"), path, fields
 
 
 # Running as a hook
@@ -290,7 +320,7 @@ def api_call(args: list[str]) -> tuple[str, str]:
 def protected_branches() -> tuple[str, ...]:
     """The configured protected branches, or main and master when the configuration cannot be read."""
     if str(REPO_ROOT) not in sys.path:
-        sys.path.append(str(REPO_ROOT))
+        sys.path.insert(0, str(REPO_ROOT))  # first, so that an installed package named factory cannot shadow it
     try:
         from factory.config import load
         return load().protected_branches

@@ -31,6 +31,37 @@ class SplitTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             shell_words.parse("run 'a")
 
+    def test_words_after_a_substitution_stay_in_its_command(self):
+        script = shell_words.parse("run a $(inner one) b `inner two` c")
+        self.assertEqual([(c.name, c.args) for c in script.commands],
+                         [("run", ["a", shell_words.SUBSTITUTED, "b", shell_words.SUBSTITUTED, "c"])])
+        self.assertEqual(script.substitutions, ["inner one", "inner two"])
+
+    def test_a_quoted_substitution_keeps_its_text_in_the_word(self):
+        self.assertEqual(commands('run "$(inner three)" d'), [("run", ["$(inner three)", "d"])])
+
+    def test_a_function_definition_exposes_its_body(self):
+        self.assertIn(("run", ["x"]), commands("function f { run x; }; f"))
+
+
+class CommentTest(unittest.TestCase):
+    def test_a_comment_runs_from_a_word_starting_with_a_hash_to_the_end_of_the_line(self):
+        self.assertEqual(commands("# don't\nrun a # it's\nrun b;# c's\nrun c"),
+                         [("run", ["a"]), ("run", ["b"]), ("run", ["c"])])
+
+    def test_a_hash_inside_quotes_or_inside_a_word_is_not_a_comment(self):
+        self.assertEqual(commands("run issue#12 \"#\" '#' x\\#y"), [("run", ["issue#12", "#", "#", "x#y"])])
+
+    def test_a_comment_after_a_heredoc_body_is_found(self):
+        self.assertEqual(commands("cat > f <<'EOF'\n# it's text\nEOF\nrun x # it's a note"),
+                         [("cat", []), ("run", ["x"])])
+
+    def test_where_the_quoting_is_too_intricate_to_follow_no_comment_is_removed(self):
+        for text in ("run ${x:-a #} ; next", "(( x = 1 # 2 )) ; next", 'run "$(echo "a #")" ; next',
+                     "run `echo a # c` ; next", 'run "`echo "a #"`" ; next'):
+            with self.subTest(text):
+                self.assertIn("next", [name for name, _ in commands(text)])
+
 
 class WrapperTest(unittest.TestCase):
     def test_assignments_and_wrappers_are_stripped_before_the_command_name(self):
@@ -69,6 +100,10 @@ class NestedTextTest(unittest.TestCase):
         self.assertEqual(script.substitutions, ["inner seven", "inner eight"])
         self.assertEqual(shell_words.parse("echo 'inner nine' | sh").stdin_texts, ["inner nine", "inner nine"])
         self.assertEqual(shell_words.parse("echo 'inner nine' | tee out").stdin_texts, [])
+
+    def test_what_a_substitution_prints_may_reach_a_shell_reading_stdin(self):
+        self.assertIn("inner ten", shell_words.parse("echo $(echo 'inner ten') | sh").stdin_texts)
+        self.assertIn("inner ten", shell_words.parse("bash <<< `printf '%s' 'inner ten'`").stdin_texts)
 
 
 class HeredocTest(unittest.TestCase):
