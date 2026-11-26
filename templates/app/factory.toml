@@ -1,0 +1,12 @@
+# What this file means: docs/factory/DESIGN.md, section 9.
+schema = 1
+
+[commands]
+setup = "echo \"Choose this app's commands in its design\""
+check = "echo \"Choose this app's commands in its design\""
+
+[quality]
+format = "none: chosen in this app's design"
+lint = "none: chosen in this app's design"
+types = "none: chosen in this app's design"
+tests = "none: chosen in this app's design"

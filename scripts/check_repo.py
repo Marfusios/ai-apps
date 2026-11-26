@@ -10,10 +10,14 @@ import ipaddress
 from pathlib import Path
 import re
 import subprocess
+import sys
 from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from factory import app_config, config as factory_config  # noqa: E402
 PRIVATE_NETWORKS = tuple(
     ipaddress.ip_network(network)
     for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
@@ -111,6 +115,21 @@ def check_file(path: Path, errors: list[str]) -> None:
             errors.append(f"{path}:{error.lineno}: invalid Python syntax")
 
 
+def check_factory_tomls(apps: list[Path], errors: list[str]) -> None:
+    try:
+        registries = factory_config.load().image_registries
+    except (factory_config.ConfigError, OSError) as error:
+        errors.append(f"factory/config.toml: {error}")
+        return
+    for app in apps:
+        if not (app / "factory.toml").is_file():
+            continue  # reported as a missing file
+        try:
+            app_config.load(app, registries)
+        except app_config.AppConfigError as error:
+            errors.extend(f"apps/{app.name}/factory.toml: {problem}" for problem in error.problems)
+
+
 def main() -> int:
     errors: list[str] = []
     try:
@@ -126,11 +145,12 @@ def main() -> int:
     for app in apps:
         if not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", app.name):
             errors.append(f"apps/{app.name}: app directory name must use kebab-case")
-        for required in ("README.md", ".env.example"):
+        for required in ("README.md", ".env.example", "AGENTS.md", "factory.toml"):
             if not (app / required).is_file():
                 errors.append(f"apps/{app.name}: missing {required}")
         if f"]({app.name}/README.md)" not in catalog:
             errors.append(f"apps/{app.name}: missing link in the application catalog")
+    check_factory_tomls(apps, errors)
 
     if errors:
         print("Repository checks failed:")
