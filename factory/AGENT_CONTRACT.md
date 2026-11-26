@@ -197,7 +197,9 @@ Return `needs_input` with `questions` when a person's answer would let you conti
   design and plan do not settle it.
 - The work cannot be finished without a change outside `apps/` and `packages/`, a new credential,
   or a provider account. A change elsewhere that would only help is a follow-up instead.
-- A review comment or instruction contradicts the merged design or `PLAN.md` on `main`.
+- A review comment or instruction contradicts the merged design or `PLAN.md` on `main` and there
+  is no thread to answer in. In a review thread, ask in the reply with `resolved: false`; the
+  outcome stays `done`.
 - An ad-hoc issue is too large or too vague for one pull request, is really an epic, or cannot be
   reproduced.
 - The step depends on something that `main` does not have yet.

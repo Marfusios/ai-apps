@@ -16,7 +16,7 @@ The terms of this app's domain, one line each, exactly as the code spells them.
 
 ## Commands
 
-The design stage writes the commands a change needs (install, check, test), what each covers, and what each requires.
+The design names the tools. The app's first plan step adds the commands to `factory.toml` and records them here.
 
 ## Pitfalls
 

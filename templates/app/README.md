@@ -14,7 +14,8 @@ provider accounts, and resource requirements.
 ## Installation and configuration
 
 `AGENTS.md` (notes for agents) and `factory.toml` (commands and quality tools,
-read by CI and the factory) belong to the app; its design fills them in.
+read by CI and the factory) belong to the app; its design fills in `AGENTS.md` and its first
+plan step sets the commands in `factory.toml`.
 
 Add exact dependency installation commands using a committed lockfile. Copy
 `.env.example` to `.env`, fill required values, and document what each variable

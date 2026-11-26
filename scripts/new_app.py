@@ -45,7 +45,8 @@ def main() -> int:
             path.write_text(filled, encoding="utf-8", newline="")
     catalog_path.write_text(updated_catalog, encoding="utf-8")
     print(f"Created apps/{args.name}/ and registered it as a scaffold in apps/README.md.")
-    print("Next: choose the app's stack, fill in its AGENTS.md and factory.toml, and follow docs/development.md.")
+    print("Next: write the app's design (the factory-design skill). It chooses the stack and fills in")
+    print("AGENTS.md; the app's first plan step sets the commands in factory.toml. See docs/development.md.")
     return 0
 
 
