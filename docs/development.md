@@ -15,6 +15,7 @@ overwrite an existing app. The generated app starts as a documentation scaffold.
 Choose the implementation stack for the app, then add:
 
 - Source code and the dependency manifest/lockfile for the chosen package manager.
+- `AGENTS.md` and `factory.toml`, which the scaffold already includes (see below).
 - A README describing the purpose, supported runtime versions, installation,
   configuration, startup, ingestion, tests, and limitations.
 - An `.env.example` listing only variables the app actually uses.
@@ -27,6 +28,8 @@ A typical implemented app can look like:
 ```text
 apps/document-search/
   README.md
+  AGENTS.md
+  factory.toml
   .env.example
   <dependency manifest and lockfile>
   src/
@@ -39,10 +42,25 @@ The exact source layout belongs to the selected framework. A frontend/backend
 app may have separate directories and lockfiles. Root-level Python is only for
 repository tools; it does not require applications to be written in Python.
 
-Register app-specific checks in CI when an implementation is added. Dependency
-installation must use the lockfile. Document CPU/memory requirements and optional
+`AGENTS.md` holds the app's instructions for coding agents, and the app's design
+fills it in. `factory.toml` declares the app's commands and quality tools, and the
+app's first plan step sets them. Its `check` command is the app's quality gate;
+per-app CI from that file is a later step of the factory.
+
+Dependency installation must use the lockfile. Document CPU/memory requirements and optional
 GPU usage for apps running local models. Keep unit tests independent of paid APIs;
 provide explicit commands for any live integration tests.
+
+## Repository tools
+
+```bash
+python3 scripts/check_repo.py
+python3 -m unittest discover -s factory/tests -t .
+```
+
+The first command checks repository conventions and the second runs the tests of the
+tools in `factory/`, `scripts/` and the hooks in `.claude/hooks/`, which guard agent
+sessions; the hook tests live in `factory/tests/`.
 
 ## Shared code
 
