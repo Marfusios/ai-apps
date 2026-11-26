@@ -80,6 +80,15 @@ class AppConfigTest(unittest.TestCase):
         config = self.load_text(MINIMAL.replace('lint = "eslint"', 'lint = "none: not adopted yet"'))
         self.assertEqual(config.quality["lint"], "none: not adopted yet")
 
+    def test_quality_none_cannot_be_dodged_by_a_variation(self):
+        for value in ("none ", "None", "NONE", "none (later)", "none:", "none: " + " " * 20,
+                      "none:" + "x" * 20, "none:   short", "two words", "a:b"):
+            with self.subTest(value):
+                self.assert_problem_at(MINIMAL.replace('lint = "eslint"', f'lint = "{value}"'), "quality.lint")
+        for value in ("@biomejs/biome", "ruff", "pre-commit+x", "node_modules/.bin/eslint"):
+            with self.subTest(value):
+                self.assertEqual(self.load_text(MINIMAL.replace('lint = "eslint"', f'lint = "{value}"')).quality["lint"], value)
+
     def test_service_image_must_come_from_a_listed_registry(self):
         self.assert_problem_at(MINIMAL + SERVICE.replace("docker.io/library/postgres:16", "example.org/x:1"),
                                "services[0].image")
@@ -92,6 +101,31 @@ class AppConfigTest(unittest.TestCase):
         digest = "docker.io/library/postgres@sha256:" + "a" * 64
         config = self.load_text(MINIMAL + SERVICE.replace("docker.io/library/postgres:16", digest))
         self.assertEqual(len(config.services), 1)
+
+    def test_service_image_must_follow_the_reference_grammar(self):
+        bad = ("docker.io/library/postgres:16 --privileged", "docker.io/library/postgres:16\\n    privileged: true",
+               "docker.io/library/:16", "docker.io/library/postgres:16 ", "docker.io/library/Postgres:16",
+               "docker.io/library/postgres:-1", "docker.io/library/postgres:" + "a" * 129,
+               "docker.io/library/postgres@sha256:" + "a" * 63, "docker.io/library/a//b:1",
+               "docker.io/library/postgres:1:2")
+        for image in bad:
+            with self.subTest(image):
+                self.assert_problem_at(MINIMAL + SERVICE.replace("docker.io/library/postgres:16", image),
+                                       "services[0].image")
+        good = ("docker.io/library/postgres:16.2", "docker.elastic.co/elasticsearch/elasticsearch:9.5.5",
+                "docker.io/library/postgres:16.2@sha256:" + "a" * 64)
+        for image in good:
+            with self.subTest(image):
+                config = self.load_text(MINIMAL + SERVICE.replace("docker.io/library/postgres:16", image))
+                self.assertEqual(config.services[0].image, image)
+
+    def test_deeply_nested_value_is_an_app_config_error(self):
+        deep = MINIMAL.replace('node = "22"', 'node = "22"\nschema_extra = ' + "[" * 100_000)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "factory.toml").write_text(deep, encoding="utf-8")
+            with self.assertRaises(AppConfigError) as ctx:
+                load(Path(tmp), REGISTRIES)
+            self.assertTrue(ctx.exception.problems)
 
     def test_service_rejects_mounts_and_flags(self):
         self.assert_problem_at(MINIMAL + SERVICE + 'volumes = ["/a:/b"]\n', "services[0].volumes")

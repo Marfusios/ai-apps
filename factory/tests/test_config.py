@@ -64,6 +64,10 @@ class ConfigTest(unittest.TestCase):
             with self.subTest(name), self.assertRaises(ConfigError):
                 self.load_text(text)
 
+    def test_deeply_nested_value_raises_config_error(self):
+        with self.assertRaises(ConfigError):
+            self.load_text(VALID + "extra = " + "[" * 100_000 + "\n")
+
     def test_missing_file_raises_config_error(self):
         with self.assertRaises(ConfigError):
             load(Path(tempfile.gettempdir()) / "no-such-factory-config.toml")

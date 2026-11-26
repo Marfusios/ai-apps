@@ -95,6 +95,14 @@ class ResultTest(unittest.TestCase):
                 load(path, "step")
             self.assertTrue(ctx.exception.problems)
 
+    def test_deeply_nested_file_is_a_result_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "result.json"
+            path.write_text("[" * 150_000, encoding="utf-8")
+            with self.assertRaises(ResultError) as ctx:
+                load(path, "step")
+            self.assertTrue(ctx.exception.problems)
+
     def test_non_object_and_wrong_types_do_not_raise(self):
         hostile = {"schema": 1, "outcome": "done", "summary": "s", "verification": "no",
                    "pull_request": [], "follow_ups": {}, "questions": 3}

@@ -14,6 +14,11 @@ QUALITY_KEYS = ("format", "lint", "types", "tests")
 TOP_KEYS = {"schema", "toolchain", "commands", "quality", "services"}
 COMMAND_KEYS = {"setup", "check", "quick"}
 SERVICE_KEYS = {"name", "image", "env", "ready", "memory"}
+_COMPONENT = r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
+IMAGE_REMAINDER = (
+    rf"{_COMPONENT}(?:/{_COMPONENT})*"
+    r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?:@sha256:[0-9a-f]{64})?|@sha256:[0-9a-f]{64})"
+)
 
 
 class AppConfigError(ValueError):
@@ -79,6 +84,16 @@ def _command(table: dict, key: str, required: bool, problems: list[str]) -> str 
     return table[key]
 
 
+def _quality_ok(value: str) -> bool:
+    # A tool name has no whitespace or colon, so every spelling of "none" other than the
+    # exact "none: <reason>" form is rejected instead of being taken for a tool.
+    if value.lower() == "none":
+        return False
+    if re.fullmatch(r"[A-Za-z0-9@][A-Za-z0-9._@/+-]*", value, re.ASCII):
+        return True
+    return value.startswith("none: ") and len(value[len("none: "):].strip()) >= 10
+
+
 def _quality(raw: object, problems: list[str]) -> dict[str, str]:
     table = _table(raw, "quality", problems)
     _unknown(table, set(QUALITY_KEYS), "quality", problems)
@@ -89,10 +104,11 @@ def _quality(raw: object, problems: list[str]) -> dict[str, str]:
             problems.append(f"quality.{key}: required")
         elif not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
             problems.append(f"quality.{key}: must be a single-line tool name or 'none: <reason>'")
-        elif (value == "none" or value.startswith("none:")) and not re.fullmatch(r"none: .{10,}", value):
-            problems.append(f"quality.{key}: 'none' needs a reason of at least 10 characters, as 'none: <reason>'")
-        else:
+        elif _quality_ok(value):
             result[key] = value
+        else:
+            problems.append(f"quality.{key}: must be a tool name without spaces, or 'none: <reason>' "
+                            "with a reason of at least 10 characters")
     return result
 
 
@@ -120,8 +136,10 @@ def _memory_ok(value: object) -> bool:
 def _image_ok(image: object, registries: Sequence[str]) -> bool:
     if not isinstance(image, str) or not any(image.startswith(r) for r in registries):
         return False
-    name = image.rsplit("/", 1)[-1]
-    return bool(re.search(r":[^:@]+$", name) or re.search(r"@sha256:[0-9a-f]{64}$", name))
+    prefix = next(r for r in registries if image.startswith(r))
+    # The image ends up in commands and compose files later, so anything beyond the
+    # Docker reference grammar (spaces, newlines, empty path parts) must not pass.
+    return bool(re.fullmatch(IMAGE_REMAINDER, image[len(prefix):], re.ASCII))
 
 
 def _service(raw: object, index: int, registries: Sequence[str], seen: set[str], problems: list[str]) -> Service | None:
@@ -188,7 +206,7 @@ def load(app_dir: Path, registries: Sequence[str]) -> AppConfig:
     path = app_dir / "factory.toml"
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as error:
         raise AppConfigError([f"factory.toml: cannot read: {error}"]) from error
     config, problems = _validate(data, registries)
     if config is None:

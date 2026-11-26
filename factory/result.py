@@ -121,7 +121,7 @@ def load(path: Path, stage: str) -> dict:
         raise ResultError([f"result: file is {size} bytes, above the limit of {MAX_RESULT_BYTES}"])
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         raise ResultError([f"result: cannot read as JSON: {error}"]) from error
     problems = validate(data, stage)
     if problems:
