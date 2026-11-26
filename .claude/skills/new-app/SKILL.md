@@ -12,7 +12,7 @@ the stack, the commands and the module map, so this skill leaves those parts as 
 1. Settle the name and the purpose. In a factory run (`FACTORY_RUN=1`) the name is `app` in
    `$FACTORY_JOB_DIR/job.json` and the purpose comes from the epic. Otherwise ask the person for
    what they have not given: the name in kebab-case (lowercase letters, digits and single hyphens,
-   at most 64 characters, such as `document-search`), which becomes the directory `apps/<name>/`
+   starting with a letter, at most 64 characters, such as `document-search`), which becomes the directory `apps/<name>/`
    and is costly to change later, and what the app is for.
 2. Outside a factory run, first switch to a branch of your own, since the git rules of
    `AGENTS.md` send every change to `main` through a pull request. Then, from the repository
@@ -24,9 +24,9 @@ the stack, the commands and the module map, so this skill leaves those parts as 
 4. In the app's row of `apps/README.md`, replace `Describe the app's purpose.` with one sentence of
    purpose. If the app has a display name, from the person or the epic, use it for the row's link
    text and for the first heading of its `README.md` and `AGENTS.md`.
-5. Leave the placeholders in `apps/<name>/AGENTS.md` and `apps/<name>/factory.toml`, although the
-   script's last line suggests filling them in: the design does that, and the template's values
-   pass the repository checker until then.
+5. Leave the placeholders in `apps/<name>/AGENTS.md` and `apps/<name>/factory.toml`: the design
+   and the app's first plan step fill them in, and the template's values pass the repository
+   checker until then.
 6. Run `python3 scripts/check_repo.py`; it must pass.
 7. Commit the new files with a one-sentence message, as "Change discipline" in `AGENTS.md` asks.
    In a factory run, go back to the skill that sent you here. Otherwise tell the person what was

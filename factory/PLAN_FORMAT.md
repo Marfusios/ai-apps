@@ -36,13 +36,17 @@ Then comes one section per step, each with exactly this shape:
 
 ## Rules
 
-- Identifiers are `S1`, `S2`, ... in order, with no gaps in a new plan.
+- Identifiers are `S` followed by a positive integer without leading zeros: `S1`, `S2`, ... in
+  strictly increasing order, with no gaps in a new plan.
+- The number after `Epic: #` is the epic's issue number, the same as in the directory name.
 - An identifier never changes once its step has an issue. A removed step's identifier is not
   reused, so its number stays a gap, and a step added later takes the next unused number.
 - `Depends on` is `none` or a comma-separated list of earlier identifiers, such as `S1, S3`.
 - `Risk` is `low`, `medium` or `high`.
+- A step holds exactly the two level-3 sections shown, and no others.
 - The three fields appear in the order shown, each on one line, and none is empty.
 - Every step has at least one acceptance criterion and at least one verification command, each a
-  list item; a verification item is one command in backticks.
+  list item; a verification item is one command in backticks. Each list item is a single line.
+- `none` is written in lower case.
 - Each step is one pull request that leaves `main` working: the app's checks pass after it merges.
 - After the Overview, nothing but step sections may appear at heading level 2.
