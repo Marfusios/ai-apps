@@ -19,6 +19,11 @@ PROTECTED = ("main",)
 SUFFIX = "(AGENTS.md, Git rules)"
 ENCODED_FORCE_PUSH = base64.b64encode("git push -f".encode("utf-16-le")).decode("ascii")
 
+GRAPHQL_REF_MUTATIONS = ("deleteRef", "updateRef")
+GRAPHQL_ASKED_MUTATIONS = (
+    "mergePullRequest", "enablePullRequestAutoMerge", "createBranchProtectionRule", "updateBranchProtectionRule",
+    "deleteBranchProtectionRule", "createRepositoryRuleset", "updateRepositoryRuleset", "deleteRepositoryRuleset")
+
 DENY = [
     "git push --force", "git push -f origin feature", "git push origin +feature", "git push --force-with-lease",
     "git push -uf origin feature", "git push --mirror", "git push origin --delete feature", "git push origin :feature",
@@ -47,6 +52,14 @@ DENY = [
     "builtin git push -f", "exec git push -f", "ionice -c 3 git push -f", "time git push -f", "nohup git push -f &",
     "zsh -c 'git push -f'", "dash -c 'git push -f'", "ksh -c 'git push -f'", "git --git-dir .git --work-tree . push -f",
     "git --namespace=x push --force",
+    # Moving a ref through the API is a force push by another name; creating one is not.
+    "gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=abc -F force=true",
+    "gh api --method PATCH repos/o/r/git/refs/heads/x -f sha=abc", "gh api repos/o/r/git/refs/heads/x -XPATCH -f sha=abc",
+    "gh api -X patch /repos/o/r/git/refs/tags/v1 -f sha=abc",
+    *(f"gh api graphql -f query='mutation {{ {name}(input: {{}}) {{ clientMutationId }} }}'"
+      for name in GRAPHQL_REF_MUTATIONS),
+    "gh api graphql -f query='mutation { deleteRef(input: {refId: \"x\"}) { clientMutationId } }'",
+    "gh api graphql --raw-field query='mutation { updateRef(input: {}) { clientMutationId } }'",
 ]
 DENY_ON_MAIN = [
     "git push", "git push origin", "git push origin HEAD", "git push -u origin HEAD",
@@ -74,6 +87,13 @@ ALLOW = [
     "gh api -X POST repos/o/r/pulls -f title=x -f head=feature -f base=main", "gh secret list", "gh workflow run checks.yml",
     "gh repo view", "git commit -m \"$(cat <<'EOF'\nTwo changes: 1) docs, 2) refuse `git push --force`\nEOF\n)\"",
     "gh pr create --body \"$(cat <<'EOF'\nA smile :) then `gh pr merge 3`, don't\nEOF\n)\"",
+    "gh api -X POST repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc", "gh api repos/o/r/git/refs/heads/x",
+    "gh api -X PATCH repos/o/r/git/tags/x -f message=y",
+    "gh api graphql -f query='query { viewer { login } }'",
+    "gh api graphql -f query='mutation { addComment(input: {subjectId: \"x\", body: \"hi\"}) { clientMutationId } }'",
+    "gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"x\"}) { clientMutationId } }'",
+    "gh api graphql -f query='query { deleteref: viewer { login } }'",
+    "gh api repos/o/r/issues -f title='how deleteRef works'",
 ]
 ASK_INTERACTIVE_DENY_FACTORY = [
     "gh pr merge 12 --squash", "gh pr review 12 --approve", "gh api -X PUT repos/o/r/pulls/12/merge",
@@ -92,6 +112,9 @@ ASK_INTERACTIVE_DENY_FACTORY = [
         "rulesets", "branches/main/protection", "actions/permissions", "actions/secrets/X", "actions/variables/X", "hooks",
         "keys", "collaborators/someone", "environments/prod", "pages", "vulnerability-alerts",
         "private-vulnerability-reporting")),
+    "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+    *(f"gh api graphql -f query='mutation {{ {name}(input: {{}}) {{ clientMutationId }} }}'"
+      for name in GRAPHQL_ASKED_MUTATIONS),
 ]
 
 
@@ -139,6 +162,20 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(actions('gh pr merge 3 "unterminated'), ("ask", "deny"))
         self.assertEqual(actions("echo 'unterminated"), ("allow", "allow"))
         self.assertEqual(actions("git push 'unterminated", branch="main"), ("deny", "deny"))
+
+    def test_graphql_mutation_names_are_found_when_the_command_cannot_be_tokenised(self):
+        def broken(name: str) -> str:
+            return f"gh api graphql -f query='mutation {{ {name}(input: {{}}) }}' \"oops"
+
+        for name in GRAPHQL_REF_MUTATIONS:
+            with self.subTest(name):
+                self.assertEqual(actions(broken(name)), ("deny", "deny"))
+        for name in GRAPHQL_ASKED_MUTATIONS:
+            with self.subTest(name):
+                self.assertEqual(actions(broken(name)), ("ask", "deny"))
+        self.assertEqual(actions(broken("addComment")), ("allow", "allow"))
+        self.assertEqual(actions("gh api -X PATCH repos/o/r/git/refs/heads/x -f sha=abc \"oops"), ("deny", "deny"))
+        self.assertEqual(actions("gh api -X POST repos/o/r/git/refs -f sha=abc \"oops"), ("allow", "allow"))
 
     def test_nesting_deeper_than_five_is_denied(self):
         self.assertEqual(actions("eval " * 5 + "git status"), ("allow", "allow"))

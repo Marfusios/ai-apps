@@ -22,7 +22,8 @@ REASONS = {
     "G3": "Pushing to a protected branch such as main is refused. Push your own branch and open a pull request.",
     "G4": "Skipping git hooks is refused. Let the hooks run and fix what they report.",
     "G5": "Rewriting history with filter-branch or filter-repo is refused. Fix the problem in a new commit, or ask the person.",
-    "G6": "Deleting a branch or tag through the GitHub API is refused. Leave it in place and tell the person.",
+    "G6": "Deleting or moving a branch or tag through the GitHub API is refused, as moving one is a force push by "
+          "another name. Push new commits on top, or leave it in place and tell the person.",
     "G7": "Merging or approving a pull request is the person's decision. Leave the pull request open for their review.",
     "G8": "Changing repository settings, rules, secrets or workflows is the person's decision. Ask them to make the change.",
     "nesting": "The command nests shells more than five levels deep, too deep to inspect. Run the inner command directly.",
@@ -42,6 +43,16 @@ API_FIELD_OPTIONS = {"-f", "--raw-field", "-F", "--field", "--input"}
 SETTINGS_PATHS = ("/rulesets", "/protection", "/actions/permissions", "/actions/secrets", "/actions/variables",
                   "/hooks", "/keys", "/collaborators", "/environments", "/pages", "/vulnerability-alerts",
                   "/private-vulnerability-reporting")
+GRAPHQL_REF_MUTATIONS = ("deleteRef", "updateRef")
+GRAPHQL_MERGE_MUTATIONS = ("mergePullRequest", "enablePullRequestAutoMerge")
+GRAPHQL_SETTINGS_MUTATIONS = tuple(f"{verb}{noun}" for noun in ("BranchProtectionRule", "RepositoryRuleset")
+                                   for verb in ("create", "update", "delete"))
+
+
+def graphql_pattern(names: tuple[str, ...]) -> str:
+    """A text pattern for gh api graphql with one of the mutation names, which GraphQL spells case-sensitively."""
+    return r"\bgh\b.*\bapi\b.*\bgraphql\b.*(?-i:\b(?:" + "|".join(names) + r")\b)"
+
 
 GIT_PUSH = re.compile(r"\bgit\b.*\bpush\b", re.IGNORECASE | re.DOTALL)
 TEXT_RULES = [(rule, re.compile(pattern, re.IGNORECASE | re.DOTALL)) for rule, pattern in (
@@ -50,7 +61,10 @@ TEXT_RULES = [(rule, re.compile(pattern, re.IGNORECASE | re.DOTALL)) for rule, p
     ("G3", GIT_PUSH.pattern + r".*--(?:all|branches)\b"),
     ("G4", r"--no-verify|core\.hookspath|\bhusky=0|\bgit\b.*\bcommit\b.*\s-\w*n"),
     ("G5", r"\bgit\b.*\bfilter-(?:branch|repo)\b"),
-    ("G6", r"\bgh\b.*\bapi\b(?=.*\bdelete\b).*/git/refs/"),
+    ("G6", r"\bgh\b.*\bapi\b(?=.*(?:\b(?:delete|patch)\b|-x(?:delete|patch))).*/git/refs/"),
+    ("G6", graphql_pattern(GRAPHQL_REF_MUTATIONS)),
+    ("G7", graphql_pattern(GRAPHQL_MERGE_MUTATIONS)),
+    ("G8", graphql_pattern(GRAPHQL_SETTINGS_MUTATIONS)),
     ("G7", r"\bgh\b.*(?:\bpr\s+merge\b|\bpr\s+review\b.*(?:--approve|\s-a\b)|\bapi\b.*/merges?\b)"),
     ("G8", r"\bgh\b.*(?:\brepo\s+(?:edit|delete|rename|archive|unarchive)\b|\b(?:secret|variable)\s+(?:set|delete|remove)\b"
            r"|\bworkflow\s+(?:enable|disable)\b|\bapi\b.*(?:" + "|".join(map(re.escape, SETTINGS_PATHS))
@@ -229,7 +243,9 @@ def gh_rule(args: list[str]) -> str | None:
 def api_rule(args: list[str]) -> str | None:
     """The rule a gh api call breaks, if any: G6, G7 or G8."""
     method, path = api_call(args)
-    if method == "DELETE" and "/git/refs/" in f"/{path}/":
+    if path == "graphql":
+        return graphql_rule(" ".join(args))
+    if method in ("DELETE", "PATCH") and "/git/refs/" in f"/{path}/":
         return "G6"
     if method == "GET":
         return None
@@ -237,6 +253,15 @@ def api_rule(args: list[str]) -> str | None:
         return "G7"
     if any(fragment in f"/{path}" for fragment in SETTINGS_PATHS) or re.fullmatch(r"repos/[^/]+/[^/]+", path):
         return "G8"
+    return None
+
+
+def graphql_rule(text: str) -> str | None:
+    """The rule a gh api graphql call breaks, judged by the mutation names anywhere in its text."""
+    for rule, names in (("G6", GRAPHQL_REF_MUTATIONS), ("G7", GRAPHQL_MERGE_MUTATIONS),
+                        ("G8", GRAPHQL_SETTINGS_MUTATIONS)):
+        if re.search(r"\b(?:" + "|".join(names) + r")\b", text):
+            return rule
     return None
 
 
