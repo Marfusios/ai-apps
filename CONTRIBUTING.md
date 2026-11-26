@@ -11,6 +11,14 @@ the data it uses, and how someone can reproduce its behavior from a fresh clone.
 5. Update the app README and [catalog](apps/README.md). Describe what changed and
    how it was validated in the pull request.
 
+## Branches and releases
+
+`main` is the only long-lived branch and holds every app's reviewed code. Make each
+change on a short-lived branch, open a pull request into `main`, and delete the branch
+after the merge. A push or a merge deploys nothing: a deployed app is released from a
+tagged commit on `main` by its own release command (for AirCase, see
+[Release command](apps/aviation-investigations/docs/RUNBOOK.md#release-command)).
+
 Keep dependencies and generated data scoped to the app that needs them. Shared
 packages should have a clear purpose, their own tests, and documented consumers.
 

@@ -2511,6 +2511,10 @@ The [runbook](docs/RUNBOOK.md) covers provisioning, the role model, each contain
 credentials, the networks, tunnel and tracing modes, ingestion and the
 local-services mode.
 
+A running deployment is updated only with `pnpm app:release`, from a clean checkout of a
+tagged commit on `main` ([Release command](docs/RUNBOOK.md#release-command)). A push or
+merge on GitHub deploys nothing.
+
 
 Task 24 adds a separate `AVIATION_EVIDENCE_RANKING` setting for evidence searches.
 The default is `er-q-v1` (question-only retrieval, no rerank); live also allows

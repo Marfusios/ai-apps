@@ -8,11 +8,13 @@ tests, and setup instructions. Shared code is introduced when multiple apps need
 the same functionality. The repository does not require a particular cloud account,
 private network, or shared development server.
 
-**Status:** the first app, [AirCase](apps/aviation-investigations/README.md),
-has a researched implementation design, including a
-[Langfuse tracing and evaluation plan](apps/aviation-investigations/docs/OBSERVABILITY_AND_EVALUATION.md).
-No application has been implemented yet.
-See the [application catalog](apps/README.md) as projects are added.
+**Status:** the first app, [AirCase](apps/aviation-investigations/README.md), is live at
+`https://aircase.app`. It searches and compares NTSB aviation investigations with keyword
+search and an AI evidence search, and imports each new NTSB snapshot automatically. Its
+design, runbook and
+[tracing and evaluation](apps/aviation-investigations/docs/OBSERVABILITY_AND_EVALUATION.md)
+documents are in `apps/aviation-investigations/docs/`. See the
+[application catalog](apps/README.md) as projects are added.
 
 ## Repository layout
 
