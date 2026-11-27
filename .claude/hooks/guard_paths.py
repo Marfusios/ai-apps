@@ -42,7 +42,7 @@ def fallback_config() -> Config:
     """A configuration with the default writable roots, for when config.toml cannot be read."""
     # the settings are placeholders: this hook reads only the writable paths
     return Config(trusted_logins=(), writable_paths=FALLBACK_WRITABLE, protected_branches=(), image_registries=(),
-                  labels=(), dispatcher=DispatcherSettings(15, 5, 1, 1, 1, 1, ("x",)),
+                  labels=(), dispatcher=DispatcherSettings(15, 5, 1, 1, 1, 1, ("x",), "x"),
                   review=ReviewSettings("x", 1), agent=AgentSettings("auto", "0.0.0", "", {}, cpus=1), stages={})
 
 

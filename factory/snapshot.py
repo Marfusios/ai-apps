@@ -74,8 +74,10 @@ class PullRequest:
     draft: bool = False
     head_sha: str = ""
     node_id: str = ""
-    # what is known only of an open pull request whose head is a full commit id
+    # Read for any open pull request: its reviews (here) and comments (merged into the issue's). The checks, the
+    # verdict and the review text are read only when the head is a full commit id, else they stay empty.
     checks: tuple[Check, ...] = ()
+    checks_complete: bool = True  # False when GitHub counted more check runs than it listed
     verdict: str = ""  # the second-model review's verdict for this head, or empty
     review_text: str = ""
     reviews: tuple[Review, ...] = ()
@@ -167,8 +169,21 @@ def _trigger_actor(events: list) -> str | None:
     return actor
 
 
-def _pull_request(candidates: object) -> PullRequest | None:
-    pulls = [pull for pull in _objects(candidates) if _integer(pull.get("number")) > 0]
+def _on_branch(pull: dict, branch: str, repository: str) -> bool:
+    """True when the pull request's head is this branch of this repository, not a fork's or another branch."""
+    head = pull.get("head")
+    if not isinstance(head, dict) or head.get("ref") != branch:
+        return False
+    source = head.get("repo")
+    name = _text(source.get("full_name")) if isinstance(source, dict) else ""
+    return not name or name.casefold() == repository.casefold()
+
+
+def _pull_request(candidates: object, branch: str, repository: str) -> PullRequest | None:
+    pulls = [
+        pull for pull in _objects(candidates)
+        if _integer(pull.get("number")) > 0 and _on_branch(pull, branch, repository)
+    ]
     if not pulls:
         return None
     latest = max(pulls, key=lambda pull: pull["number"])
@@ -186,12 +201,13 @@ def checks_state(pull: PullRequest, required: Sequence[str]) -> str:
     A failed check that is not required (a helper job broken for infrastructure reasons) is ignored: the
     required aggregate names cover real failures.
     """
-    if not pull.head_sha:
+    if not _SHA.fullmatch(pull.head_sha):
         return "pending"
     states = {check.name: check.state for check in pull.checks}
     if any(states.get(name) == "failed" for name in required):
         return "failed"
-    return "pending" if any(states.get(name) != "passed" for name in required) else "passed"
+    unfinished = not pull.checks_complete or any(states.get(name) != "passed" for name in required)
+    return "pending" if unfinished else "passed"
 
 
 def _check_state(run: dict) -> str:
@@ -200,18 +216,31 @@ def _check_state(run: dict) -> str:
     conclusion = run.get("conclusion")
     if conclusion == "success":
         return "passed"
-    return "failed" if conclusion in _FAILED_CONCLUSIONS else "other"
+    return "failed" if isinstance(conclusion, str) and conclusion in _FAILED_CONCLUSIONS else "other"
 
 
-def _checks(answer: object) -> tuple[Check, ...]:
-    """The newest run of each name: a re-run has a higher id and replaces the earlier one."""
-    runs = _objects(answer.get("check_runs")) if isinstance(answer, dict) else []
+def _created_by(run: dict, app: str) -> bool:
+    source = run.get("app")
+    return isinstance(source, dict) and source.get("slug") == app
+
+
+def _checks(answer: object, app: str) -> tuple[tuple[Check, ...], bool]:
+    """The newest run of each name made by `app`, and whether GitHub listed all the runs it counted.
+
+    A re-run has a higher id and replaces the earlier one. Runs of other apps are ignored: any app can create
+    a check run with any name, so only the trusted one may pass or fail a pull request.
+    """
+    listed = answer.get("check_runs") if isinstance(answer, dict) else None
+    total = answer.get("total_count") if isinstance(answer, dict) else None
+    counted = isinstance(total, int) and not isinstance(total, bool) and isinstance(listed, list)
+    complete = not (counted and total > len(listed))
     newest: dict[str, dict] = {}
-    for run in runs:
+    for run in _objects(listed):
         name = _text(run.get("name"))
-        if name and _integer(run.get("id")) >= _integer(newest.get(name, {}).get("id")):
+        if name and _created_by(run, app) and _integer(run.get("id")) >= _integer(newest.get(name, {}).get("id")):
             newest[name] = run
-    return tuple(Check(name, _check_state(run), _integer(run.get("id"))) for name, run in newest.items())
+    checks = tuple(Check(name, _check_state(run), _integer(run.get("id"))) for name, run in newest.items())
+    return checks, complete
 
 
 def _reviews(raw: list) -> tuple[Review, ...]:
@@ -228,7 +257,7 @@ def _verdict(comments: Sequence[Comment], head: str, config: Config) -> tuple[st
     """The verdict and text of the review bot's newest comment about this head.
 
     Empty when it has none, or when that newest comment's verdict is not a known one: an older comment
-    for the same head is superseded, not a fallback.
+    for the same head is superseded, not a fallback. The text stops at the last marker, the one that is read.
     """
     bot = config.review
     for comment in sorted(comments, key=lambda comment: comment.id, reverse=True):
@@ -236,10 +265,11 @@ def _verdict(comments: Sequence[Comment], head: str, config: Config) -> tuple[st
             continue
         data = markers.parse_review(comment.body)
         if data is not None and data.get("head") == head:
-            if data.get("verdict") not in VERDICTS:
+            verdict = data.get("verdict")
+            if not isinstance(verdict, str) or verdict not in VERDICTS:
                 return "", ""
-            text = comment.body[: comment.body.index(markers.REVIEW_PREFIX)]
-            return data["verdict"], text.strip()[:REVIEW_TEXT_LIMIT]
+            text = comment.body[: comment.body.rindex(markers.REVIEW_PREFIX)]
+            return verdict, text.strip()[:REVIEW_TEXT_LIMIT]
     return "", ""
 
 
@@ -299,7 +329,7 @@ def _pull_request_of(github: GitHub, number: int) -> PullRequest | None:
     pulls = github.get(
         f"{github.repo}/pulls", {"head": f"{owner}:{branch_for(number)}", "state": "all", "per_page": "10"}
     )
-    return _pull_request(pulls)
+    return _pull_request(pulls, branch_for(number), github.repo.removeprefix("/repos/"))
 
 
 def _open_pull_details(
@@ -309,11 +339,14 @@ def _open_pull_details(
     comments = _sorted_comments(github.get_all(f"{github.repo}/issues/{pull.number}/comments", {"per_page": "100"}))
     reviews = _reviews(github.get_all(f"{github.repo}/pulls/{pull.number}/reviews", {"per_page": "100"}))
     checks: tuple[Check, ...] = ()
+    complete = True
     verdict = text = ""
     if _SHA.fullmatch(pull.head_sha):  # the head goes into a request path, so only a full commit id may
-        checks = _checks(github.get(f"{github.repo}/commits/{pull.head_sha}/check-runs", {"per_page": "100"}))
+        answer = github.get(f"{github.repo}/commits/{pull.head_sha}/check-runs", {"per_page": "100"})
+        checks, complete = _checks(answer, config.dispatcher.checks_app)
         verdict, text = _verdict(comments, pull.head_sha, config)
-    return replace(pull, checks=checks, verdict=verdict, review_text=text, reviews=reviews), comments
+    pull = replace(pull, checks=checks, checks_complete=complete, verdict=verdict, review_text=text, reviews=reviews)
+    return pull, comments
 
 
 def _open_issue(github: GitHub, entry: dict, config: Config) -> Issue:
@@ -351,6 +384,9 @@ def _apps(github: GitHub) -> tuple[str, ...]:
 
 def fetch(github: GitHub, config: Config) -> Snapshot:
     """Read the issues, the halt switch and the apps.
+
+    For an open issue whose pull request is open it also reads that pull request's comments (merged into the
+    issue's) and reviews, and, when its head is a full commit id, its check runs and the review bot's verdict.
 
     A GitHubError from a list, or a rate limit anywhere, ends the poll without a snapshot; any other GitHubError
     while reading one open issue's history makes that issue unreadable instead.

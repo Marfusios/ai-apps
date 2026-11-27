@@ -23,8 +23,9 @@ DISPATCHER_LIMITS = {
     "max_commits": (1, 500),
     "max_fix_rounds": (1, 10),
 }
-DISPATCHER_KEYS = {*DISPATCHER_LIMITS, "required_checks"}
+DISPATCHER_KEYS = {*DISPATCHER_LIMITS, "required_checks", "checks_app"}
 REVIEW_KEYS = {"bot_login", "bot_user_id"}
+APP_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 CHECK_NAME = re.compile(r"[A-Za-z0-9 ._()-]{1,100}")
 STAGE_LIMITS = {"timeout_minutes": (5, 360), "max_turns": (10, 1000)}
 STAGE_KEYS = {"model", *STAGE_LIMITS}
@@ -58,6 +59,7 @@ class DispatcherSettings:
     max_commits: int
     max_fix_rounds: int
     required_checks: tuple[str, ...]  # the names of the checks that must pass before a person is asked to look
+    checks_app: str  # the slug of the GitHub App whose check runs count: the hosted workflows' own
 
 
 @dataclass(frozen=True)
@@ -143,10 +145,17 @@ def _required_checks(value: object) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _checks_app(value: object) -> str:
+    if not isinstance(value, str) or not APP_SLUG.fullmatch(value):
+        raise ConfigError(f"dispatcher.checks_app must match {APP_SLUG.pattern}")
+    return value
+
+
 def _dispatcher(raw: object) -> DispatcherSettings:
     table = _table(raw, "dispatcher", DISPATCHER_KEYS)
     return DispatcherSettings(**_integers(table, "dispatcher", DISPATCHER_LIMITS),
-                              required_checks=_required_checks(table["required_checks"]))
+                              required_checks=_required_checks(table["required_checks"]),
+                              checks_app=_checks_app(table["checks_app"]))
 
 
 def _review(raw: object) -> ReviewSettings:

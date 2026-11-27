@@ -26,6 +26,7 @@ max_bundle_megabytes = 50
 max_file_megabytes = 5
 max_commits = 50
 required_checks = ["repository", "apps", "review"]
+checks_app = "github-actions"
 max_fix_rounds = 3
 """
 REVIEW = """
@@ -91,6 +92,13 @@ INVALID_SETTINGS = [
     ("check too long", '"repository", "apps"', '"' + "a" * 101 + '", "apps"', "dispatcher.required_checks"),
     ("check trailing newline", '"repository", "apps"', '"apps\\n", "apps"', "dispatcher.required_checks"),
     ("checks missing", 'required_checks = ["repository", "apps", "review"]\n', "", "dispatcher.required_checks"),
+    ("checks app empty", 'checks_app = "github-actions"', 'checks_app = ""', "dispatcher.checks_app"),
+    ("checks app not a string", 'checks_app = "github-actions"', "checks_app = 3", "dispatcher.checks_app"),
+    ("checks app upper case", 'checks_app = "github-actions"', 'checks_app = "GitHub"', "dispatcher.checks_app"),
+    ("checks app trailing newline", 'checks_app = "github-actions"', 'checks_app = "actions\\n"',
+     "dispatcher.checks_app"),
+    ("checks app too long", 'checks_app = "github-actions"', 'checks_app = "' + "a" * 62 + '"', "dispatcher.checks_app"),
+    ("checks app missing", 'checks_app = "github-actions"\n', "", "dispatcher.checks_app"),
     ("login empty", 'bot_login = "github-actions[bot]"', 'bot_login = ""', "review.bot_login"),
     ("login not a string", 'bot_login = "github-actions[bot]"', "bot_login = 7", "review.bot_login"),
     ("user id zero", "bot_user_id = 41898282", "bot_user_id = 0", "review.bot_user_id"),
@@ -156,8 +164,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((dispatcher.poll_seconds, dispatcher.usage_limit_backoff_minutes,
                           dispatcher.max_bundle_megabytes, dispatcher.max_file_megabytes, dispatcher.max_commits),
                          (45, 30, 50, 5, 50))
-        self.assertEqual((dispatcher.required_checks, dispatcher.max_fix_rounds),
-                         (("repository", "apps", "review"), 3))
+        self.assertEqual((dispatcher.required_checks, dispatcher.checks_app, dispatcher.max_fix_rounds),
+                         (("repository", "apps", "review"), "github-actions", 3))
         self.assertEqual((config.review.bot_login, config.review.bot_user_id), ("github-actions[bot]", 41898282))
         agent = config.agent
         self.assertEqual((agent.permission_mode, agent.claude_code_version, agent.base_image, agent.cpus),

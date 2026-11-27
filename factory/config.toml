@@ -102,6 +102,8 @@ max_file_megabytes = 5
 max_commits = 50
 # The checks that must pass on a pull request, by the name GitHub shows for them.
 required_checks = ["repository", "apps", "review"]
+# Only check runs created by this GitHub App count, so no other app can pass or fail a pull request.
+checks_app = "github-actions"
 max_fix_rounds = 3
 
 # The account the review workflow comments as; the id is checked because a login can be renamed.

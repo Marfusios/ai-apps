@@ -1,6 +1,7 @@
 """Tests for the snapshot of GitHub state."""
 
 import unittest
+from dataclasses import replace
 
 from factory import config as factory_config
 from factory import markers, snapshot
@@ -44,10 +45,14 @@ def labeled(actor: str | None, name: str = "factory:fix") -> dict:
 HEAD = "a" * 40
 
 
-def pull_json(number: int, *, state: str = "open", merged_at: str | None = None, head: object = HEAD, **extra) -> dict:
+def pull_json(
+    number: int, *, state: str = "open", merged_at: str | None = None, head: object = HEAD,
+    branch: str = "factory/fix-12", repository: str = "owner/name", **extra,
+) -> dict:
     entry = {
         "number": number, "state": state, "merged_at": merged_at, "html_url": f"https://example.test/pull/{number}",
-        "draft": False, "node_id": f"PR_{number}", "head": {"sha": head, "ref": "factory/fix-12"},
+        "draft": False, "node_id": f"PR_{number}",
+        "head": {"sha": head, "ref": branch, "repo": {"full_name": repository}},
     }
     entry.update(extra)
     return entry
@@ -86,16 +91,16 @@ def _objects_of(items: list | None) -> list[dict]:
 
 def add_pull_details(
     github: FakeGitHub, pull: int, head: object, *, checks: list | None = None, comments: list | None = None,
-    reviews: list | None = None,
+    reviews: list | None = None, total_count: int | None = None, check_runs: bool = True,
 ) -> None:
-    """Quiet answers for what `fetch` reads about an open pull request; a valid head also gets check runs."""
+    """Quiet answers for what `fetch` reads about an open pull request, and check runs unless `check_runs` is off."""
     repo = github.repo
     github.answers[key(f"{repo}/issues/{pull}/comments", {"per_page": "100"})] = comments or []
     github.answers[key(f"{repo}/pulls/{pull}/reviews", {"per_page": "100"})] = reviews or []
     sha = head.get("sha") if isinstance(head, dict) else None
-    if isinstance(sha, str):
+    if check_runs and isinstance(sha, str):
         github.answers[key(f"{repo}/commits/{sha}/check-runs", {"per_page": "100"})] = {
-            "total_count": len(checks or []), "check_runs": checks or [],
+            "total_count": len(checks or []) if total_count is None else total_count, "check_runs": checks or [],
         }
 
 
@@ -168,7 +173,7 @@ class FetchTest(unittest.TestCase):
             issue_json(24, state="closed", labels=("factory:fix", "status:failed"), pull_request={"url": "x"}),
         ]
         github = github_with([], closed)
-        add_history(github, 20, pulls=[pull_json(50, state="closed")])
+        add_history(github, 20, pulls=[pull_json(50, state="closed", branch="factory/fix-20")])
         for number in (20, 23):  # a request for events or comments of a closed issue now fails the test
             del github.answers[key(f"{github.repo}/issues/{number}/events", {"per_page": "100"})]
             del github.answers[key(f"{github.repo}/issues/{number}/comments", {"per_page": "100"})]
@@ -296,8 +301,8 @@ class FetchTest(unittest.TestCase):
 REVIEW_BOT = Bot(CONFIG.review.bot_login, CONFIG.review.bot_user_id)
 
 
-def run_json(run_id: int, name: object, status: object, conclusion: object) -> dict:
-    return {"id": run_id, "name": name, "status": status, "conclusion": conclusion}
+def run_json(run_id: int, name: object, status: object, conclusion: object, app: str = "github-actions") -> dict:
+    return {"id": run_id, "name": name, "status": status, "conclusion": conclusion, "app": {"slug": app}}
 
 
 def review_comment(comment_id: int, head: str, verdict: str, text: str = "Looks fine.", *, bot: Bot = REVIEW_BOT) -> dict:
@@ -313,12 +318,54 @@ def review_json(review_id: int, state: str = "APPROVED", *, submitted_at: str | 
     return entry
 
 
-def open_pull(github: FakeGitHub, *, checks=None, comments=None, reviews=None, issue_comments=None, **pull_extra):
+def open_pull(
+    github: FakeGitHub, *, checks=None, comments=None, reviews=None, issue_comments=None, total_count=None,
+    check_runs=True, **pull_extra,
+):
     """Fetch issue 12 with an open pull request 31 and return the issue."""
     pull = pull_json(31, **pull_extra)
     add_history(github, 12, pulls=[pull], comments=issue_comments)
-    add_pull_details(github, 31, pull["head"], checks=checks, comments=comments, reviews=reviews)
+    add_pull_details(
+        github, 31, pull["head"], checks=checks, comments=comments, reviews=reviews, total_count=total_count,
+        check_runs=check_runs,
+    )
     return snapshot.fetch(github, CONFIG).issues[0]
+
+
+class PullRequestOfIssueTest(unittest.TestCase):
+    def test_a_pull_request_from_another_branch_or_repository_is_ignored(self) -> None:
+        ignored = {
+            "other branch": pull_json(90, branch="factory/fix-13"),
+            "other repository": pull_json(91, repository="someone/name"),
+        }
+        for name, other in ignored.items():
+            with self.subTest(name):
+                github = github_with([issue_json(12)])
+                add_history(github, 12, pulls=[pull_json(31), other])
+
+                pull = snapshot.fetch(github, CONFIG).issues[0].pull_request
+
+                self.assertEqual(pull.number, 31)
+
+    def test_the_repository_name_is_compared_without_case(self) -> None:
+        github = github_with([issue_json(12)])
+        add_history(github, 12, pulls=[pull_json(31, repository="Owner/NAME")])
+
+        self.assertEqual(snapshot.fetch(github, CONFIG).issues[0].pull_request.number, 31)
+
+    def test_an_entry_without_a_head_repository_name_is_kept_and_one_without_a_head_is_not(self) -> None:
+        bare = pull_json(31)
+        bare["head"] = {"sha": HEAD, "ref": "factory/fix-12", "repo": None}
+        github = github_with([issue_json(12)])
+        add_history(github, 12, pulls=[bare, {**pull_json(40), "head": None}])
+
+        self.assertEqual(snapshot.fetch(github, CONFIG).issues[0].pull_request.number, 31)
+
+    def test_only_pull_requests_of_other_branches_mean_no_pull_request(self) -> None:
+        github = github_with([issue_json(12)])
+        add_history(github, 12, pulls=[pull_json(31, branch="factory/fix-13")])
+
+        self.assertIsNone(snapshot.fetch(github, CONFIG).issues[0].pull_request)
 
 
 class PullRequestDetailsTest(unittest.TestCase):
@@ -356,8 +403,11 @@ class PullRequestDetailsTest(unittest.TestCase):
     def test_a_head_that_is_not_a_full_lower_case_sha_gets_no_checks_and_no_verdict(self) -> None:
         for head in ("abc", "A" * 40, "../" + "a" * 37, "a" * 41, None):
             with self.subTest(head=head):
+                # no check-runs answer is registered, so a request for one fails the fake, and the review names
+                # this very head, so a verdict would be found if the head were not checked
+                named = head if isinstance(head, str) else ""
                 github = github_with([issue_json(12)])
-                issue = open_pull(github, head=head, comments=[review_comment(5, HEAD, "pass")])
+                issue = open_pull(github, head=head, check_runs=False, comments=[review_comment(5, named, "pass")])
 
                 self.assertEqual((issue.pull_request.checks, issue.pull_request.verdict), ((), ""))
 
@@ -415,6 +465,15 @@ class PullRequestDetailsTest(unittest.TestCase):
         pull = open_pull(github_with([issue_json(12)]), comments=comments).pull_request
 
         self.assertEqual(pull.review_text, "x" * 20000)
+
+    def test_the_review_text_stops_at_the_last_marker_the_verdict_is_read_from(self) -> None:
+        early = markers.encode_review({"head": "b" * 40, "verdict": "fail"})
+        text = f"Quoted: {early} and more."
+        comments = [review_comment(5, HEAD, "pass", text)]
+
+        pull = open_pull(github_with([issue_json(12)]), comments=comments).pull_request
+
+        self.assertEqual((pull.verdict, pull.review_text), ("pass", text))
 
     def test_pull_request_comments_join_the_issue_comments_in_id_order(self) -> None:
         issue = open_pull(
@@ -477,7 +536,11 @@ class PullRequestDetailsTest(unittest.TestCase):
         github = github_with([issue_json(12)])
         add_history(github, 12, pulls=[pull_json(31, draft="yes", node_id=None)])
         github.answers[key(f"{github.repo}/commits/{HEAD}/check-runs", {"per_page": "100"})] = {
-            "check_runs": ["x", None, {"id": "1", "name": 3}, run_json(2, "ok", 7, 8)],
+            "check_runs": [
+                "x", None, {"id": "1", "name": 3}, run_json(2, "ok", 7, 8),
+                run_json(3, "listed", "completed", ["failure"]), run_json(4, "mapped", "completed", {}),
+                run_json(5, "status-list", ["completed"], None),
+            ],
         }
         github.answers[key(f"{github.repo}/pulls/31/reviews", {"per_page": "100"})] = ["x", None, {"state": 3}]
         github.answers[key(f"{github.repo}/issues/31/comments", {"per_page": "100"})] = ["x", 5]
@@ -485,7 +548,51 @@ class PullRequestDetailsTest(unittest.TestCase):
         result = snapshot.fetch(github, CONFIG).issues[0].pull_request
 
         self.assertEqual((result.draft, result.node_id, result.reviews), (False, "", ()))
-        self.assertEqual(result.checks, (snapshot.Check("ok", "pending", 2),))
+        self.assertEqual(
+            result.checks,
+            (snapshot.Check("ok", "pending", 2), snapshot.Check("listed", "other", 3),
+             snapshot.Check("mapped", "other", 4), snapshot.Check("status-list", "pending", 5)),
+        )
+
+    def test_a_verdict_that_is_a_list_or_an_object_is_no_verdict(self) -> None:
+        for verdict in (["pass"], {"pass": 1}, 3, None):
+            with self.subTest(verdict=verdict):
+                body = "text " + markers.encode_review({"head": HEAD, "verdict": verdict})
+                comments = [comment_json(5, REVIEW_BOT.login, REVIEW_BOT.user_id, body)]
+
+                pull = open_pull(github_with([issue_json(12)]), comments=comments).pull_request
+
+                self.assertEqual((pull.verdict, pull.review_text), ("", ""))
+
+    def test_a_review_state_that_is_a_list_or_an_object_reads_as_empty(self) -> None:
+        reviews = [review_json(1, ["APPROVED"]), review_json(2, {})]
+
+        pull = open_pull(github_with([issue_json(12)]), reviews=reviews).pull_request
+
+        self.assertEqual([review.state for review in pull.reviews], ["", ""])
+
+    def test_only_check_runs_of_the_configured_app_count(self) -> None:
+        runs = [
+            run_json(1, "repository", "completed", "success"),
+            run_json(2, "repository", "completed", "failure", app="other-app"),
+            run_json(3, "apps", "completed", "success", app="other-app"),
+            {"id": 4, "name": "no-app", "status": "completed", "conclusion": "success"},
+            {"id": 5, "name": "odd-app", "status": "completed", "conclusion": "success", "app": "github-actions"},
+        ]
+
+        pull = open_pull(github_with([issue_json(12)]), checks=runs).pull_request
+
+        self.assertEqual(pull.checks, (snapshot.Check("repository", "passed", 1),))
+
+    def test_more_check_runs_than_were_returned_leave_the_checks_incomplete(self) -> None:
+        runs = [run_json(1, "repository", "completed", "success")]
+
+        incomplete = open_pull(github_with([issue_json(12)]), checks=runs, total_count=150).pull_request
+        complete = open_pull(github_with([issue_json(12)]), checks=runs, total_count=1).pull_request
+        odd = open_pull(github_with([issue_json(12)]), checks=runs, total_count="150").pull_request
+
+        self.assertEqual((incomplete.checks_complete, complete.checks_complete, odd.checks_complete),
+                         (False, True, True))
 
     def test_a_check_runs_answer_that_is_not_an_object_means_no_checks(self) -> None:
         github = github_with([issue_json(12)])
@@ -528,6 +635,18 @@ class ChecksStateTest(unittest.TestCase):
 
         self.assertEqual(snapshot.checks_state(passed, ["a"]), "passed")
         self.assertEqual(snapshot.checks_state(waiting, ["a"]), "pending")
+
+    def test_a_head_that_is_not_a_full_commit_id_is_pending(self) -> None:
+        for head in ("abc", "A" * 40, "a" * 41):
+            with self.subTest(head=head):
+                self.assertEqual(snapshot.checks_state(pull_with(head_sha=head), []), "pending")
+
+    def test_incomplete_checks_are_pending_unless_a_required_one_failed(self) -> None:
+        passed = replace(pull_with(snapshot.Check("a", "passed", 1)), checks_complete=False)
+        failed = replace(pull_with(snapshot.Check("a", "failed", 1)), checks_complete=False)
+
+        self.assertEqual(snapshot.checks_state(passed, ["a"]), "pending")
+        self.assertEqual(snapshot.checks_state(failed, ["a"]), "failed")
 
     def test_a_pull_request_without_a_head_is_pending(self) -> None:
         self.assertEqual(snapshot.checks_state(pull_with(head_sha=""), []), "pending")
