@@ -23,23 +23,25 @@ keyword search and an AI evidence search.
 flowchart TB
     people["People<br/>trusted maintainers"]
     subgraph gh["GitHub"]
+        direction LR
         issues[("Issues, labels,<br/>pull requests, comments")]
         checks["GitHub Actions<br/>repository checks"]
+        issues -- "every pull request" --> checks
     end
     subgraph host["The owner's server: connects out only"]
+        direction LR
         dispatcher["Dispatcher<br/>host user 1<br/>holds the GitHub App key"]
         runner["Runner<br/>host user 2<br/>holds the Claude token"]
         agent["Agent container<br/>rootless, no GitHub credential"]
+        dispatcher -- "job files" --> runner
+        runner -- "result and git bundle" --> dispatcher
+        runner -- "one job at a time" --> agent
     end
     internet["Public internet<br/>Claude, package registries"]
 
-    people -- "label, answer, review, merge" --> issues
-    issues -- "every pull request" --> checks
-    issues <-- "polls, then pushes a branch,<br/>opens a draft PR, comments" --> dispatcher
-    dispatcher -- "job files" --> runner
-    runner -- "result and git bundle" --> dispatcher
-    runner -- "one job at a time" --> agent
-    agent --> internet
+    people -- "label, answer, review, merge" --> gh
+    gh <-- "the dispatcher polls, then pushes a branch,<br/>opens a draft pull request and comments" --> host
+    host -- "the agent container only" --> internet
 ```
 
 Two programs run on the owner's server, under two different users, and exchange plain files in a
