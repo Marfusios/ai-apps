@@ -71,6 +71,14 @@ class StartTest(unittest.TestCase):
                 actions = run(issue(12), issue(13), jobs=[JobView("j", 13, state)])
                 self.assertEqual(actions, [SetStatus(12, QUEUED, ()), SetStatus(13, BUILDING, ())])
 
+    def test_a_finished_job_of_another_issue_blocks_starts_too(self):
+        actions = run(issue(12), issue(13), jobs=[JobView("j", 12, "finished")])
+        self.assertEqual(actions, [PublishRun("j", 12), SetStatus(13, QUEUED, ())])
+
+    def test_a_naive_now_is_refused(self):
+        with self.assertRaises(ValueError):
+            decide(snap(issue(12)), [], datetime(2026, 1, 1, 12, 0, 0), CONFIG, BOT)
+
     def test_a_running_job_of_a_closed_issue_still_blocks_and_is_left_alone(self):
         actions = run(issue(12), issue(13, open=False), jobs=[JobView("j", 13, "running")])
         self.assertEqual(actions, QUEUED_12)
@@ -120,6 +128,42 @@ class JobTest(unittest.TestCase):
         self.assertEqual(actions[:3], closes)
         self.assertEqual([a for a in actions if isinstance(a, CloseJob)], closes)
         self.assertIn(SetStatus(5, BUILDING, ()), actions)
+
+
+class SettlingTest(unittest.TestCase):
+    """A job the dispatcher closed after publishing it, while GitHub's comment list may still lag."""
+
+    CLOSED = JobView("j1", 12, "closed")
+
+    def test_a_closed_job_whose_marker_is_not_visible_yet_means_no_actions(self):
+        lagging = issue(12, comments=(marker_comment(3, "needs_input"), comment(4)))
+        self.assertEqual(run(lagging, jobs=[self.CLOSED]), [])
+
+    def test_once_its_marker_is_visible_the_table_applies_again(self):
+        seen = issue(
+            12, comments=(marker_comment(3, "needs_input"), comment(4), marker_comment(5, "needs_input", job="j1"))
+        )
+        self.assertEqual(run(seen, jobs=[self.CLOSED]), HUMAN_12)
+
+    def test_a_marker_of_another_job_does_not_end_the_settling(self):
+        other = issue(12, comments=(marker_comment(3, "needs_input", job="j0"), comment(4)))
+        self.assertEqual(run(other, jobs=[self.CLOSED]), [])
+
+    def test_a_fresh_issue_with_a_closed_job_does_not_start(self):
+        self.assertEqual(run(issue(12), jobs=[self.CLOSED]), [])
+
+    def test_a_closed_job_does_not_block_other_issues(self):
+        actions = run(issue(12), issue(13), jobs=[self.CLOSED])
+        self.assertEqual(actions, [SetStatus(13, BUILDING, ()), StartJob(13, "demo")])
+
+    def test_a_closed_job_of_a_closed_or_unlabelled_issue_is_not_closed_again(self):
+        self.assertEqual(run(issue(12, open=False), jobs=[self.CLOSED]), [])
+        self.assertEqual(run(issue(12, trigger="stranger"), jobs=[self.CLOSED]), [])
+        self.assertEqual(run(jobs=[self.CLOSED]), [])
+
+    def test_a_live_job_is_still_handled_before_settling(self):
+        jobs = [self.CLOSED, JobView("j2", 12, "finished")]
+        self.assertEqual(run(issue(12), jobs=jobs), [PublishRun("j2", 12)])
 
 
 class MarkerRowsTest(unittest.TestCase):
@@ -193,6 +237,9 @@ class MarkerRowsTest(unittest.TestCase):
     def test_an_unknown_outcome_does_nothing(self):
         self.assertEqual(run(with_marker(12, "mystery")), [])
         self.assertEqual(run(with_marker(12, "published")), [])
+        bare = Comment(3, BOT.login, BOT.user_id, "2026-01-01T10:00:00Z", markers.encode({"job": "x"}))
+        self.assertEqual(run(issue(12, comments=(bare,))), [])
+        self.assertEqual(run(with_marker(12, ["failed"])), [])
 
     def test_a_marker_in_a_strangers_comment_changes_nothing(self):
         faked = Comment(3, "stranger", 9, "2026-01-01T10:00:00Z", markers.encode({"outcome": "failed"}))

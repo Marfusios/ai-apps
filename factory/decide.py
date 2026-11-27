@@ -24,7 +24,9 @@ RETRY_AT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 class JobView:
     job_id: str
     issue: int
-    state: str  # "queued", "running" or "finished"; closed jobs are not passed in
+    # "queued", "running" or "finished" are live; "closed" is a job the dispatcher closed a few minutes ago after
+    # publishing it, passed in for a settle window while GitHub's comment list may still lag behind the write.
+    state: str
 
 
 @dataclass(frozen=True)
@@ -125,7 +127,7 @@ def _live_issue_numbers(snapshot: Snapshot, config: Config) -> set[int]:
 
 
 def _close_dead_jobs(jobs: Sequence[JobView], live: set[int]) -> list[Action]:
-    """Every job that is not live and is `queued` or `finished` is closed; a `running` one is left alone."""
+    """Every job that is not live and is `queued` or `finished` is closed; a `running` or `closed` one is left alone."""
     return [
         CloseJob(job.job_id, CLOSE_REASON)
         for job in jobs
@@ -147,13 +149,19 @@ def _closed_issue(issue: Issue) -> list[Action]:
 
 def _job_rows(issue: Issue, jobs: Sequence[JobView]) -> list[Action] | None:
     """Rows 1 and 2: a finished job is published; a queued or running one means building."""
-    own = [job for job in jobs if job.issue == issue.number]
+    own = [job for job in jobs if job.issue == issue.number and job.state != "closed"]
     finished = [job for job in own if job.state == "finished"]
     if finished:
         return [PublishRun(finished[0].job_id, issue.number)]
     if own:
         return _status(issue, BUILDING)
     return None
+
+
+def _is_settling(issue: Issue, jobs: Sequence[JobView], bot: Bot) -> bool:
+    """True while a job the dispatcher closed has no marker of its own on the issue yet: the poll may lag."""
+    seen = {marker.data.get("job") for marker in issue.markers(bot)}
+    return any(job.issue == issue.number and job.state == "closed" and job.job_id not in seen for job in jobs)
 
 
 def _without_marker_rows(issue: Issue, trusted_comments: list[Comment], config: Config) -> list[Action] | None:
@@ -211,6 +219,8 @@ def _open_issue_rows(
     from_jobs = _job_rows(issue, jobs)
     if from_jobs is not None:
         return from_jobs
+    if _is_settling(issue, jobs, bot):  # a closed job whose marker is not visible yet: do nothing this poll
+        return []
     if issue.pull_request is not None and issue.pull_request.merged:  # its pull request is merged
         return _status(issue, DONE)
     marker = _last_marker(issue, bot)
@@ -237,8 +247,8 @@ def _usage_limit_ahead(snapshot: Snapshot, now: datetime, config: Config, bot: B
 def _starts_blocked(
     snapshot: Snapshot, jobs: Sequence[JobView], now: datetime, config: Config, bot: Bot
 ) -> bool:
-    """One job at a time, and none while halted or while a usage limit still holds."""
-    return snapshot.halted or bool(jobs) or _usage_limit_ahead(snapshot, now, config, bot)
+    """One job at a time, and none while halted or while a usage limit still holds; closed jobs do not count."""
+    return snapshot.halted or any(job.state != "closed" for job in jobs) or _usage_limit_ahead(snapshot, now, config, bot)
 
 
 def _wants_to_start(issue: Issue, snapshot: Snapshot, config: Config) -> tuple[list[Action], str | None]:
@@ -252,7 +262,9 @@ def _wants_to_start(issue: Issue, snapshot: Snapshot, config: Config) -> tuple[l
 
 
 def decide(snapshot: Snapshot, jobs: Sequence[JobView], now: datetime, config: Config, bot: Bot) -> list[Action]:
-    """The actions this poll calls for. Pure: same input, same list, no clock and no I/O."""
+    """The actions this poll calls for. Pure: same input, same list, no clock and no I/O. `now` must be aware."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be a timezone-aware datetime")
     actions = _close_dead_jobs(jobs, _live_issue_numbers(snapshot, config))
     ordered = sorted(snapshot.issues, key=lambda issue: issue.number)
     for issue in ordered:
@@ -260,7 +272,7 @@ def decide(snapshot: Snapshot, jobs: Sequence[JobView], now: datetime, config: C
             actions += _closed_issue(issue)
 
     pending: list[tuple[Issue, list[Action]]] = []  # trusted open issues, with their actions so far
-    starters: list[tuple[Issue, str]] = []
+    app_of: dict[int, str] = {}  # issues that want to start, in ascending number
     for issue in ordered:
         if not issue.open or not _trusted(issue.trigger_actor, config):  # rule 3
             continue
@@ -268,12 +280,11 @@ def decide(snapshot: Snapshot, jobs: Sequence[JobView], now: datetime, config: C
         if rows is None:
             rows, app = _wants_to_start(issue, snapshot, config)
             if app is not None:
-                starters.append((issue, app))
+                app_of[issue.number] = app
         pending.append((issue, rows))
 
     blocked = _starts_blocked(snapshot, jobs, now, config, bot)
-    first = starters[0][0].number if starters and not blocked else None
-    app_of = {issue.number: app for issue, app in starters}
+    first = next(iter(app_of)) if app_of and not blocked else None
     for issue, rows in pending:
         actions += rows
         if issue.number == first:
