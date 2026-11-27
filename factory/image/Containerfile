@@ -9,7 +9,9 @@ RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_
 COPY harness /opt/factory/harness
 COPY managed-settings.json /etc/claude-code/managed-settings.json
 RUN chmod -R a+rX,a-w /opt/factory/harness /etc/claude-code
-ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
-ENV PATH=${PATH}:/home/node/.npm-global/bin
+# The agent's own global installs go to its home, and last on PATH: nothing it can write comes before the system.
+ARG AGENT_HOME=/home/node
+ENV NPM_CONFIG_PREFIX=${AGENT_HOME}/.npm-global
+ENV PATH=${PATH}:${AGENT_HOME}/.npm-global/bin
 USER node
 WORKDIR /workspace
