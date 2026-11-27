@@ -395,6 +395,13 @@ class PullRequestDetailsTest(unittest.TestCase):
 
         self.assertEqual(pull.verdict, "")
 
+    def test_a_newer_review_with_an_unknown_verdict_hides_an_older_valid_one(self) -> None:
+        comments = [review_comment(3, HEAD, "pass", "older"), review_comment(8, HEAD, "maybe", "newer")]
+
+        pull = open_pull(github_with([issue_json(12)]), comments=comments).pull_request
+
+        self.assertEqual((pull.verdict, pull.review_text), ("", ""))
+
     def test_every_known_verdict_is_read(self) -> None:
         for verdict in ("pass", "fail", "unavailable"):
             with self.subTest(verdict=verdict):
@@ -510,11 +517,17 @@ class ChecksStateTest(unittest.TestCase):
 
         self.assertEqual(snapshot.checks_state(pull, ["a", "b"]), "pending")
 
-    def test_a_failed_check_fails_whether_or_not_it_is_required(self) -> None:
-        pull = pull_with(snapshot.Check("a", "passed", 1), snapshot.Check("extra", "failed", 2))
+    def test_a_failed_required_check_fails(self) -> None:
+        pull = pull_with(snapshot.Check("a", "failed", 1), snapshot.Check("b", "pending", 2))
 
-        self.assertEqual(snapshot.checks_state(pull, ["a"]), "failed")
-        self.assertEqual(snapshot.checks_state(pull, ["a", "missing"]), "failed")
+        self.assertEqual(snapshot.checks_state(pull, ["a", "b", "missing"]), "failed")
+
+    def test_a_failed_check_that_is_not_required_does_not_decide(self) -> None:
+        passed = pull_with(snapshot.Check("a", "passed", 1), snapshot.Check("extra", "failed", 2))
+        waiting = pull_with(snapshot.Check("a", "pending", 1), snapshot.Check("extra", "failed", 2))
+
+        self.assertEqual(snapshot.checks_state(passed, ["a"]), "passed")
+        self.assertEqual(snapshot.checks_state(waiting, ["a"]), "pending")
 
     def test_a_pull_request_without_a_head_is_pending(self) -> None:
         self.assertEqual(snapshot.checks_state(pull_with(head_sha=""), []), "pending")
