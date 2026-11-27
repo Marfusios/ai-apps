@@ -653,16 +653,19 @@ class RejectionTest(PublishTestCase):
         self.assertNotIn(KEY[:12], json.dumps([written for _, _, written in self.github.calls]))
         self.assertNeedsAPerson()
 
-    def test_a_finding_in_text_that_is_never_posted_still_blocks_publication(self):
+    def test_a_finding_in_any_text_that_is_posted_blocks_publication(self):
         cases = {
-            "a command it ran": (done_result(verification=[
-                {"command": f"cat {PERSONAL_PATH}/x", "exit_code": 0, "summary": "ok"}]), "personal filesystem path"),
             "a follow-up": (done_result(follow_ups=[
                 {"title": "Move the host", "reason": f"It is at {PRIVATE_ADDRESS}."}]), "private network address"),
             "a summary with a key split by a control character": (
                 done_result(summary=f"Tested with {KEY[:12]}\x1c{KEY[12:]} today."), "possible provider key"),
             "the reason a failed run gives": (failed_result(failure_reason=f"The key {KEY} was refused."),
                                               "possible provider key"),
+            "a question": (needs_input_result(questions=[f"Is {PERSONAL_PATH} right?"]), "personal filesystem path"),
+            "the pull request's title": (done_result(pull_request={"title": f"Use {KEY}", "body": "b"}),
+                                         "possible provider key"),
+            "the pull request's body": (done_result(pull_request={"title": "t", "body": f"At {PRIVATE_ADDRESS}"}),
+                                        "private network address"),
         }
         for name, (result, label) in cases.items():
             with self.subTest(name):
@@ -675,6 +678,13 @@ class RejectionTest(PublishTestCase):
                 self.assertNotIn(result["summary"][:11], body)
                 self.assertNotIn(KEY[:12], body)
                 self.assertNeedsAPerson()
+
+    def test_the_verification_is_never_posted_so_a_host_path_in_it_does_not_block(self):
+        verification = [{"command": f"cat {PERSONAL_PATH}/x", "exit_code": 0, "summary": f"at {PRIVATE_ADDRESS}"}]
+        self.finish(result=done_result(verification=verification), bundle=self.bundle_of(GOOD_CHANGE))
+        self.assertEqual(self.publish(), "done")
+        self.assertEqual(self.remote_branch(), self.work_head)
+        self.assertNotIn(PERSONAL_PATH, json.dumps([written for _, _, written in self.github.calls]))
 
     def test_an_oversized_bundle_is_rejected_without_being_copied_whole(self):
         self.build(limits(max_bundle_megabytes=1))

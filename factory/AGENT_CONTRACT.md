@@ -55,6 +55,8 @@ the whole would be too long, each time with a note that says so.
 - Commit on the checked-out branch, on top of `FACTORY_BASE_SHA`. The git identity is already set,
   and the dispatcher checks that every commit carries it, so do not change it or any other git
   configuration. Do not switch branches, and do not rebase, reset or amend below `FACTORY_BASE_SHA`.
+  A commit message mentions no person and refers to no issue but the run's own, as `#<issue>`:
+  GitHub acts on a message as soon as the commit is pushed (below, What the dispatcher refuses).
 - Keep scratch files outside the checkout, or delete them before you stop: an untracked file
   counts as uncommitted work in the finish check.
 
@@ -182,11 +184,15 @@ Before a factory run may end, the `finish_check` hook checks, in this order:
 1. `FACTORY_STAGE`, `FACTORY_RESULT_PATH` and `FACTORY_BASE_SHA` are set.
 2. The result file exists, is at most 200,000 bytes, parses as JSON, and is valid for the stage.
    When it is not, the hook reports only these problems.
-3. With `needs_input` or `failed`, nothing more is checked.
-4. With `done`:
+3. No text of the result that the dispatcher posts holds a hygiene finding (below, What the
+   dispatcher refuses). The hook names the field and the kind of finding, never the text.
+4. With `needs_input` or `failed`, nothing more is checked.
+5. With `done`:
    - `git status --porcelain` prints nothing: all work is committed and no untracked file is left.
    - `FACTORY_BASE_SHA` is still an ancestor of `HEAD`: history below it was not rewritten.
    - At least one commit sits on top of `FACTORY_BASE_SHA`, except in the `fix` and `revise` stages.
+   - No commit message on top of `FACTORY_BASE_SHA` holds a hygiene finding or breaks the
+     commit-message rule, with the issue number that `job.json` names as the run's own.
    - Every path in `git diff --no-renames --name-only $FACTORY_BASE_SHA...HEAD` is under `apps/` or
      `packages/`. Without renames a moved file is listed under both its old and its new name.
    - `scripts/check_repo.py` passes within 120 seconds.
@@ -201,6 +207,34 @@ or `failed` to get past it: those are for work you cannot finish. The hook as a 
 seconds; a check it has no time left to start is reported as not run, so keep to one app per
 pull request. If it says the factory configuration cannot be read
 or the check itself failed, return `failed` and quote its message.
+
+## What the dispatcher refuses
+
+Before it publishes anything, the dispatcher checks the result and every commit again, with its
+own copy of these rules. A `done` run that breaks one is reported as work not published, and
+nothing of it is pushed. With `needs_input` the questions are still posted, but commits that
+break a rule are not kept. The finish check catches most of these first.
+
+- At most 50 commits on top of `FACTORY_BASE_SHA`, each with exactly one parent: the history is
+  a straight line from the base, with no merge.
+- Every commit carries the git identity the run was given, as author and as committer, and only
+  the headers git writes: no signature, no encoding, no second author.
+- At most 2,000 changed files over all commits, no added file larger than 5 MB, and a bundle of
+  all the commits of at most 50 MB.
+- Every changed path lies under `apps/` or `packages/` and is spelled plainly: no `.git` in any
+  spelling, no backslash and no control character.
+- No submodule, no credential file such as `.env` or a key, no file mode but a regular file, an
+  executable or a link, and no link that leaves the repository or points into `.git`.
+- No file content, commit message or posted text of the result holds a hygiene finding: a
+  provider key, a GitHub or Hugging Face token, a private key, a personal path such as a home
+  directory, or an address in a private network range. It checks file names and link targets for
+  credentials. The posted texts are the summary, the questions, the failure reason, the pull
+  request's title and body, and the follow-ups; the verification is never posted, so it is not
+  checked.
+- A commit message mentions no person or team (no `@` before a letter or digit), links no page on
+  `github.com`, and refers to no issue but the run's own, written `#<issue>`: no other
+  `#<number>`, no `GH-<number>` and no `owner/repo#<number>`. GitHub acts on each of these as
+  soon as the commit is pushed.
 
 ## What the hooks do not see
 

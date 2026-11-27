@@ -4,7 +4,7 @@ import contextlib
 import dataclasses
 import json
 import urllib.parse
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -116,22 +116,14 @@ class _Settled:
         return dataclasses.replace(self, outcome="rejected", head_sha=None, commits=0, problems=(problem,))
 
 
-def _strings(value: object) -> Iterator[str]:
-    """Every string in a JSON value, object keys included."""
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for name, item in value.items():
-            yield from _strings(name)
-            yield from _strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _strings(item)
+def _hygiene_labels(data: Mapping) -> list[str]:
+    """The label of each hygiene finding in the texts of a valid result that are posted, each once.
 
-
-def _hygiene_labels(data: object) -> list[str]:
-    """The label of each hygiene finding anywhere in the result, each once; never the text that matched."""
-    return list(dict.fromkeys(label for text in _strings(data) for _, label in hygiene.text_problems(text)))
+    Never the text that matched. The verification is not posted, so a host path in a command the agent ran is no
+    finding; the finish check scans the same texts, so the agent learns of a finding before the dispatcher does.
+    """
+    found = (label for _, text in result.posted_texts(data) for _, label in hygiene.text_problems(text))
+    return list(dict.fromkeys(found))
 
 
 def _texts(data: Mapping) -> dict:

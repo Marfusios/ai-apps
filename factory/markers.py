@@ -4,16 +4,16 @@ import json
 import re
 from collections.abc import Mapping
 
-_PREFIX = "<!-- factory:v1 "
+PREFIX = "<!-- factory:v1 "  # how every marker starts, so that a reader can cut a comment's text before it
 _SUFFIX = " -->"
-_MARKER = re.compile(re.escape(_PREFIX) + r"(.*?)" + re.escape(_SUFFIX))
+_MARKER = re.compile(re.escape(PREFIX) + r"(.*?)" + re.escape(_SUFFIX))
 
 
 def encode(data: Mapping[str, object]) -> str:
     """One-line HTML comment holding the data; angle brackets are escaped so it cannot end early."""
     payload = json.dumps(data, sort_keys=True, separators=(",", ":"))
     payload = payload.replace("<", r"\u003c").replace(">", r"\u003e")
-    return _PREFIX + payload + _SUFFIX
+    return PREFIX + payload + _SUFFIX
 
 
 def parse(body: str) -> dict | None:

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from factory.config import load as load_config
 from factory.result import MAX_RESULT_BYTES, OUTCOMES, ResultError, load, validate
 
 VERIFICATION = [{"command": "make check", "exit_code": 0, "summary": "passed"}]
@@ -166,6 +167,16 @@ class ResultTest(unittest.TestCase):
 
 
 class ContractTest(unittest.TestCase):
+    def test_the_contract_states_what_the_dispatcher_refuses_with_the_configured_limits(self):
+        text = CONTRACT.read_text(encoding="utf-8")
+        section = text.partition("## What the dispatcher refuses\n")[2].partition("\n## ")[0]
+        limits = load_config().dispatcher
+        for words in (f"{limits.max_commits} commits", f"{limits.max_file_megabytes} MB",
+                      f"{limits.max_bundle_megabytes} MB", "2,000", "`apps/`", "`packages/`", "commit message",
+                      "`#<issue>`", "file names", "verification"):
+            with self.subTest(words=words):
+                self.assertIn(words, section)
+
     def test_contract_examples_are_valid(self):
         examples = contract_examples()
         self.assertGreaterEqual(len(examples), 4, "the contract needs an example per outcome and one for revise")

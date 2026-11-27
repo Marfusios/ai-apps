@@ -3,6 +3,7 @@
 import re
 from collections.abc import Sequence
 
+from factory import markers
 from factory.config import MODEL, PERMISSION_MODES, STAGE_LIMITS, Config, is_trusted
 from factory.snapshot import Bot, Comment, Issue
 from factory.spool import JOB_ID
@@ -13,7 +14,6 @@ MAX_ITEM_CHARS = 20_000
 MAX_TITLE_CHARS = 300
 WITHHELD_TITLE = "(title withheld)"
 WITHHELD_BODY = "The issue was opened by someone outside the trusted list, so its text is not included."
-BOT_MARKER_START = "<!-- factory:v1"
 APP_LINE = re.compile(r"(?i:app):\s*([a-z0-9][a-z0-9-]*)\s*")
 APP_VALUE = re.compile(r"[a-z0-9][a-z0-9-]*")
 APP_HEADING = "### App"
@@ -102,15 +102,24 @@ def _title(issue: Issue, config: Config) -> str:
     return " ".join(issue.title.split())[:MAX_TITLE_CHARS]
 
 
+def _quoted(text: str) -> str:
+    """Every line of the text as a Markdown quote; `str.splitlines` also ends a line where a reader might."""
+    return "\n".join(f"> {line}" if line else ">" for line in text.splitlines())
+
+
 def _comment_block(comment: Comment, config: Config, bot: Bot) -> str | None:
-    """The comment as a Markdown section, "" when it has no text, None when it is not the agent's to read."""
+    """The comment as a Markdown section, "" when it has no text, None when it is not the agent's to read.
+
+    The factory's comments quote what an agent wrote, so their text is quoted line by line: nothing an earlier run
+    wrote can read as a heading, such as the one above a trusted person's comment.
+    """
     if _is_bot(comment, bot):
-        heading, body = f"### The factory at {comment.created_at}", comment.body.split(BOT_MARKER_START, 1)[0]
-    elif comment.author != bot.login and is_trusted(comment.author, config):
-        heading, body = f"### {comment.author} at {comment.created_at}", comment.body
-    else:
-        return None
-    return f"{heading}\n\n{_cut(body)}" if body.strip() else ""
+        body = comment.body.split(markers.PREFIX, 1)[0].rstrip()
+        return f"### The factory at {comment.created_at}\n\n{_quoted(_cut(body))}" if body.strip() else ""
+    if comment.author != bot.login and is_trusted(comment.author, config):
+        body = comment.body
+        return f"### {comment.author} at {comment.created_at}\n\n{_cut(body)}" if body.strip() else ""
+    return None
 
 
 def context(issue: Issue, config: Config, bot: Bot) -> str:

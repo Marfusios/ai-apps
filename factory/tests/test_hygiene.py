@@ -50,6 +50,20 @@ class LineProblemTests(unittest.TestCase):
                 self.assertEqual(hygiene.line_problems(f"see {text} here"), [label])
                 self.assertEqual(hygiene.text_problems(f"first line\nsee {text} here"), [(2, label)])
 
+    def test_a_line_or_paragraph_separator_cannot_split_a_finding(self) -> None:
+        """compose removes them before posting too."""
+        for separator in (" ", " "):
+            with self.subTest(separator=repr(separator)):
+                key = "sk-" + "a" * 10 + separator + "a" * 14
+                self.assertEqual(hygiene.text_problems(f"see {key} here"), [(1, "possible provider key")])
+
+    def test_a_windows_home_directory_is_a_personal_path(self) -> None:
+        for drive, users in (("C:", "Users"), ("d:", "users")):
+            with self.subTest(drive=drive):
+                path = "\\".join([drive, users, "someone", "project"])  # built from parts: the checker refuses it
+                self.assertEqual(hygiene.line_problems(f"at {path} now"), ["personal filesystem path"])
+        self.assertEqual(hygiene.line_problems("\\".join(["C:", "Program Files", "x"])), [])
+
     def test_a_tab_still_separates(self) -> None:
         self.assertEqual(hygiene.line_problems("sk-" + "a" * 10 + "\t" + "a" * 14), [])
 
@@ -74,6 +88,30 @@ class TextProblemTests(unittest.TestCase):
         self.assertEqual(hygiene.text_problems(text, limit=2), [(1, "personal filesystem path"),
                                                                (2, "personal filesystem path")])
         self.assertEqual(len(hygiene.text_problems(text)), 5)
+
+
+class MessageProblemTests(unittest.TestCase):
+    def test_a_message_may_refer_to_its_own_issue_and_hold_plain_text(self) -> None:
+        for message in ("Fix the greeting\n\nCloses #12", "Fix the greeting (#12).", "A #hashtag, issue # 5, a@ b",
+                        "Count to 12", "Use the gh tool and the GH- prefix"):
+            with self.subTest(message=message):
+                self.assertEqual(hygiene.message_problems(message, 12), [])
+
+    def test_mentions_links_and_references_to_other_issues_are_named(self) -> None:
+        mention, link, other = hygiene.MESSAGE_LABELS
+        cases = {
+            "Thanks @someone": [mention], "cc @org/team": [mention], "Mail me at a@example.com": [mention],
+            "See github.com/o/r": [link], "See https://GitHub.COM/o/r/issues/3": [link],
+            "Closes #3": [other], "Closes #12 and #13": [other], "Fixes #123": [other], "Fixes #012": [other],
+            "See GH-4": [other], "See gh-12": [other], "Closes other/repo#12": [other],
+            "@x github.com/ #1": [mention, link, other],
+        }
+        for message, labels in cases.items():
+            with self.subTest(message=message):
+                self.assertEqual(hygiene.message_problems(message, 12), labels)
+
+    def test_without_an_issue_of_its_own_every_reference_is_another_issues(self) -> None:
+        self.assertEqual(hygiene.message_problems("Closes #12", None), [hygiene.MESSAGE_LABELS[2]])
 
 
 class LabelTests(unittest.TestCase):

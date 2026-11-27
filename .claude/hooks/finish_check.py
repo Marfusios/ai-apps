@@ -25,6 +25,7 @@ NO_COMMIT_STAGES = ("revise", "fix")
 # The stages whose runs install the app's dependencies; the others write documents only.
 QUICK_STAGES = ("step", "fix", "revise", "fix_issue")
 REQUIRED_VARIABLES = ("FACTORY_STAGE", "FACTORY_RESULT_PATH", "FACTORY_BASE_SHA")
+MAX_JOB_FILE_BYTES = 1_000_000
 
 Run = Callable[[Sequence[str], Path, int], tuple[int, str]]
 
@@ -44,6 +45,60 @@ def quick_timeout(env: Mapping[str, str]) -> int:
 def touched_apps(changed: Sequence[str]) -> list[str]:
     parts = (path.replace("\\", "/").split("/") for path in changed)
     return sorted({p[1] for p in parts if len(p) >= 3 and p[0] == "apps" and p[1]})
+
+
+def job_file(env: Mapping[str, str]) -> dict | None:
+    """The run's `$FACTORY_JOB_DIR/job.json` as an object, or None when it is missing, too large or not one."""
+    directory = env.get("FACTORY_JOB_DIR")
+    if not directory:
+        return None
+    try:
+        with open(Path(directory) / "job.json", "rb") as stream:
+            data = stream.read(MAX_JOB_FILE_BYTES + 1)
+        record = json.loads(data) if len(data) <= MAX_JOB_FILE_BYTES else None
+    except (OSError, ValueError, RecursionError):  # ValueError: bytes that are not UTF-8, or text that is not JSON
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def own_issue(job: Mapping | None) -> int | None:
+    """The issue the run is for, which its commit messages may name; None when the job file does not say."""
+    issue = job.get("issue") if job else None
+    number = issue.get("number") if isinstance(issue, dict) else None
+    return number if isinstance(number, int) and not isinstance(number, bool) and number > 0 else None
+
+
+def posted_text_problems(data: Mapping) -> list[str]:
+    """What the dispatcher would refuse in the texts of a valid result that it posts: the field and the label."""
+    from factory import hygiene, result
+
+    return [f"The result's {field} contains {label}. The dispatcher posts no such text and publishes nothing of "
+            "the run: take it out of the result."
+            for field, text in result.posted_texts(data)
+            for label in dict.fromkeys(label for _, label in hygiene.text_problems(text))]
+
+
+def commit_message_problems(log: str, issue: int | None) -> list[str]:
+    """What the dispatcher would refuse in the messages `git log -z --format=%h%x00%B` lists, commit by commit.
+
+    The problems name the commit and the label, never the text that matched.
+    """
+    from factory import hygiene
+
+    fields = log.split("\0")
+    reword = "Reword the commit, amending or rebasing only above FACTORY_BASE_SHA."
+    problems = []
+    for sha, message in zip(fields[0::2], fields[1::2]):
+        labels = list(dict.fromkeys(label for _, label in hygiene.text_problems(message)))
+        if labels:
+            problems.append(f"The message of commit {sha} contains {' and '.join(labels)}, which the dispatcher "
+                            f"does not publish. {reword}")
+        mentions = hygiene.message_problems(message, issue)
+        if mentions:
+            problems.append(f"The message of commit {sha} holds {' and '.join(mentions)}. GitHub acts on these when "
+                            "the commit is pushed, so the dispatcher publishes a commit only when its message "
+                            f"mentions no person and refers to no issue but its own, as #<issue>. {reword}")
+    return problems
 
 
 class Budget:
@@ -116,14 +171,14 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run, *,
     except OSError as error:
         return [f"The result file cannot be read ({type(error).__name__})."]
     try:
-        outcome = result.load(result_path, stage)["outcome"]
+        data = result.load(result_path, stage)
     except result.ResultError as error:
         return [f"The result file at {result_path} is not valid; write it again: {problem}" for problem in error.problems]
-    if outcome != "done":
-        return []
+    problems = posted_text_problems(data)
+    if data["outcome"] != "done":
+        return problems
 
     budget = Budget(run, now)
-    problems: list[str] = []
     status, problem = git(budget, repo, "git status", "status", "--porcelain")
     if status is None:
         if problem:
@@ -141,6 +196,12 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run, *,
                 problems.append(problem)
         elif not count.strip().isdigit() or int(count) < 1:
             problems.append("There are no commits on top of the base; commit your work.")
+    log, problem = git(budget, repo, "git log", "log", "-z", "--format=%h%x00%B", f"{base}..HEAD")
+    if log is None:
+        if problem:
+            problems.append(problem)
+    else:
+        problems.extend(commit_message_problems(log, own_issue(job_file(env))))
     # core.quotePath=false keeps non-ASCII names readable instead of octal-escaped and quoted; --no-renames
     # lists the old path of a move too, so a protected file cannot be moved out of its place unseen
     diff, problem = git(budget, repo, "git diff, with the path and touched-app checks that depend on it",

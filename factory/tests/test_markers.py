@@ -14,6 +14,10 @@ class MarkerTests(unittest.TestCase):
         encoded = markers.encode({"b": 1, "a": 2})
         self.assertEqual(encoded, '<!-- factory:v1 {"a":2,"b":1} -->')
 
+    def test_every_marker_starts_with_the_public_prefix(self) -> None:
+        self.assertEqual(markers.PREFIX, "<!-- factory:v1 ")
+        self.assertTrue(markers.encode({}).startswith(markers.PREFIX))
+
     def test_encoded_marker_cannot_close_the_comment_early(self) -> None:
         self.assertNotIn("-->", markers.encode({"a": "x --> y <!-- z"})[:-3])
         self.assertEqual(markers.parse(markers.encode({"a": "x --> y"})), {"a": "x --> y"})

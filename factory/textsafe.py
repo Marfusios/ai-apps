@@ -4,6 +4,7 @@ import re
 import unicodedata
 
 ZWSP = chr(0x200B)
+LINE_SEPARATORS = "  "  # the line and paragraph separators, which some readers take for line ends
 _TRUNCATED = "\n\n(truncated)"
 _CHARACTER_REFERENCE = re.compile(r"&(?=#|[A-Za-z][A-Za-z0-9]*;)")
 _AUTOLINK = re.compile(r"<(https?://[^\s>]+)>", re.IGNORECASE)
@@ -19,13 +20,14 @@ _MERMAID = re.compile(r"mermaid", re.IGNORECASE)
 
 
 def _keep(char: str) -> bool:
-    return char in "\n\t" or unicodedata.category(char) != "Cc"
+    return char in "\n\t" or (unicodedata.category(char) != "Cc" and char not in LINE_SEPARATORS)
 
 
 def neutralise(text: str, limit: int) -> str:
     """Apply the rules below in this order, everywhere, code spans included, then cut to `limit`.
 
-    1. Remove control characters other than newline and tab.
+    1. Remove control characters other than newline and tab, and the line and paragraph separators U+2028 and
+       U+2029, so that a line ends only where a newline ends it.
     2. An `&` that starts a character reference becomes `&amp;`, so no reference can hide a trigger.
     3. An angle-bracket autolink, `<` then `http://` or `https://`, non-space characters and `>`, loses its two
        brackets and keeps the bare URL, so an honest `<https://example.com/docs>` still renders as a link. The

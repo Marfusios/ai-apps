@@ -13,6 +13,7 @@ CASES = [
     ("a <!-- factory:v1 {} --> b", f"a <{Z}!-- factory:v1 {{}} --> b"),
     ("![x](https://example.com/a.png) <IMG src=x>", f"[{Z}x](https://example.com/a.png) <{Z}IMG src=x>"),
     ("line\r\nnext\x00\x07\tend", "line\nnext\tend"),
+    ("one two three", "onetwothree"),  # line and paragraph separators split lines for some readers
     ("issue # 5 and email a@", "issue # 5 and email a@"),  # nothing to break
     ("prefixes https://x and fixed it", f"prefixes https://x and f{Z}ixed it"),  # only the whole word
     ("`@octocat` in code", f"`@{Z}octocat` in code"),  # code spans are not exempt

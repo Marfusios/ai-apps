@@ -1,6 +1,7 @@
 """Validation of the result file an agent writes at the end of a run."""
 
 import json
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 STAGES = ("design", "plan", "step", "fix", "revise", "fix_issue")
@@ -126,6 +127,26 @@ def validate(data: object, stage: str) -> list[str]:
             _text(entry["title"], f"follow_ups[{index}].title", 1, 120, problems, posted=True)
             _text(entry["reason"], f"follow_ups[{index}].reason", 1, 1000, problems, posted=True)
     return problems
+
+
+def posted_texts(data: Mapping) -> Iterator[tuple[str, str]]:
+    """Each text of a valid result that the dispatcher posts, with its field's name as `validate` names it.
+
+    The verification is never posted, and neither are thread replies, which only the revise stage has and this
+    version does not run.
+    """
+    yield "summary", data["summary"]
+    for index, question in enumerate(data.get("questions") or ()):
+        yield f"questions[{index}]", question
+    if data.get("failure_reason") is not None:
+        yield "failure_reason", data["failure_reason"]
+    pull_request = data.get("pull_request")
+    if pull_request is not None:
+        yield "pull_request.title", pull_request["title"]
+        yield "pull_request.body", pull_request["body"]
+    for index, follow_up in enumerate(data.get("follow_ups") or ()):
+        yield f"follow_ups[{index}].title", follow_up["title"]
+        yield f"follow_ups[{index}].reason", follow_up["reason"]
 
 
 def load(path: Path, stage: str) -> dict:

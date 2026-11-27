@@ -253,6 +253,21 @@ class BundleCheckTestCase(unittest.TestCase):
                 if verdict.problems != (UNREADABLE,):
                     self.assertRejected(verdict, "which is outside the writable paths")
 
+    def test_a_commit_message_that_mentions_people_or_other_issues_is_rejected(self):
+        for message in ("Fix it for @someone", "Fix it\n\nSee github.com/o/r", "Closes #3 #4", "Fixes #120",
+                        "Fix it, see GH-9", "Closes other/repo#12"):
+            with self.subTest(message=message):
+                verdict = self.check(self.bundle_of({"apps/demo/a.txt": "new"}, message=message))
+                self.assertRejected(verdict, f"commit {self.work.head[:12]} has a message that mentions people or "
+                                             "other issues")
+
+    def test_a_commit_message_may_close_the_jobs_own_issue_and_its_headers_do_not_count(self):
+        verdict = self.check(self.bundle_of({"apps/demo/a.txt": "new"}, message="Fix the greeting\n\nCloses #12"))
+        self.assertEqual(verdict.problems, ())  # the bot's own email in the headers holds an @ too
+        other = self.check(self.bundle_of({"apps/demo/a.txt": "new"}, message="Closes #12"),
+                           job_id="20260101T120000Z-fix_issue-13-0000abcd")
+        self.assertRejected(other, "mentions people or other issues")
+
     def test_a_commit_by_someone_else_is_rejected(self):
         someone = ("Someone", "someone@example.com")
         cases = {

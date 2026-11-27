@@ -265,8 +265,8 @@ the pod (section 9).
 
 **What the dispatcher checks before publishing a result.**
 
-- The result file matches its schema and size limits, and none of its text matches the
-  hygiene patterns below.
+- The result file matches its schema and size limits, and none of the texts it posts matches
+  the hygiene patterns below. The verification is never posted, so it is not scanned.
 - The commits arrive as a git bundle, which is read as data in the dispatcher's own
   repository. The dispatcher never runs git inside a directory an agent could write to.
 - Every commit is checked, not only the net difference of all of them, so a problem that

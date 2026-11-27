@@ -8,7 +8,7 @@
 4. the head descends from the base, with 1 to `max_commits` commits on top of it, listed within a cap (stop);
 5. no commit is a merge;
 6. every commit object is small, holds exactly the headers the factory's git writes, with the bot as author and
-   committer, and has no hygiene finding;
+   committer, has no hygiene finding, and has a message that mentions no person and no issue but the job's own;
 7. every changed path is writable and spelled so that no file system reads it as another path;
 8. no added entry is a submodule, has another file mode, is a credential file or has a credential in its name;
 9. no added blob is too large, no link leaves the repository, holds a character a path may not, points into
@@ -243,16 +243,23 @@ def _header_problems(raw: bytes, identity: re.Pattern[bytes], where: str) -> lis
     return problems
 
 
-def _commit_problems(workrepo: Path, sha: str, identity: re.Pattern[bytes]) -> list[Problem]:
-    """Checks 5 and 6 on one commit object; its message and headers are published with it."""
+def _commit_problems(workrepo: Path, sha: str, identity: re.Pattern[bytes], own_issue: int) -> list[Problem]:
+    """Checks 5 and 6 on one commit object; its message and headers are published with it.
+
+    GitHub acts on the message once it is pushed, so beyond the hygiene scan it may mention no person and refer to
+    no issue but `own_issue`. The headers do not count there: the bot's own email holds an `@`.
+    """
     where = f"commit {sha[:SHORT_SHA]}"
     if _number(run_git(workrepo, "cat-file", "-s", sha)) > MAX_COMMIT_BYTES:
         return [(6, f"{where} is larger than a commit may be")]
     raw = run_git(workrepo, "cat-file", "commit", sha, max_output=MAX_COMMIT_BYTES)
     labels = dict.fromkeys(label for _, label in hygiene.text_problems(raw.decode("utf-8", "replace")))
+    message = raw.partition(b"\n\n")[2].decode("utf-8", "replace")
+    mentions = [(6, f"{where} has a message that mentions people or other issues")] if hygiene.message_problems(
+        message, own_issue) else []
     return _header_problems(raw, identity, where) + [
         (6, f"{where} has a message or header that contains {label}") for label in labels
-    ]
+    ] + mentions
 
 
 def _changes(workrepo: Path, parent: str, sha: str) -> list[_Entry]:
@@ -423,7 +430,7 @@ def _entry_problems(entry: _Entry, config: Config, blobs: _Blobs) -> list[Proble
     return problems
 
 
-def _judge_commits(workrepo: Path, commits: list[tuple[str, list[str]]], bot: Bot, config: Config,
+def _judge_commits(workrepo: Path, commits: list[tuple[str, list[str]]], bot: Bot, config: Config, own_issue: int,
                    problems: list[Problem]) -> None:
     """Checks 5 to 10 over the commits, oldest first.
 
@@ -432,7 +439,7 @@ def _judge_commits(workrepo: Path, commits: list[tuple[str, list[str]]], bot: Bo
     identity = _identity(bot)
     entries: list[_Entry] = []
     for sha, parents in commits:
-        problems.extend(_commit_problems(workrepo, sha, identity))
+        problems.extend(_commit_problems(workrepo, sha, identity, own_issue))
         if len(parents) == 1:
             entries.extend(_changes(workrepo, parents[0], sha))
             if len(entries) > MAX_ENTRIES:
@@ -447,10 +454,12 @@ def check(bundle: Path, *, workrepo: Path, base_sha: str, branch: str, job_id: s
     """Decide whether the bundle's commits may be pushed to `branch` under the factory's name.
 
     Never raises for anything a bundle can hold: every failure, git's included, becomes a problem in the verdict.
-    The fetched head stays at `refs/quarantine/<job_id>` in the work repository for the push.
+    The fetched head stays at `refs/quarantine/<job_id>` in the work repository for the push. The job's issue, the
+    one its commit messages may refer to, is the third field of the job id.
     """
     if not _job_is_wellformed(base_sha, branch, job_id):
         return _verdict(None, 0, [(0, MALFORMED)])
+    own_issue = int(job_id.split("-")[2])
     megabytes = config.dispatcher.max_bundle_megabytes
     path = Path(bundle).absolute()  # an absolute path never reads to git as an option
     if not _is_regular_file_within(path, megabytes * MEGABYTE):
@@ -462,7 +471,7 @@ def check(bundle: Path, *, workrepo: Path, base_sha: str, branch: str, job_id: s
     try:
         head = _fetch(workrepo, path, branch, job_id, listed)
         commits = _commits_on_base(workrepo, base_sha, head, config.dispatcher.max_commits)
-        _judge_commits(workrepo, commits, bot, config, problems)
+        _judge_commits(workrepo, commits, bot, config, own_issue, problems)
     except _Stop as stop:
         problems.append(stop.problem)
     except (GitError, _Unreadable):
