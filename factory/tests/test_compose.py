@@ -164,6 +164,44 @@ class RunCommentTests(unittest.TestCase):
         self.assertLessEqual(len(body), compose.MAX_COMMENT)
         self.assertIn("(truncated)", body)
 
+    def test_an_overflow_that_needs_many_cuts_is_composed_in_one_pass(self) -> None:
+        started = time.perf_counter()
+        body = comment(summary="s" * 491, questions=["q " * 1000] * 20,
+                       follow_ups=[{"title": "T", "reason": "r\n" * 500}] * 10)
+        self.assertLess(time.perf_counter() - started, 1.0)
+        self.assertLessEqual(len(body), compose.MAX_COMMENT)
+        self.assertIn("> " + "s" * 491, body)
+        self.assertEqual(markers.parse(body)["outcome"], "needs_input")
+        self.assertTrue(body.endswith("-->"))
+
+    def test_questions_are_cut_evenly_and_keep_far_more_than_the_floor(self) -> None:
+        body = comment(questions=["a\n" * 1000] * 20)
+        self.assertLessEqual(len(body), compose.MAX_COMMENT)
+        self.assertEqual(body.count("(truncated)"), 20)
+        self.assertGreaterEqual(body.count("   a\n"), 20 * 300)
+        self.assertEqual(markers.parse(body)["outcome"], "needs_input")
+
+    def test_the_failure_reason_is_cut_last(self) -> None:
+        with mock.patch.object(compose, "MAX_COMMENT", 900):
+            body = comment(outcome="failed", summary="s" * 3000, questions=["q" * 3000], failure_reason="f" * 3000)
+        self.assertLessEqual(len(body), 900)
+        self.assertIn(compose.OMITTED_SUMMARY, body)
+        self.assertIn("> " + "f" * 100, body)
+        self.assertEqual(body.count("(truncated)"), 2)
+        self.assertEqual(markers.parse(body)["outcome"], "failed")
+
+    def test_html_and_footnotes_cannot_survive_in_agent_text(self) -> None:
+        texts = ("<b>bold", "text\n\n[^1]: footnote and see[^1]", "</div> <!-- x --> <?php")
+        builders = (lambda t: {"summary": t}, lambda t: {"failure_reason": t}, lambda t: {"questions": [t]},
+                    lambda t: {"follow_ups": [{"title": t, "reason": t}]})
+        for text in texts:
+            for number, build in enumerate(builders):
+                with self.subTest(text=text[:10], field=number):
+                    body = comment(outcome="failed", **build(text))
+                    unmarked = body[: body.rindex("\n")]
+                    self.assertIsNone(re.search(r"<[A-Za-z/!?]", unmarked))
+                    self.assertNotIn("[^", unmarked)
+
     def test_a_summary_that_cannot_fit_is_replaced_by_a_fixed_line(self) -> None:
         with mock.patch.object(compose, "MAX_COMMENT", 380):
             body = comment(summary="x" * 5000)
@@ -256,6 +294,7 @@ class RunCommentTests(unittest.TestCase):
         self.assertIn(f"`{BRANCH}`", body)
         done = comment(outcome="done", pull_request_url="https://github.com/o/r/pull/1")
         self.assertIn("Pull request: https://github.com/o/r/pull/1\n", done)
+        self.assertTrue(compose.PULL_REQUEST_URL.fullmatch("https://github.com/o/r/pull/1"))
 
 
 class PullRequestTests(unittest.TestCase):
@@ -289,22 +328,14 @@ class PullRequestTests(unittest.TestCase):
                     self.assertIsNone(markers.parse(body))
                     assert_inert(self, rest)
 
-    def test_an_unclosed_fence_in_the_body_is_closed_before_the_follow_ups(self) -> None:
-        follow = [{"title": "Tidy", "reason": "r"}]
-        for opener, closer in (("```", "```"), ("~~~", "~~~"), ("`````python", "`````"), ("  ~~~~", "~~~~")):
-            with self.subTest(opener=opener):
-                body = compose.pull_request_body(f"{opener}\ncode", 12, follow)
-                self.assertIn(f"\ncode\n{closer}\n\n## Follow-ups\n", body)
-
-    def test_balanced_fences_get_no_extra_closer(self) -> None:
-        body = compose.pull_request_body("```\na\n```\n~~~\nb\n~~~", 12, [{"title": "T", "reason": "r"}])
-        self.assertEqual(body.count("```"), 2)
-        self.assertEqual(body.count("~~~"), 2)
-
-    def test_a_fence_of_the_other_kind_inside_a_fence_is_content(self) -> None:
-        body = compose.pull_request_body("```\n~~~\ncode", 12, [{"title": "T", "reason": "r"}])
-        self.assertIn("code\n```\n\n## Follow-ups", body)
-        self.assertEqual(body.count("~~~"), 1)
+    def test_nothing_is_inserted_between_the_body_and_the_follow_ups(self) -> None:
+        follow = [{"title": "T", "reason": "r"}]
+        for text in ("```\ncode", "~~~\ncode", "1. a\n\n   ```\n   code"):
+            with self.subTest(text=text[:12]):
+                self.assertEqual(
+                    compose.pull_request_body(text, 12, follow),
+                    f"Closes #12\n\n{text}\n\n## Follow-ups\n\n- **T**: r",
+                )
 
     def test_the_issue_number_must_be_a_positive_int(self) -> None:
         for bad in (0, -3, True, "12", 12.0, None):

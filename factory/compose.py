@@ -5,14 +5,13 @@ marker) around text written by an agent or taken from a bundle. Each piece of th
 once and then placed inside a Markdown container it cannot leave, so it can neither swallow the bot's
 lines nor repeat them at the start of a line: a block quote (`> `) for the summary and the failure
 reason, a list item with indented continuation lines for questions, problems and follow-ups. A blank line
-ends every container. The marker is always the last line. A pull request body starts with the one line
-GitHub acts on, `Closes #<issue>`, then the neutralised body (an open code fence is closed) and follow-ups.
+ends every container. The marker is always the last line. When the comment is over GitHub's size limit,
+the already-neutralised questions are cut evenly, then the summary, then the failure reason, each at most
+once. A pull request body starts with the one line GitHub acts on, `Closes #<issue>`.
 """
 
-import math
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 
 from factory import markers, result, spool, textsafe
 
@@ -51,18 +50,16 @@ FOLLOW_UP_REASON_LIMIT = 1_000
 MAX_FOLLOW_UPS = 10
 TITLE_LIMIT = 120
 BODY_LIMIT = 20_000
-# The least a shrunk text keeps; a comment that is still too long without it loses the text instead.
-SHRUNK_FLOOR = 100
-# Room kept for the summary when the questions are shrunk, so a short summary is not the one to go.
-SUMMARY_RESERVE = 1_000
+# The least of a text that a cut keeps; a summary that cannot keep it is replaced by a fixed line.
+CUT_FLOOR = 100
+CUT_MARK = "\n\n(truncated)"
 
 OMITTED_SUMMARY = "(The summary was left out to keep this comment within GitHub's size limit.)"
 
+PULL_REQUEST_URL = re.compile(r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+")
 _BRANCH = re.compile(r"factory/[a-z0-9][a-z0-9-]{0,60}")
 _RETRY_AT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
-_PULL_REQUEST_URL = re.compile(r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+")
 _MODEL = re.compile(r"[A-Za-z0-9._:\[\]-]{0,100}")
-_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
 
 _NOTICES: Mapping[str, tuple[str, str]] = {
     "untrusted-author": (
@@ -84,19 +81,6 @@ _NOTICES: Mapping[str, tuple[str, str]] = {
 }
 
 
-@dataclass(frozen=True)
-class _Pieces:
-    """The parts of a comment that do not depend on how much room the shrinkable texts get."""
-
-    header: str
-    reason_line: str
-    failure_section: str
-    problems_section: str
-    follow_ups_section: str
-    closing: str
-    marker: str
-
-
 def _check(name: str, value: object, pattern: re.Pattern[str], *, optional: bool = False) -> str:
     if optional and value == "":
         return ""
@@ -109,6 +93,11 @@ def _duration(seconds: int) -> str:
     if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 0:
         raise ValueError("duration_seconds must be a non-negative integer")
     return "under 1 min" if seconds < 60 else f"{seconds // 60} min"
+
+
+def _neutral(text: str, limit: int) -> str:
+    """The text neutralised and stripped; empty when nothing but whitespace was given."""
+    return textsafe.neutralise(text, limit).strip() if text.strip() else ""
 
 
 def _quote(text: str) -> str:
@@ -124,14 +113,11 @@ def _item(marker: str, content: str) -> str:
     return "\n".join([marker + first, *(indent + line if line.strip() else "" for line in rest)])
 
 
-def _quoted_section(lead_in: str, text: str, limit: int) -> str:
-    cleaned = textsafe.neutralise(text, limit).strip() if text.strip() else ""
-    return f"{lead_in}\n\n{_quote(cleaned)}" if cleaned else ""
+def _quoted_section(lead_in: str, text: str) -> str:
+    return f"{lead_in}\n\n{_quote(text)}" if text else ""
 
 
-def _questions_section(questions: Sequence[str], limit: int) -> str:
-    texts = [textsafe.neutralise(q, limit).strip() for q in questions[:MAX_QUESTIONS] if q.strip()]
-    items = [_item(f"{number}. ", text) for number, text in enumerate(texts, 1) if text]
+def _questions_section(items: Sequence[str]) -> str:
     return "**Questions from the agent**\n\n" + "\n".join(items) if items else ""
 
 
@@ -154,6 +140,11 @@ def _follow_up_items(follow_ups: Sequence[Mapping[str, str]]) -> list[str]:
     return items
 
 
+def _follow_ups_section(follow_ups: Sequence[Mapping[str, str]]) -> str:
+    items = _follow_up_items(follow_ups)
+    return "**Follow-ups the agent noticed**\n\n" + "\n".join(items) if items else ""
+
+
 def _closing(outcome: str, *, pull_request_url: str, branch: str, kept_commits: int, retry_at: str) -> str:
     if outcome == "needs_input":
         line = "Reply in a comment and the work continues from where it stopped."
@@ -168,14 +159,49 @@ def _closing(outcome: str, *, pull_request_url: str, branch: str, kept_commits: 
     return "Comment `/factory retry` to run this again."
 
 
-def _shrink(limit: int, items: int, length: Callable[[int], int]) -> int:
-    """The largest limit, down to the floor, at which `length(limit)` fits; each pass removes the whole excess."""
-    while limit > SHRUNK_FLOOR:
-        excess = length(limit) - MAX_COMMENT
-        if excess <= 0:
-            break
-        limit = max(SHRUNK_FLOOR, limit - math.ceil(excess / items))
-    return limit
+def _cut(text: str, render: Callable[[str], str], budget: int) -> str | None:
+    """The longest prefix of the neutralised text, plus the cut mark, whose rendering fits `budget`.
+
+    None when the text is too short to cut or even `CUT_FLOOR` characters of it do not fit. Rendering
+    only adds characters per character cut away, so the result is at least as small as asked.
+    """
+    if len(text) <= CUT_FLOOR or len(render(text[:CUT_FLOOR] + CUT_MARK)) > budget:
+        return None
+    low, high = CUT_FLOOR, len(text) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(render(text[:middle] + CUT_MARK)) <= budget:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low] + CUT_MARK
+
+
+def _cut_questions(texts: list[str], excess: int) -> None:
+    """Cut the longest questions down to a common rendered size so that `excess` characters go; none below the floor."""
+    def rendered(number: int, text: str) -> str:
+        return _item(f"{number}. ", text)
+
+    sizes = [len(rendered(n, text)) for n, text in enumerate(texts, 1)]
+    floors = [
+        min(size, len(rendered(n, text[:CUT_FLOOR] + CUT_MARK))) if len(text) > CUT_FLOOR else size
+        for n, (text, size) in enumerate(zip(texts, sizes), 1)
+    ]
+
+    def removed(level: int) -> int:
+        return sum(size - max(level, floor) for size, floor in zip(sizes, floors) if size > max(level, floor))
+
+    low, high = 0, max(sizes)
+    while low < high:  # the largest level that still removes enough
+        middle = (low + high + 1) // 2
+        if removed(middle) >= excess:
+            low = middle
+        else:
+            high = middle - 1
+    for number, (text, size, floor) in enumerate(zip(texts, sizes, floors), 1):
+        if size > max(low, floor):
+            cut = _cut(text, lambda candidate, n=number: rendered(n, candidate), low)
+            texts[number - 1] = cut if cut is not None else text[:CUT_FLOOR] + CUT_MARK
 
 
 def run_comment(
@@ -207,52 +233,51 @@ def run_comment(
     _check("model", model, _MODEL)
     _check("branch", branch, _BRANCH, optional=True)
     _check("retry_at", retry_at, _RETRY_AT, optional=True)
-    _check("pull_request_url", pull_request_url, _PULL_REQUEST_URL, optional=True)
+    _check("pull_request_url", pull_request_url, PULL_REQUEST_URL, optional=True)
 
     marker = {"kind": "run", "job": job_id, "stage": stage, "outcome": outcome}
     if outcome == "usage_limit":
         marker["retry_at"] = retry_at
-    pieces = _Pieces(
-        header=(f"**Factory run** · stage `{stage}` · **{OUTCOME_WORDS[outcome]}** · {_duration(duration_seconds)}"
-                f" · model `{model or 'unknown'}`"),
-        reason_line=f"This run ended because {REASON_WORDS[reason]}." if reason is not None else "",
-        failure_section=_quoted_section("The agent's reason:", failure_reason, FAILURE_REASON_LIMIT),
-        problems_section=_problems_section(problems),
-        follow_ups_section=_follow_ups_section(follow_ups),
-        closing=_closing(outcome, pull_request_url=pull_request_url, branch=branch, kept_commits=kept_commits,
-                         retry_at=retry_at),
-        marker=markers.encode(marker),
-    )
+    header = (f"**Factory run** · stage `{stage}` · **{OUTCOME_WORDS[outcome]}** · {_duration(duration_seconds)}"
+              f" · model `{model or 'unknown'}`")
+    reason_line = f"This run ended because {REASON_WORDS[reason]}." if reason is not None else ""
+    problems_section = _problems_section(problems)
+    follow_ups_section = _follow_ups_section(follow_ups)
+    closing = _closing(outcome, pull_request_url=pull_request_url, branch=branch, kept_commits=kept_commits,
+                       retry_at=retry_at)
 
-    def render(summary_section: str, question_limit: int) -> str:
-        sections = (pieces.header, summary_section, _questions_section(questions, question_limit),
-                    pieces.failure_section, pieces.reason_line, pieces.problems_section, pieces.follow_ups_section,
-                    pieces.closing, pieces.marker)
+    # Each text is neutralised here, once; later cuts only shorten these strings.
+    summary_text = _neutral(summary, SUMMARY_LIMIT)
+    failure_text = _neutral(failure_reason, FAILURE_REASON_LIMIT)
+    question_texts = [t for t in (_neutral(q, QUESTION_LIMIT) for q in questions[:MAX_QUESTIONS]) if t]
+
+    def summary_render(text: str) -> str:
+        return _quoted_section("The agent reports:", text)
+
+    def failure_render(text: str) -> str:
+        return _quoted_section("The agent's reason:", text)
+
+    def render(summary_section: str) -> str:
+        items = [_item(f"{n}. ", text) for n, text in enumerate(question_texts, 1)]
+        sections = (header, summary_section, _questions_section(items), failure_render(failure_text), reason_line,
+                    problems_section, follow_ups_section, closing, markers.encode(marker))
         return "\n\n".join(section for section in sections if section)
 
-    # Everything else keeps its normal limit; the questions take what remains after a reserve for the
-    # summary, and the summary takes what is then left.
-    question_limit = QUESTION_LIMIT
-    if any(q.strip() for q in questions[:MAX_QUESTIONS]):
-        question_limit = _shrink(
-            QUESTION_LIMIT, len(questions[:MAX_QUESTIONS]), lambda limit: len(render("", limit)) + SUMMARY_RESERVE
-        )
-
-    def summary_section(limit: int) -> str:
-        return _quoted_section("The agent reports:", summary, limit)
-
-    if not summary_section(SUMMARY_LIMIT):
-        return render("", question_limit)
-    summary_limit = _shrink(SUMMARY_LIMIT, 1, lambda limit: len(render(summary_section(limit), question_limit)))
-    section = summary_section(summary_limit)
-    if len(render(section, question_limit)) > MAX_COMMENT:
-        section = OMITTED_SUMMARY
-    return render(section, question_limit)
-
-
-def _follow_ups_section(follow_ups: Sequence[Mapping[str, str]]) -> str:
-    items = _follow_up_items(follow_ups)
-    return "**Follow-ups the agent noticed**\n\n" + "\n".join(items) if items else ""
+    summary_section = summary_render(summary_text)
+    excess = len(render(summary_section)) - MAX_COMMENT
+    if excess > 0 and question_texts:
+        _cut_questions(question_texts, excess)
+        excess = len(render(summary_section)) - MAX_COMMENT
+    if excess > 0 and summary_text:
+        cut = _cut(summary_text, summary_render, len(summary_section) - excess)
+        summary_section = summary_render(cut) if cut is not None else OMITTED_SUMMARY
+        excess = len(render(summary_section)) - MAX_COMMENT
+    if excess > 0 and failure_text:
+        cut = _cut(failure_text, failure_render, len(failure_render(failure_text)) - excess)
+        if cut is None and len(failure_text) > CUT_FLOOR:
+            cut = failure_text[:CUT_FLOOR] + CUT_MARK
+        failure_text = cut or failure_text
+    return render(summary_section)
 
 
 def pull_request_title(title: str) -> str:
@@ -260,30 +285,18 @@ def pull_request_title(title: str) -> str:
     return textsafe.single_line(title, TITLE_LIMIT)
 
 
-def _close_open_fence(text: str) -> str:
-    """The text, with a closing line added when a code fence is still open at its end."""
-    open_fence = ""
-    for line in text.split("\n"):
-        match = _FENCE.fullmatch(line)
-        if not match:
-            continue
-        run, rest = match.groups()
-        if not open_fence:
-            if run[0] != "`" or "`" not in rest:
-                open_fence = run
-        elif run[0] == open_fence[0] and len(run) >= len(open_fence) and not rest.strip():
-            open_fence = ""
-    return f"{text}\n{open_fence}" if open_fence else text
-
-
 def pull_request_body(body: str, issue_number: int, follow_ups: Sequence[Mapping[str, str]]) -> str:
-    """`Closes #<issue>` first, then the neutralised body and follow-ups; no other reference can act."""
+    """`Closes #<issue>` first, then the neutralised body and the follow-ups; no other reference can act.
+
+    Nothing is inserted between the body and the follow-ups: an agent body that leaves a code fence open
+    hides only its own follow-ups here, and they are also listed in the run comment.
+    """
     if isinstance(issue_number, bool) or not isinstance(issue_number, int) or issue_number < 1:
         raise ValueError("issue_number must be a positive integer")
     parts = [f"Closes #{issue_number}"]
-    body_text = textsafe.neutralise(body, BODY_LIMIT).strip()
+    body_text = _neutral(body, BODY_LIMIT)
     if body_text:
-        parts.append(_close_open_fence(body_text))
+        parts.append(body_text)
     items = _follow_up_items(follow_ups)
     if items:
         parts.append("## Follow-ups\n\n" + "\n".join(items))
