@@ -445,7 +445,8 @@ class DryRunTest(DispatcherTestCase):
 
 class OnceTest(DispatcherTestCase):
     def run_main(self, *argv: str) -> int:
-        with mock.patch.dict(os.environ, valid_env(self.tmp)), \
+        # basicConfig would add a handler that prints the dispatcher's INFO lines into the test output
+        with mock.patch.dict(os.environ, valid_env(self.tmp)), mock.patch.object(logging, "basicConfig"), \
                 mock.patch.object(dispatcher_module, "build_dispatcher", return_value=self.dispatcher), \
                 self.quiet_logging():
             return dispatcher_module.main(list(argv))
