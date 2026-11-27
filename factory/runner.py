@@ -59,11 +59,12 @@ GIT_SECONDS = 60
 BUNDLE_SECONDS = 600
 CLEANUP_SECONDS = 30
 HOUSEKEEPING_SECONDS = 3600
+KILL_RETRY_SECONDS = 5.0
 PODMAN_FAILURES = (125, 126, 127)  # Podman's own statuses: it could not start the container
 EMPTY_BUNDLE = "Refusing to create empty bundle"
 PRIVATE_MODE = 0o600
 DIRECTORY_MODE = 0o700
-NO_FACTS = pod.Facts(False, None, "", None, "")
+NO_FACTS = pod.Facts(False, None, "", None, "", False)
 
 
 class Run(Protocol):
@@ -157,14 +158,35 @@ def _is_real_directory(info: os.stat_result) -> bool:
     return stat.S_ISDIR(info.st_mode) and not reparse
 
 
+DESCRIPTOR_WALK = (
+    hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW") and hasattr(os, "fchmod")
+    and {os.open, os.stat, os.chmod, os.unlink, os.rmdir} <= os.supports_dir_fd and os.scandir in os.supports_fd
+)
+OPEN_DIRECTORIES = 32  # descriptors the walk holds below the root, however deep the tree
+
+
 def remove_tree(path: Path) -> bool:
     """Remove a tree an agent has written in; return whether it is gone. It never raises and never follows a link.
 
     A real directory is made writable (`0o700`), emptied and removed; anything else, a link included, is unlinked
     without being followed. No other mode is changed, except that a read-only regular file (git leaves them) is
     made writable where the platform refuses to delete it otherwise. An error does not stop the walk.
+
+    Where the platform has directory descriptors the walk uses them, so that no path is resolved by name below
+    the top and a tree nested deeper than the path limit is still removed; elsewhere it walks by path.
     """
-    stack: list[tuple[str, bool]] = [(os.fspath(path), False)]
+    try:
+        if DESCRIPTOR_WALK:
+            _remove_by_descriptors(os.fspath(path))
+        else:
+            _remove_by_path(os.fspath(path))
+    except OSError:
+        pass
+    return not os.path.lexists(path)
+
+
+def _remove_by_path(path: str) -> None:
+    stack: list[tuple[str, bool]] = [(path, False)]
     while stack:
         current, emptied = stack.pop()
         try:
@@ -183,7 +205,135 @@ def remove_tree(path: Path) -> bool:
             continue
         stack.append((current, True))
         stack.extend((os.path.join(current, name), False) for name in names)
-    return not os.path.lexists(path)
+
+
+def _remove_by_descriptors(path: str) -> None:
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if not _is_real_directory(info):
+        _unlink(path, info)
+        return
+    try:
+        root = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except PermissionError:
+        os.chmod(path, stat.S_IRWXU)
+        root = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        _DescriptorWalk(root).run()
+    finally:
+        os.close(root)
+    os.rmdir(path)
+
+
+def _open_directory(parent: int, name: str) -> int:
+    """Open a subdirectory of an open directory without following a link; unlock it first if it is not readable."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        return os.open(name, flags, dir_fd=parent)
+    except PermissionError:
+        if not stat.S_ISDIR(os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode):
+            raise
+        os.chmod(name, stat.S_IRWXU, dir_fd=parent)
+        return os.open(name, flags, dir_fd=parent)
+
+
+def _empty_directory(directory: int) -> list[str]:
+    """Make an open directory writable and delete what it holds but its subdirectories, whose names it returns."""
+    subdirectories = []
+    try:
+        os.fchmod(directory, stat.S_IRWXU)
+        with os.scandir(directory) as entries:
+            found = [(entry.name, entry.is_dir(follow_symlinks=False)) for entry in entries]
+    except OSError:
+        return []
+    for name, is_directory in found:
+        if is_directory:
+            subdirectories.append(name)
+            continue
+        try:
+            os.unlink(name, dir_fd=directory)
+        except OSError:
+            pass  # the entry stays, the directory cannot then be removed, and the caller sees that
+    return subdirectories
+
+
+class _DescriptorWalk:
+    """Empty and remove everything below an open directory while holding a bounded number of descriptors.
+
+    The chain of directories being emptied is kept as names; a descriptor is held for each of the deepest
+    OPEN_DIRECTORIES of them only. When the walk climbs above those it opens the chain again from the root, one name
+    at a time, so a tree thousands of levels deep never needs thousands of descriptors.
+    """
+
+    def __init__(self, root: int) -> None:
+        self._root = root
+        self._names: list[str] = []  # the directories being emptied, from the one below the root down
+        self._pending: list[list[str]] = []  # per level, root first: subdirectories not visited yet
+        self._held: list[int] = []  # descriptors of the deepest directories of the chain, the deepest last
+
+    def run(self) -> None:
+        try:
+            self._pending.append(_empty_directory(self._root))
+            while self._pending:
+                if self._pending[-1]:
+                    self._descend(self._pending[-1].pop())
+                    continue
+                self._pending.pop()
+                if self._names:
+                    self._remove_deepest()
+        finally:
+            for descriptor in self._held:
+                os.close(descriptor)
+
+    def _current(self) -> int:
+        """The descriptor of the deepest directory of the chain, opened again if the walk had let it go."""
+        if not self._names:
+            return self._root
+        if not self._held:
+            self._reopen()
+        return self._held[-1]
+
+    def _reopen(self) -> None:
+        held: list[int] = []
+        try:
+            parent = self._root
+            for name in self._names:
+                parent = _open_directory(parent, name)
+                held.append(parent)
+                if len(held) > OPEN_DIRECTORIES:
+                    os.close(held.pop(0))
+        except BaseException:
+            for descriptor in held:
+                os.close(descriptor)
+            raise
+        self._held = held
+
+    def _descend(self, name: str) -> None:
+        parent = self._current()
+        try:
+            descriptor = _open_directory(parent, name)
+        except OSError:
+            # gone, or no longer a real directory: whatever the name is now is unlinked, never followed
+            try:
+                os.unlink(name, dir_fd=parent)
+            except OSError:
+                pass
+            return
+        self._names.append(name)
+        self._held.append(descriptor)
+        if len(self._held) > OPEN_DIRECTORIES:
+            os.close(self._held.pop(0))
+        self._pending.append(_empty_directory(descriptor))
+
+    def _remove_deepest(self) -> None:
+        name = self._names.pop()
+        os.close(self._held.pop())
+        try:
+            os.rmdir(name, dir_fd=self._current())
+        except OSError:
+            pass
 
 
 def _unlink(path: str, info: os.stat_result) -> None:
@@ -232,7 +382,8 @@ class AlreadyRunning(Exception):
 def acquire_lock(work_dir: Path) -> BinaryIO | None:
     """Take the exclusive lock that keeps a second runner from touching a live job; None where there is no flock.
 
-    The lock lasts as long as the returned file stays open.
+    The lock lasts as long as the returned file stays open. Only contention means another runner holds it: any
+    other OSError, from creating or locking the file, is raised as it is.
     """
     if fcntl is None:
         return None
@@ -240,9 +391,12 @@ def acquire_lock(work_dir: Path) -> BinaryIO | None:
     handle = open(work_dir / "runner.lock", "ab")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except BlockingIOError:
         handle.close()
         raise AlreadyRunning from None
+    except BaseException:
+        handle.close()
+        raise
     return handle
 
 
@@ -268,7 +422,9 @@ class Runner:
         self._confined = confined
         self._digest = digest
         self._stopping = False
-        self._container: str | None = None  # the agent container that is running now
+        self._container: str | None = None  # the container that is running now, the agent's or the bundler's
+        self._deadline = 0.0  # when the stage that runs it must be over, on the monotonic clock
+        self._unremoved: set[str] = set()  # jobs whose containers could not be removed
         self._last_housekeeping = clock()
 
     @property
@@ -295,10 +451,21 @@ class Runner:
         return self._digest is None or label == self._digest()
 
     def stop(self) -> None:
-        """Ask the runner to stop: kill the running agent container; that job is recorded as an internal crash."""
+        """Ask the runner to stop: kill the running container; that job is recorded as an internal crash.
+
+        A kill that fails is repeated in the background every few seconds until the container is gone or the
+        stage's time limit ends, so that a stop does not depend on one `podman kill` going through.
+        """
         self._stopping = True
-        if self._container is not None:
-            self._podman("kill", self._container)
+        name = self._container
+        if name is not None and not self._podman("kill", name):
+            threading.Thread(target=self._kill_until_gone, args=(name, self._deadline), daemon=True).start()
+
+    def _kill_until_gone(self, name: str, deadline: float) -> None:
+        while self._container == name and time.monotonic() < deadline:
+            time.sleep(KILL_RETRY_SECONDS)
+            if self._container != name or time.monotonic() >= deadline or self._podman("kill", name):
+                return
 
     def housekeeping(self) -> None:
         """Prune old transcripts and the spool about once an hour; a failure is logged and ignored."""
@@ -316,19 +483,25 @@ class Runner:
         """Finish every job still `running` as crashed and clear leftovers.
 
         With one runner (the lock sees to it) nothing can still be running at start-up, so a container found for
-        such a job is an orphan: it is removed before its workspace. Workspaces of every other job are removed too.
+        such a job is an orphan: it is removed before its workspace. Workspaces of every other job are removed
+        too, each after the containers of its job: a run that could not remove them left its workspace for here.
         """
         recovered = []
+        handled: set[str] = set()
         for job_id in self._spool.job_ids():
             if self._spool.state(job_id) != "running":
                 continue
             self._remove_containers(job_id)
+            handled.add(job_id)
             now = self._clock()
             self._spool.finish(job_id, _record(job_id, CRASHED, now, now), {})
             recovered.append(job_id)
         for parent in (self._work, self._work / "staging"):
             for entry in parent.iterdir() if parent.is_dir() else ():
                 if JOB_ID.fullmatch(entry.name):
+                    if entry.name not in handled:
+                        self._remove_containers(entry.name)
+                        handled.add(entry.name)
                     self._clean(entry.name)
         return recovered
 
@@ -346,7 +519,12 @@ class Runner:
         return removed
 
     def run_next(self) -> str | None:
-        """Handle the oldest queued job nobody else has claimed; return its id, or None when there was none."""
+        """Handle the oldest queued job nobody else has claimed; return its id, or None when there was none.
+
+        Once a stop is pending nothing is claimed: a job left queued is picked up by the next start.
+        """
+        if self._stopping:
+            return None
         for job_id in self._spool.job_ids():
             if self._spool.state(job_id) == "queued" and self._spool.claim(job_id, self._clock()):
                 self._handle(job_id)
@@ -374,6 +552,10 @@ class Runner:
             self._clean(job_id)
 
     def _clean(self, job_id: str) -> None:
+        if job_id in self._unremoved:
+            log.error("job %s: its containers could not be removed; its work directories are left for the next start",
+                      job_id)
+            return
         for path in (self._work / job_id, self._work / "staging" / job_id):
             if not remove_tree(path):
                 log.error("job %s: a work directory could not be removed completely", job_id)
@@ -459,12 +641,12 @@ class Runner:
         transcripts.mkdir(mode=DIRECTORY_MODE, parents=True, exist_ok=True)
         transcript = transcripts / f"{job_id}.jsonl"
         argv = pod.agent_argv(request, mounts, self._settings.image, name)
-        self._container = name
+        seconds = request["timeout_minutes"] * 60
+        self._container, self._deadline = name, time.monotonic() + seconds
         try:
             with _private_file(transcript) as stdout, _private_file(transcripts / f"{job_id}.err") as stderr:
                 try:
-                    status = self._run(argv, cwd=self._work, stdout=stdout, stderr=stderr,
-                                       timeout=request["timeout_minutes"] * 60)
+                    status = self._run(argv, cwd=self._work, stdout=stdout, stderr=stderr, timeout=seconds)
                 except subprocess.TimeoutExpired:
                     self._remove_containers(job_id, agent_only=True)
                     return Outcome("timeout")
@@ -473,7 +655,7 @@ class Runner:
         if self._stopping:
             return CRASHED
         facts = pod.read_transcript(transcript_lines(transcript))
-        if status in PODMAN_FAILURES and not facts.model:
+        if status in PODMAN_FAILURES and not facts.started:
             return Outcome("crashed", "internal", facts)  # Podman never ran the CLI
         result = _take(mounts.out / "result.json", MAX_RESULT_BYTES, staging / "result.json")
         if facts.limited and result is None:
@@ -484,6 +666,8 @@ class Runner:
             return Outcome("crashed", "agent_error", facts)
         files = {"result.json": result}
         bundle = self._bundle(job_id, request, mounts, staging)
+        if self._stopping:
+            return CRASHED  # a bundle container that was killed leaves no bundle, which is not "no commits"
         if bundle is not None:
             files["commits.bundle"] = bundle
         return Outcome("completed", None, facts, files)
@@ -496,16 +680,20 @@ class Runner:
         """
         bundle_out = mounts.out.parent / "bundle-out"
         bundle_out.mkdir(mode=DIRECTORY_MODE)
-        argv = pod.bundle_argv(request, dataclasses.replace(mounts, out=bundle_out), self._settings.image,
-                               f"factory-{job_id}-bundle")
+        name = f"factory-{job_id}-bundle"
+        argv = pod.bundle_argv(request, dataclasses.replace(mounts, out=bundle_out), self._settings.image, name)
         errors = staging / "bundle.err"
-        with _private_file(errors) as stderr:
-            try:
-                status = self._run(argv, cwd=self._work, stderr=stderr, timeout=BUNDLE_SECONDS)
-            except subprocess.TimeoutExpired:
-                self._remove_containers(job_id, bundle_only=True)
-                log.error("job %s: the bundle container timed out; no bundle is handed over", job_id)
-                return None
+        self._container, self._deadline = name, time.monotonic() + BUNDLE_SECONDS
+        try:
+            with _private_file(errors) as stderr:
+                try:
+                    status = self._run(argv, cwd=self._work, stderr=stderr, timeout=BUNDLE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    self._remove_containers(job_id, bundle_only=True)
+                    log.error("job %s: the bundle container timed out; no bundle is handed over", job_id)
+                    return None
+        finally:
+            self._container = None
         if status != 0:
             try:
                 text = read_bounded(errors, MAX_STDERR_BYTES).decode("utf-8", errors="replace")
@@ -517,21 +705,28 @@ class Runner:
         limit = self._config.dispatcher.max_bundle_megabytes * MEGABYTE
         return _take(bundle_out / "commits.bundle", limit, staging / "commits.bundle")
 
-    def _podman(self, *arguments: str) -> None:
-        """Best effort: a failure is logged and nothing else."""
+    def _podman(self, *arguments: str) -> bool:
+        """Best effort: a failure is logged and nothing else. True when Podman exited with status 0."""
         argv = ["podman", *arguments]
         try:
-            self._run(argv, cwd=self._work, timeout=CLEANUP_SECONDS)
+            return self._run(argv, cwd=self._work, timeout=CLEANUP_SECONDS) == 0
         except (OSError, subprocess.TimeoutExpired):
             log.error("%s did not finish", " ".join(argv[:2]))
+            return False
 
     def _remove_containers(self, job_id: str, *, agent_only: bool = False, bundle_only: bool = False) -> None:
         names = [] if bundle_only else [f"factory-{job_id}"]
         names += [] if agent_only else [f"factory-{job_id}-bundle"]
+        removed = True
         for name in names:
             if agent_only:
                 self._podman("kill", name)
-            self._podman("rm", "-f", name)
+            # --ignore: a container that is already gone (the agent's own is run with --rm) is not a failure
+            removed = self._podman("rm", "-f", "--ignore", name) and removed
+        if removed:
+            self._unremoved.discard(job_id)
+        else:
+            self._unremoved.add(job_id)
 
 
 def _private_file(path: Path) -> BinaryIO:
@@ -646,6 +841,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         lock = acquire_lock(settings.work_dir)  # held until the process ends
     except AlreadyRunning:
         log.error("another runner holds the lock on the work directory")
+        return 1
+    except OSError as error:
+        log.error("start-up failed: %s", type(error).__name__)
         return 1
     try:
         spool.prepare("runner")

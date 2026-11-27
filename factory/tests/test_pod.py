@@ -1,5 +1,6 @@
 """Tests for the Podman and Claude command lines and for reading the CLI's transcript."""
 
+import dataclasses
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,7 @@ REQUEST = {
 }
 MOUNTS = pod.Mounts(Path("/w/checkout"), Path("/w/job"), Path("/w/out"))
 IMAGE = "localhost/factory-agent:1"
+NO_FACTS = pod.Facts(False, None, "", None, "", False)
 
 
 def after_image(argv: list[str]) -> list[str]:
@@ -69,15 +71,15 @@ class TranscriptTests(unittest.TestCase):
                  '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1795863600}}',
                  '{"type":"result","subtype":"error_during_execution","num_turns":41}']
         self.assertEqual(pod.read_transcript(lines),
-                         pod.Facts(True, 1795863600, "error_during_execution", 41, "claude-opus-5-5"))
+                         pod.Facts(True, 1795863600, "error_during_execution", 41, "claude-opus-5-5", True))
 
     def test_an_allowed_rate_limit_event_with_overage_rejected_is_not_a_limit(self):
         line = ('{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795863600,'
                 '"overageStatus":"rejected"}}')
-        self.assertEqual(pod.read_transcript([line]), pod.Facts(False, None, "", None, ""))
+        self.assertEqual(pod.read_transcript([line]), NO_FACTS)
 
     def test_an_empty_transcript_has_no_facts(self):
-        self.assertEqual(pod.read_transcript([]), pod.Facts(False, None, "", None, ""))
+        self.assertEqual(pod.read_transcript([]), NO_FACTS)
 
     def test_the_last_result_wins(self):
         lines = ['{"type":"result","subtype":"success","num_turns":3}',
@@ -88,13 +90,19 @@ class TranscriptTests(unittest.TestCase):
     def test_a_rejected_event_without_an_integer_reset_is_limited_without_a_time(self):
         for reset in ('"soon"', "1.5", "true", "null"):
             line = '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":%s}}' % reset
-            self.assertEqual(pod.read_transcript([line]), pod.Facts(True, None, "", None, ""), reset)
+            self.assertEqual(pod.read_transcript([line]), dataclasses.replace(NO_FACTS, limited=True), reset)
 
     def test_wrongly_shaped_objects_are_ignored(self):
         lines = ["[]", "3", "null", '{"type":"rate_limit_event","rate_limit_info":[]}',
                  '{"type":"rate_limit_event"}', '{"type":"result","subtype":5,"num_turns":"x"}',
-                 '{"type":"system","subtype":"init","model":7}']
-        self.assertEqual(pod.read_transcript(lines), pod.Facts(False, None, "", None, ""))
+                 '{"type":"system","subtype":"other","model":"m"}']
+        self.assertEqual(pod.read_transcript(lines), NO_FACTS)
+
+    def test_an_init_line_means_the_cli_started_whatever_it_says_of_the_model(self):
+        for line in ('{"type":"system","subtype":"init"}', '{"type":"system","subtype":"init","model":7}'):
+            with self.subTest(line=line):
+                facts = pod.read_transcript([line])
+                self.assertEqual(facts, dataclasses.replace(NO_FACTS, started=True))
 
     def test_a_bool_is_not_a_turn_count(self):
         self.assertIsNone(pod.read_transcript(['{"type":"result","subtype":"success","num_turns":true}']).turns)

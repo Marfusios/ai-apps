@@ -1,6 +1,7 @@
 """Tests for the runner: real git for the clone, a real spool, and a fake that plays Podman and the agent."""
 
 import dataclasses
+import gc
 import io
 import json
 import logging
@@ -11,7 +12,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+import weakref
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -377,7 +380,8 @@ class AgentRunTests(RunnerCase):
         self.runner().run_next()
         self.assertEqual(self.spool.run_record(job)["status"], "timeout")
         tail = [call.argv for call in self.fake.after_agent()]
-        self.assertEqual(tail, [["podman", "kill", f"factory-{job}"], ["podman", "rm", "-f", f"factory-{job}"]])
+        self.assertEqual(tail, [["podman", "kill", f"factory-{job}"],
+                                ["podman", "rm", "-f", "--ignore", f"factory-{job}"]])
         self.assertFalse(self.delivered(job, "result.json").exists())
 
     def test_a_failing_kill_does_not_stop_the_run_from_being_recorded(self):
@@ -535,7 +539,8 @@ class AgentRunTests(RunnerCase):
         self.assertEqual(self.spool.run_record(job)["status"], "completed")
         self.assertTrue(self.delivered(job, "result.json").exists())
         self.assertFalse(self.delivered(job, "commits.bundle").exists())
-        self.assertIn(["podman", "rm", "-f", f"factory-{job}-bundle"], [call.argv for call in self.fake.calls])
+        removals = [call.argv for call in self.fake.calls]
+        self.assertIn(["podman", "rm", "-f", "--ignore", f"factory-{job}-bundle"], removals)
 
     def test_a_podman_failure_without_an_init_line_is_an_internal_crash(self):
         for minutes, status in enumerate((125, 126, 127)):
@@ -547,6 +552,14 @@ class AgentRunTests(RunnerCase):
     def test_a_podman_status_after_the_cli_started_is_an_agent_error(self):
         def script(container: Container) -> int:
             container.stdout.write(f"{INIT}\n".encode())
+            return 125
+
+        self.fake.agent = script
+        self.assertEqual(self.handle()["reason"], "agent_error")
+
+    def test_a_podman_status_after_an_init_line_without_a_model_is_an_agent_error(self):
+        def script(container: Container) -> int:
+            container.stdout.write(b'{"type":"system","subtype":"init"}\n')
             return 125
 
         self.fake.agent = script
@@ -567,13 +580,100 @@ class AgentRunTests(RunnerCase):
         self.assertIn(["podman", "kill", f"factory-{job}"], [call.argv for call in self.fake.calls])
         self.assertEqual(self.fake.bundle_runs, 0)
 
-    def test_a_stop_request_before_the_agent_starts_starts_no_container(self):
+    def test_a_pending_stop_claims_nothing_and_leaves_the_job_queued(self):
         instance = self.runner()
         instance.stop()
         job = self.submit()
-        instance.run_next()
+        self.assertIsNone(instance.run_next())
+        self.assertEqual(self.spool.state(job), "queued")
+        self.assertEqual(self.fake.calls, [])
+
+    def test_a_stop_after_the_claim_but_before_the_agent_starts_starts_no_container(self):
+        holder = []
+
+        def stopping(argv, **kwargs):
+            status = self.fake(argv, **kwargs)
+            if argv[:2] == ["git", "clone"]:
+                holder[0].stop()
+            return status
+
+        holder.append(self.runner(run=stopping))
+        job = self.submit()
+        holder[0].run_next()
         self.assertEqual(self.spool.run_record(job)["reason"], "internal")
         self.assertEqual(self.fake.podman_runs, [])
+
+    def test_a_stop_request_while_the_bundle_container_runs_kills_it_and_records_an_internal_crash(self):
+        holder = []
+
+        def stopping(argv, **kwargs):
+            if argv[:2] == ["podman", "run"] and "claude" not in argv:
+                holder[0].stop()
+            return self.fake(argv, **kwargs)
+
+        holder.append(self.runner(run=stopping))
+        job = self.submit()
+        holder[0].run_next()
+        self.assertIn(["podman", "kill", f"factory-{job}-bundle"], [call.argv for call in self.fake.calls])
+        record = self.spool.run_record(job)
+        self.assertEqual((record["status"], record["reason"]), ("crashed", "internal"))
+
+    def kills_while_stopping(self, stage: Callable[[list[list[str]]], None], *, succeed_from: int | None = None,
+                             in_bundle: bool = False) -> list[list[str]]:
+        """Run one job whose agent (or bundle) container asks for a stop and then runs `stage(kills)`.
+
+        Every `podman kill` fails, except those from the one numbered `succeed_from` on; the list of them is returned.
+        """
+        kills: list[list[str]] = []
+        holder = []
+
+        def run(argv, **kwargs):
+            if argv[:2] == ["podman", "kill"]:
+                kills.append(argv)
+                return 0 if succeed_from is not None and len(kills) >= succeed_from else 1
+            if in_bundle and argv[:2] == ["podman", "run"] and "claude" not in argv:
+                holder[0].stop()
+                stage(kills)
+            return self.fake(argv, **kwargs)
+
+        def script(container: Container) -> None:
+            good_script(container)
+            holder[0].stop()
+            stage(kills)
+
+        holder.append(self.runner(run=run))
+        if not in_bundle:
+            self.fake.agent = script
+        self.submit()
+        with mock.patch.object(runner, "KILL_RETRY_SECONDS", 0.01):
+            holder[0].run_next()
+        return kills
+
+    def test_a_kill_that_fails_while_a_stop_is_pending_is_repeated_until_it_works(self):
+        def wait_for_three(kills: list) -> None:
+            deadline = time.monotonic() + 10
+            while len(kills) < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        kills = self.kills_while_stopping(wait_for_three, succeed_from=3)
+        time.sleep(0.1)
+        self.assertEqual(len(kills), 3)
+
+    def test_a_kill_is_not_repeated_once_the_container_is_gone(self):
+        kills = self.kills_while_stopping(lambda kills: None)
+        settled = len(kills)
+        time.sleep(0.2)
+        self.assertLess(settled, 20)
+        self.assertEqual(len(kills), settled)
+
+    def test_a_kill_is_not_repeated_after_the_stages_time_limit(self):
+        with mock.patch.object(runner, "BUNDLE_SECONDS", 0.2):
+            kills = self.kills_while_stopping(lambda kills: time.sleep(0.6), in_bundle=True)
+        settled = len(kills)
+        time.sleep(0.1)
+        self.assertGreater(settled, 2)
+        self.assertLess(settled, 55)
+        self.assertEqual(len(kills), settled)
 
     def test_a_reset_time_beyond_the_year_2100_is_not_recorded(self):
         beyond = MAX_UNIX_SECONDS + 1
@@ -665,6 +765,47 @@ class FailureTests(RunnerCase):
         self.assertEqual(self.spool.run_record(job)["status"], "completed")
 
 
+    def test_a_workspace_is_kept_for_the_next_start_when_its_containers_could_not_be_removed(self):
+        def timed_out(container: Container) -> None:
+            raise subprocess.TimeoutExpired(container.argv, 1)
+
+        failures = {"a failing rm": lambda argv: 1, "a timed out rm": lambda argv: subprocess.TimeoutExpired(argv, 1)}
+        for minutes, (name, failure) in enumerate(failures.items()):
+            with self.subTest(name):
+                def run(argv, **kwargs):
+                    if argv[:2] == ["podman", "rm"]:
+                        outcome = failure(argv)
+                        if isinstance(outcome, Exception):
+                            raise outcome
+                        return outcome
+                    return self.fake(argv, **kwargs)
+
+                self.fake.agent = timed_out
+                job = self.submit(minutes=minutes)
+                with self.assertLogs("factory.runner", level="ERROR") as logs:
+                    self.runner(run=run).run_next()
+                self.assertEqual(self.spool.run_record(job)["status"], "timeout")
+                self.assertTrue((self.work / job).exists())
+                self.assertEqual(sum("left for the next start" in line for line in logs.output), 1)
+
+    def test_the_next_start_removes_the_containers_and_then_the_kept_workspace(self):
+        def timed_out(container: Container) -> None:
+            raise subprocess.TimeoutExpired(container.argv, 1)
+
+        def stubborn(argv, **kwargs):
+            return 1 if argv[:2] == ["podman", "rm"] else self.fake(argv, **kwargs)
+
+        self.fake.agent = timed_out
+        job = self.submit()
+        with self.assertLogs("factory.runner", level="ERROR"):
+            self.runner(run=stubborn).run_next()
+        self.assertTrue((self.work / job).exists())
+        self.fake.calls.clear()
+        self.runner().recover()
+        self.assertFalse((self.work / job).exists())
+        self.assertIn(["podman", "rm", "-f", "--ignore", f"factory-{job}"], [call.argv for call in self.fake.calls])
+
+
 class QueueTests(RunnerCase):
     def test_no_job_means_none(self):
         self.assertIsNone(self.runner().run_next())
@@ -711,12 +852,14 @@ class QueueTests(RunnerCase):
         seen = []
 
         def spy(argv, **kwargs):
-            if argv[:3] == ["podman", "rm", "-f"]:
-                seen.append((argv[3], (self.work / stuck).exists()))
+            if argv[:2] == ["podman", "rm"]:
+                job = argv[-1].removeprefix("factory-").removesuffix("-bundle")
+                seen.append((argv[-1], (self.work / job).exists()))
             return self.fake(argv, **kwargs)
 
         self.runner(run=spy).recover()
-        self.assertEqual(seen, [(f"factory-{stuck}", True), (f"factory-{stuck}-bundle", True)])
+        self.assertEqual(seen, [(f"factory-{stuck}", True), (f"factory-{stuck}-bundle", True),
+                                (f"factory-{finished}", True), (f"factory-{finished}-bundle", True)])
         self.assertFalse((self.work / stuck).exists())
         self.assertFalse((self.work / finished).exists())
         self.assertFalse((self.work / "staging" / finished).exists())
@@ -913,6 +1056,88 @@ class FileHelperTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(outside_dir.stat().st_mode), 0o755)
         self.assertEqual((outside_dir / "inner.txt").read_text(encoding="utf-8"), "keep too")
 
+    def nest(self, top: Path, depth: int) -> None:
+        """A chain of `depth` directories below top with a file at the bottom, made by steps of one name each.
+
+        The names are long enough for the path of the bottom to be far beyond the path limit of a platform.
+        """
+        top.mkdir(parents=True)
+        here = os.getcwd()
+        try:
+            os.chdir(top)
+            for _ in range(depth):
+                os.mkdir("d" * 16)
+                os.chdir("d" * 16)
+            Path("leaf").write_text("x", encoding="utf-8")
+        finally:
+            os.chdir(here)
+
+    @unittest.skipUnless(runner.DESCRIPTOR_WALK, "the walk by descriptors needs POSIX directory descriptors")
+    def test_remove_tree_removes_a_tree_nested_deeper_than_the_path_limit_and_leaks_no_descriptor(self):
+        self.nest(self.root / "w", 2000)
+        first = os.dup(0)
+        os.close(first)
+        self.assertTrue(runner.remove_tree(self.root / "w"))
+        self.assertFalse((self.root / "w").exists())
+        probe = os.dup(0)
+        os.close(probe)
+        self.assertEqual(probe, first)
+
+    @unittest.skipUnless(runner.DESCRIPTOR_WALK, "the walk by descriptors needs POSIX directory descriptors")
+    def test_remove_tree_holds_a_bounded_number_of_descriptors_in_a_deep_tree(self):
+        import resource
+
+        self.nest(self.root / "w", 600)
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(soft, 150), hard))
+        try:
+            removed = runner.remove_tree(self.root / "w")
+        finally:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+        self.assertTrue(removed)
+        self.assertFalse((self.root / "w").exists())
+
+    def test_remove_tree_removes_a_branching_tree_by_either_walk(self):
+        for descriptors in sorted({runner.DESCRIPTOR_WALK, False}):
+            with self.subTest(descriptors=descriptors), mock.patch.object(runner, "DESCRIPTOR_WALK", descriptors):
+                top = self.root / f"w{descriptors}"
+                for leaf in ("a/b/c", "a/d", "e/f/g/h", "i"):
+                    (top / leaf).mkdir(parents=True)
+                    (top / leaf / "file").write_text("x", encoding="utf-8")
+                self.assertTrue(runner.remove_tree(top))
+                self.assertFalse(top.exists())
+
+    @unittest.skipUnless(runner.DESCRIPTOR_WALK, "the walk by descriptors needs POSIX directory descriptors")
+    def test_remove_tree_takes_a_directory_whose_name_a_link_replaced_without_following_it(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "keep").write_text("keep", encoding="utf-8")
+        top = self.root / "w"
+        (top / "sub").mkdir(parents=True)
+        real = os.scandir
+        scans = []
+
+        class SwapsAfterTheListing:
+            """Lists a directory as it is, then puts a link where its subdirectory was, as an agent could."""
+
+            def __init__(self, fd):
+                self.inner = real(fd)
+
+            def __enter__(self):
+                return self.inner.__enter__()
+
+            def __exit__(self, *details):
+                self.inner.__exit__(*details)
+                scans.append(1)
+                if len(scans) == 1:
+                    (top / "sub").rmdir()
+                    (top / "sub").symlink_to(outside, target_is_directory=True)
+
+        with mock.patch.object(os, "scandir", SwapsAfterTheListing):
+            self.assertTrue(runner.remove_tree(top))
+        self.assertFalse(top.exists())
+        self.assertEqual((outside / "keep").read_text(encoding="utf-8"), "keep")
+
     def test_remove_tree_reports_a_tree_it_could_not_remove_and_keeps_going(self):
         (self.root / "w").mkdir()
         (self.root / "w" / "a").write_text("x", encoding="utf-8")
@@ -944,6 +1169,12 @@ class LockTests(unittest.TestCase):
         with mock.patch.object(runner, "fcntl", self.fake_fcntl(held=True)), \
                 self.assertRaises(runner.AlreadyRunning):
             runner.acquire_lock(self.work)
+
+    def test_an_error_other_than_contention_is_not_reported_as_another_runner(self):
+        module = self.fake_fcntl(held=False)
+        module.flock.side_effect = PermissionError("not allowed")
+        with mock.patch.object(runner, "fcntl", module), self.assertRaises(PermissionError):
+            runner.acquire_lock(self.work)  # the work directory is removed afterwards only if the file was closed
 
     def test_a_free_lock_is_taken_on_the_runner_lock_file_without_blocking(self):
         fcntl = self.fake_fcntl(held=False)
@@ -1009,6 +1240,71 @@ class ProgramTests(RunnerCase):
         with self.assertLogs("factory.runner", level="ERROR"):
             runner.serve(instance, stop)
 
+    def test_serve_runs_the_housekeeping_after_each_poll(self):
+        stop = threading.Event()
+        instance = self.runner()
+        polls = []
+
+        def run_next():
+            polls.append(1)
+            if len(polls) == 2:
+                stop.set()
+
+        instance.run_next = run_next
+        with mock.patch.object(instance, "housekeeping") as housekeeping, \
+                mock.patch.object(runner, "IDLE_SECONDS", 0.0):
+            runner.serve(instance, stop)
+        self.assertEqual(housekeeping.call_count, 2)
+
+    def test_the_stop_signal_handler_sets_the_event_and_stops_the_runner(self):
+        env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
+               "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+        instance = self.runner()
+        signal_handlers: dict = {}
+        seen = {}
+
+        def serve(_, stop, **__):
+            seen["before"] = stop.is_set()
+            for handler in signal_handlers.values():
+                handler(0, None)
+            seen["after"] = stop.is_set()
+
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                mock.patch.object(runner, "Runner", lambda *_, **__: instance), \
+                mock.patch.object(runner, "acquire_lock", return_value=None), \
+                mock.patch.object(runner.signal, "signal", side_effect=signal_handlers.__setitem__), \
+                mock.patch.object(runner, "serve", serve), \
+                mock.patch.object(instance, "stop") as stop_runner:
+            self.assertEqual(runner.main(["--once"]), 0)
+        self.assertTrue(signal_handlers)
+        self.assertEqual((seen["before"], seen["after"]), (False, True))
+        self.assertEqual(stop_runner.call_count, len(signal_handlers))
+
+    def test_main_holds_the_lock_until_serving_has_ended(self):
+        class Handle(io.BytesIO):
+            """A lock file that can be watched without being kept alive by the test."""
+
+        env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
+               "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+        instance = self.runner()
+        watched = []
+        alive = []
+
+        def take_lock(*_):
+            handle = Handle()
+            watched.append(weakref.ref(handle))
+            return handle
+
+        def serve(*_, **__):
+            gc.collect()
+            alive.append(watched[0]() is not None)
+
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                mock.patch.object(runner, "Runner", lambda *_, **__: instance), \
+                mock.patch.object(runner, "acquire_lock", take_lock), mock.patch.object(runner, "serve", serve):
+            self.assertEqual(runner.main(["--once"]), 0)
+        self.assertEqual(alive, [True])
+
     def test_a_stop_signal_ends_the_idle_wait(self):
         stop = threading.Event()
         stop.set()
@@ -1028,12 +1324,25 @@ class ProgramTests(RunnerCase):
             self.assertEqual(runner.main(["--once"]), 1)
         self.assertEqual(len(logs.records), 1)
 
+    def test_main_reports_a_lock_that_cannot_be_taken_as_a_start_up_failure_with_the_class_name(self):
+        env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
+               "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                mock.patch.object(runner, "acquire_lock", side_effect=PermissionError("secret detail")), \
+                self.assertLogs("factory.runner", level="ERROR") as logs:
+            self.assertEqual(runner.main(["--once"]), 1)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("PermissionError", logs.output[0])
+        self.assertNotIn("secret detail", logs.output[0])
+        self.assertIsNone(logs.records[0].exc_info)
+
     def test_check_does_not_take_the_lock(self):
         env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
                "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
         instance = self.runner()
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
-                mock.patch.object(runner, "Runner", lambda *_, **__: instance), mock.patch("sys.stdout", io.StringIO()), \
+                mock.patch.object(runner, "Runner", lambda *_, **__: instance), \
+                mock.patch("sys.stdout", io.StringIO()), \
                 mock.patch.object(runner, "acquire_lock", side_effect=AssertionError("locked")):
             self.assertEqual(runner.main(["--check"]), 0)
 
@@ -1054,7 +1363,8 @@ class ProgramTests(RunnerCase):
             captured.update(options)
             return instance
 
-        with mock.patch.dict(os.environ, env, clear=True), mock.patch("sys.stdout", io.StringIO()),                 mock.patch.object(logging, "basicConfig"), mock.patch.object(runner, "Runner", fake_runner):
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch("sys.stdout", io.StringIO()), \
+                mock.patch.object(logging, "basicConfig"), mock.patch.object(runner, "Runner", fake_runner):
             runner.main(["--check"])
         self.assertEqual(captured["digest"](), harness_digest(Path(runner.__file__).resolve().parents[1]))
 
@@ -1070,7 +1380,8 @@ class ProgramTests(RunnerCase):
             instance = self.runner(confined=lambda: confinement)
             output = io.StringIO()
             with mock.patch.dict(os.environ, env, clear=True), mock.patch("sys.stdout", output), \
-                    mock.patch.object(logging, "basicConfig"), mock.patch.object(runner, "Runner", lambda *_, **__: instance):
+                    mock.patch.object(logging, "basicConfig"), \
+                    mock.patch.object(runner, "Runner", lambda *_, **__: instance):
                 self.assertEqual(runner.main(["--check"]), expected)
             self.assertEqual(len(output.getvalue().splitlines()), 3)
 

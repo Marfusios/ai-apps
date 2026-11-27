@@ -29,6 +29,7 @@ class Facts:
     subtype: str
     turns: int | None
     model: str
+    started: bool  # an init line was seen: the CLI ran, whether or not it named a model
 
 
 def claude_argv(request: Mapping) -> list[str]:
@@ -85,7 +86,7 @@ def _text(value: object) -> str:
 
 def read_transcript(lines: Iterable[str]) -> Facts:
     """What a run's stream of JSON lines says about limits, the final result and the model; junk lines are skipped."""
-    limited, resets_at, subtype, turns, model = False, None, "", None, ""
+    limited, resets_at, subtype, turns, model, started = False, None, "", None, "", False
     for line in lines:
         try:
             event = json.loads(line)
@@ -101,5 +102,5 @@ def read_transcript(lines: Iterable[str]) -> Facts:
         elif kind == "result":
             subtype, turns = _text(event.get("subtype")), _integer(event.get("num_turns"))
         elif kind == "system" and event.get("subtype") == "init":
-            model = _text(event.get("model"))
-    return Facts(limited, resets_at, subtype, turns, model)
+            model, started = _text(event.get("model")), True
+    return Facts(limited, resets_at, subtype, turns, model, started)
