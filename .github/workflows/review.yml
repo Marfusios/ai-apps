@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           # A change that touches only epic documents is a design or a plan; anything else, or nothing, is code.
-          kind=$(git diff --name-only -z "$BASE_SHA...$HEAD_SHA" | python3 -c 'import re, sys; paths = [p for p in sys.stdin.buffer.read().split(b"\0") if p]; print("document" if paths and all(re.fullmatch(rb"apps/[^/]+/docs/epics/.+", p) for p in paths) else "code")')
+          kind=$(git diff --name-only --no-renames -z "$BASE_SHA...$HEAD_SHA" | python3 -c 'import re, sys; paths = [p for p in sys.stdin.buffer.read().split(b"\0") if p]; print("document" if paths and all(re.fullmatch(rb"apps/[^/]+/docs/epics/.+", p) for p in paths) else "code")')
           if [ "$kind" = "document" ]; then
             prompt=document.md
           else

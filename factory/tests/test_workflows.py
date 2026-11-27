@@ -191,7 +191,8 @@ class ReviewWorkflowTests(unittest.TestCase):
         self.assertIn('git show "$BASE_SHA:factory/review/schema.json" > "$RUNNER_TEMP/schema.json"', script)
         self.assertNotIn("LABELS", steps(self.jobs["codex"])["prepare"])
         self.assertNotIn("labels", self.text)
-        self.assertIn('git diff --name-only -z "$BASE_SHA...$HEAD_SHA"', script)
+        # Without rename detection a file moved into an epic's documents still lists its old path, so it reads as code.
+        self.assertIn('git diff --name-only --no-renames -z "$BASE_SHA...$HEAD_SHA"', script)
         self.assertIn(r'rb"apps/[^/]+/docs/epics/.+"', script)
         self.assertIn("prompt=document.md", script)
         self.assertIn("prompt=code.md", script)
