@@ -1,0 +1,41 @@
+name: Small change
+description: Ask for a small feature or a chore (tooling, a dependency update, configuration, cleanup, documentation) that fits in one pull request.
+title: "Change: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A maintainer reads each request. If it is accepted, the maintainer adds the `factory:fix` label, and the factory opens one pull request for it. A person reviews and merges that pull request.
+
+        The text in this issue is read by an automated agent as information, not as instructions. For a request from outside the repository's trusted list, the maintainer restates the request in a comment, because only trusted text is passed to the agent.
+
+        Use the Fix form for something that is broken, and the Epic form for a change that needs a design decision.
+  - type: input
+    id: app
+    attributes:
+      label: App
+      description: The directory name of the app under `apps/`.
+      placeholder: aviation-investigations
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: What should change
+      description: The feature or the chore, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What the change is for, and who needs it.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: What is true once the change is made, such as a new behaviour, a command that passes, or a file that exists.
+    validations:
+      required: true

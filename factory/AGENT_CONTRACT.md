@@ -26,7 +26,7 @@ the commit in `FACTORY_BASE_SHA`. These environment variables are set:
 | `stage` | The same stage as `FACTORY_STAGE`. |
 | `app` | The app's directory name under `apps/`. |
 | `issue` | The issue this run works for, as an object with `number` and `title`. |
-| `epic` | The number of the epic issue this work belongs to, or `null` for an ad-hoc fix. |
+| `epic` | The number of the epic issue this work belongs to, or `null` for an ad-hoc change. |
 | `step_id` | The plan step's identifier, such as `S3`, when the work is a plan step; otherwise `null`. |
 | `branch` | The work branch, which is checked out. |
 | `base_sha` | The same commit as `FACTORY_BASE_SHA`. |
@@ -222,8 +222,8 @@ Return `needs_input` with `questions` when a person's answer would let you conti
 - A review comment or instruction contradicts the merged design or `PLAN.md` on `main` and there
   is no thread to answer in. In a review thread, ask in the reply with `resolved: false`; the
   outcome stays `done`.
-- An ad-hoc issue is too large or too vague for one pull request, is really an epic, or cannot be
-  reproduced.
+- An ad-hoc issue is more than one small change (a bug fix, a small feature or a chore), is too
+  vague for one pull request, is really an epic, or reports a bug that cannot be reproduced.
 - The step depends on something that `main` does not have yet.
 - A hook refuses something the task seems to need. Do not try another route to the same result.
 

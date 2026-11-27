@@ -24,7 +24,7 @@ stranger, which rules out private trackers and chat logs.
 
 - An epic issue becomes: a design pull request, then a plan pull request, then one issue
   per plan step tracked from the epic, then one pull request per step.
-- A small issue ("this is broken") goes straight to a pull request.
+- A small change (a bug fix, a small feature or a chore) goes straight to a pull request.
 - People steer by reviewing pull requests. Nothing merges without a person approving it.
 - Every pull request gets an automated review from a second model before a person is
   asked to look.
@@ -165,10 +165,22 @@ A trigger label counts only if the timeline shows a trusted person applied it (s
 
 ### 6.3 Ad-hoc pipeline
 
-A trusted person labels an issue `factory:fix`. The `factory-fix-issue` skill reproduces
-the problem, writes a failing test, fixes it, and returns a pull request that closes the
-issue. If the agent judges the issue too large or too vague, it returns questions instead
-and the issue gets `status:needs-human`.
+A trusted person labels an issue `factory:fix`. The issue asks for one small change, and
+the `factory-fix-issue` skill returns one pull request that closes the issue. A small
+change is one of three kinds:
+
+- **A bug fix.** The agent reproduces the problem, writes a failing test, and fixes it.
+- **A small feature.** The agent writes the failing test for the new behaviour first, then
+  the code, within one module's responsibilities.
+- **A chore.** Tooling such as a linter or a formatter, a dependency update,
+  configuration, cleanup, or documentation. It changes no behaviour and needs no new test;
+  the app's check command is its verification. A chore that adds or changes a quality
+  tool updates the app's `factory.toml` and the commands in its `AGENTS.md` in the same
+  pull request, and fixes what the tool reports.
+
+Anything that needs a design decision is an epic. If the agent judges the issue too large,
+too vague, or in need of a decision, it returns questions instead and the issue gets
+`status:needs-human`.
 
 ### 6.4 The life of a pull request
 
@@ -302,8 +314,8 @@ all external contributors. Third-party actions pinned to commit SHAs (already th
 practice). No `pull_request_target` workflows, which run regardless of that approval.
 
 **Repository settings.** Delete head branches after merge. Secret scanning on, and push
-protection switched on by hand, since it is off by default. Issue forms for an epic and
-for a fix; a pull request template.
+protection switched on by hand, since it is off by default. Issue forms for an epic, a
+fix and a small change; a pull request template.
 
 **Before the repository becomes public.** Review the full history for credentials and
 private details, check that past workflow logs and pull request text contain nothing
@@ -381,7 +393,7 @@ join the gate once service containers are built.
 | `factory-implement` | One plan step as a red, green, refactor loop: failing test, code, tidy, verification, self-review, commits. |
 | `factory-fix` | Failed checks or review findings. Verify each finding before acting on it. |
 | `factory-revise` | A person's review. One reply per thread, saying what changed or why not. |
-| `factory-fix-issue` | An ad-hoc issue: reproduce, failing test, fix. Escalate if it is really an epic. |
+| `factory-fix-issue` | An ad-hoc issue: one small change (a bug fix, a small feature or a chore) as one pull request. Escalate if it is really an epic. |
 | `new-app` | Scaffold an app and fill in its template files. |
 
 **Subagents** (`.claude/agents/`)

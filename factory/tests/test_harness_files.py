@@ -114,6 +114,21 @@ class SkillTests(unittest.TestCase):
             fields = read_frontmatter(path)
             self.assertEqual(fields.get("disable-model-invocation"), "true", path)
 
+    def test_the_fix_issue_skill_handles_each_kind_of_small_change_in_both_modes(self) -> None:
+        path = CLAUDE / "skills" / "factory-fix-issue" / "SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("small change", read_frontmatter(path)["description"])
+        for heading in ("## Decide which kind of small change it is", "## Fix a bug", "## Add a small feature",
+                        "## Do a chore", "## When to stop and return questions"):
+            self.assertIn(heading, text)
+        self.assertIn("When `FACTORY_RUN` is not set", text)
+
+    def test_a_chore_that_changes_a_quality_tool_updates_the_apps_commands_with_it(self) -> None:
+        text = (CLAUDE / "skills" / "factory-fix-issue" / "SKILL.md").read_text(encoding="utf-8")
+        chore = text.partition("## Do a chore")[2].partition("\n## ")[0]
+        for name in ("apps/<app>/factory.toml", "[quality]", "commands.check", "commands.quick", "Commands"):
+            self.assertIn(name, chore)
+
 
 class AgentTests(unittest.TestCase):
     def test_agents_have_valid_frontmatter(self) -> None:
@@ -137,6 +152,12 @@ class AgentsMdTests(unittest.TestCase):
         text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertLessEqual(len(text.splitlines()), 150)
         self.assertIn("docs/engineering.md", text)
+
+    def test_agents_md_names_the_three_kinds_of_small_change(self) -> None:
+        text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        flow = text.partition("## How work flows")[2].partition("\n## ")[0]
+        for kind in ("`factory:fix`", "bug fix", "small feature", "chore"):
+            self.assertIn(kind, flow)
 
 
 if __name__ == "__main__":
