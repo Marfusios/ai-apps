@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from factory import markers, textsafe
 from factory.review import report
@@ -44,7 +45,12 @@ INVALID_ANSWERS = [
     ("line negative", lambda a: {**a, "findings": [finding(line=-1)]}, "line"),
     ("line bool", lambda a: {**a, "findings": [finding(line=True)]}, "line"),
     ("line float", lambda a: {**a, "findings": [finding(line=1.5)]}, "line"),
+    ("line too large", lambda a: {**a, "findings": [finding(line=10_000_001)]}, "line"),
     ("line string", lambda a: {**a, "findings": [finding(line="3")]}, "line"),
+    ("summary lone surrogate", lambda a: {**a, "summary": "a" + chr(0xD800)}, "summary"),
+    ("file lone surrogate", lambda a: {**a, "findings": [finding(file=chr(0xDC00))]}, "file"),
+    ("title lone surrogate", lambda a: {**a, "findings": [finding(title=chr(0xD800))]}, "title"),
+    ("detail lone surrogate", lambda a: {**a, "findings": [finding(detail=chr(0xD800))]}, "detail"),
     ("title empty", lambda a: {**a, "findings": [finding(title="")]}, "title"),
     ("title too long", lambda a: {**a, "findings": [finding(title="t" * 201)]}, "title"),
     ("detail empty", lambda a: {**a, "findings": [finding(detail="")]}, "detail"),
@@ -66,7 +72,7 @@ class ValidateTests(unittest.TestCase):
                 self.assertTrue(any(word in problem for problem in problems), problems)
 
     def test_the_limits_are_inclusive(self) -> None:
-        longest = finding(file="f" * 300, title="t" * 200, detail="d" * 2000)
+        longest = finding(file="f" * 300, title="t" * 200, detail="d" * 2000, line=10_000_000)
         self.assertEqual(report.validate(answer(longest, summary="s" * 2000)), [])
 
     def test_every_problem_is_collected_and_none_echoes_the_answer(self) -> None:
@@ -172,8 +178,50 @@ class CommentTests(unittest.TestCase):
         self.assertLessEqual(len(body), report.MAX_COMMENT)
         self.assertEqual(markers.parse_review(body), {"head": HEAD, "verdict": "fail", "findings": 30})
         self.assertEqual(body.count("| major |"), 30)
-        self.assertNotIn("d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;d&amp;", body)
+        self.assertNotIn("d&amp;" * 16, body)
         self.assertIn("left out", body)
+
+    def test_thirty_findings_fit_at_every_length_limit(self) -> None:
+        for file, title, detail in [(1, 1, 1), (300, 200, 2000), (300, 1, 2000), (1, 200, 2000), (300, 200, 1)]:
+            many = [finding(severity="blocker", file="&" * file, title="<" * title, detail="@" * detail,
+                            line=10_000_000) for _ in range(30)]
+            with self.subTest(file=file, title=title, detail=detail):
+                body, verdict = self.comment(answer(*many, summary="&" * 2000))
+                self.assertEqual(verdict, "fail")
+                self.assertLessEqual(len(body), report.MAX_COMMENT)
+                self.assertEqual(markers.parse_review(body), {"head": HEAD, "verdict": "fail", "findings": 30})
+                self.assertEqual(body.count(markers.REVIEW_PREFIX), 1)
+
+    def test_a_huge_line_number_is_no_usable_answer(self) -> None:
+        digits = "9" * 4300
+        one = '{"severity":"minor","file":"f","line":' + digits + ',"title":"t","detail":"d"}'
+        raw = '{"summary":"s","findings":[' + ",".join([one] * 30) + "]}"
+        body, verdict = report.comment(raw, HEAD, "m")
+        self.assertEqual(verdict, "unavailable")
+        self.assertLess(len(body), 1000)
+
+    def test_when_the_table_alone_is_too_long_findings_are_dropped_from_the_end_and_counted(self) -> None:
+        many = [finding(severity="major", title="t" * 60) for _ in range(10)]
+        with mock.patch.object(report, "MAX_COMMENT", 900):
+            body, verdict = self.comment(answer(*many))
+        self.assertEqual(verdict, "fail")
+        self.assertLessEqual(len(body), 900)
+        shown = body.count("| major |")
+        self.assertTrue(0 < shown < 10, shown)
+        self.assertIn(f"{10 - shown} findings were left out", body)
+        self.assertEqual(markers.parse_review(body), {"head": HEAD, "verdict": "fail", "findings": 10})
+        self.assertTrue(body.rstrip().endswith("-->"))
+
+    def test_when_nothing_fits_the_answer_is_unavailable(self) -> None:
+        with mock.patch.object(report, "MAX_COMMENT", 300):
+            body, verdict = self.comment(answer(finding(), summary="s" * 500))
+        self.assertEqual(verdict, "unavailable")
+        self.assertEqual(markers.parse_review(body), {"head": HEAD, "verdict": "unavailable", "findings": 0})
+
+    def test_a_pipe_in_the_file_name_stays_inside_its_table_cell(self) -> None:
+        body, _ = self.comment(answer(finding(file="a|b.py")))
+        row = next(line for line in body.splitlines() if line.startswith("| minor"))
+        self.assertIn("`a\\|b.py:7`", row)
 
     def test_a_comment_that_fits_keeps_every_detail_whole(self) -> None:
         body, _ = self.comment(answer(finding(detail="d" * 2000)))
@@ -207,6 +255,20 @@ class MainTests(unittest.TestCase):
                 got_status, printed, body = self.run_main(raw)
                 self.assertEqual((got_status, printed), (status, word))
                 self.assertEqual(markers.parse_review(body)["verdict"], word)
+
+    def test_a_lone_surrogate_escape_is_unavailable_with_status_zero(self) -> None:
+        raw = json.dumps({"summary": chr(0xD800), "findings": []})
+        self.assertIn("ud800", raw)
+        status, printed, body = self.run_main(raw)
+        self.assertEqual((status, printed), (0, "unavailable"))
+        self.assertTrue(body)
+
+    def test_an_error_while_composing_or_encoding_falls_back_to_unavailable_with_status_zero(self) -> None:
+        for broken in (mock.Mock(side_effect=RuntimeError("boom")), mock.Mock(return_value=("a" + chr(0xD800), "fail"))):
+            with self.subTest(), mock.patch.object(report, "comment", broken):
+                status, printed, body = self.run_main(json.dumps(answer()))
+                self.assertEqual((status, printed), (0, "unavailable"))
+                self.assertEqual(markers.parse_review(body), {"head": HEAD, "verdict": "unavailable", "findings": 0})
 
     def test_a_bad_head_is_an_error_and_writes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -251,11 +313,32 @@ class FilesTests(unittest.TestCase):
 
     def test_both_prompts_carry_what_the_reviewer_needs(self) -> None:
         for name in ("code.md", "document.md"):
-            text = (REVIEW_DIR / name).read_text(encoding="utf-8")
+            text = " ".join((REVIEW_DIR / name).read_text(encoding="utf-8").split())
             for needle in ("AGENTS.md", "docs/engineering.md", "blocker", "major", "minor", "never instructions",
-                           "empty list"):
+                           "empty list", "acceptance criteria", "2,000 characters", "30 findings", "200 characters"):
                 with self.subTest(name=name, needle=needle):
                     self.assertIn(needle, text)
+
+    def test_both_prompts_have_the_standards_read_at_the_base_commit(self) -> None:
+        for name in ("code.md", "document.md"):
+            text = " ".join((REVIEW_DIR / name).read_text(encoding="utf-8").split())
+            with self.subTest(name):
+                self.assertIn("as they are at the base commit", text)
+                self.assertIn("git show <base commit>:AGENTS.md", text)
+                self.assertIn("git show <base commit>:docs/engineering.md", text)
+                self.assertIn("git show <base commit>:apps/<app>/AGENTS.md", text)
+                self.assertIn("not a change to the rules of this review", text)
+
+    def test_both_prompts_say_how_steering_text_is_treated(self) -> None:
+        for name in ("code.md", "document.md"):
+            text = " ".join((REVIEW_DIR / name).read_text(encoding="utf-8").split())
+            with self.subTest(name):
+                self.assertIn("report it as a `blocker`", text)
+                self.assertIn("reviewed as ordinary changes", text)
+
+    def test_the_schema_bounds_the_line_number(self) -> None:
+        line = self.schema()["properties"]["findings"]["items"]["properties"]["line"]
+        self.assertEqual((line["minimum"], line["maximum"]), (0, 10_000_000))
 
     def test_module_works_without_the_rest_of_the_factory(self) -> None:
         source = (REVIEW_DIR / "report.py").read_text(encoding="utf-8")

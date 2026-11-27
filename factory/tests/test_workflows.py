@@ -145,7 +145,8 @@ class ReviewWorkflowTests(unittest.TestCase):
         self.assertEqual(set(self.jobs), {"codex", "review"})
         self.assertRegex(self.text, r"(?m)^permissions: \{\}$")
         self.assertNotRegex(self.text, r"(?m)^permissions:\s*$")
-        self.assertRegex(self.text, r"types: \[opened, synchronize, reopened, ready_for_review\]")
+        self.assertRegex(self.text, r"types: \[opened, synchronize, reopened\]")
+        self.assertNotIn("ready_for_review", self.text)
 
     def test_one_review_per_pull_request_and_a_new_push_cancels_the_old(self) -> None:
         self.assertRegex(self.text, r"group: review-\$\{\{ github\.event\.pull_request\.number \}\}")
@@ -166,7 +167,7 @@ class ReviewWorkflowTests(unittest.TestCase):
 
     def test_the_job_that_comments_holds_no_secret_and_runs_only_base_code(self) -> None:
         block = self.jobs["review"]
-        self.assertEqual(permission_lines(block), ["pull-requests: write"])
+        self.assertEqual(permission_lines(block), ["contents: read", "pull-requests: write"])
         self.assertNotIn("secrets.", block)
         self.assertNotIn("OPENAI", block)
         self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", block)
@@ -188,7 +189,10 @@ class ReviewWorkflowTests(unittest.TestCase):
         script = run_blocks(steps(self.jobs["codex"])["prepare"])[0]
         self.assertIn('git show "$BASE_SHA:factory/review/$prompt" > "$RUNNER_TEMP/prompt.md"', script)
         self.assertIn('git show "$BASE_SHA:factory/review/schema.json" > "$RUNNER_TEMP/schema.json"', script)
-        self.assertRegex(script, r'"stage:\(design\|plan\)"')
+        self.assertNotIn("LABELS", steps(self.jobs["codex"])["prepare"])
+        self.assertNotIn("labels", self.text)
+        self.assertIn('git diff --name-only -z "$BASE_SHA...$HEAD_SHA"', script)
+        self.assertIn(r'rb"apps/[^/]+/docs/epics/.+"', script)
         self.assertIn("prompt=document.md", script)
         self.assertIn("prompt=code.md", script)
         for value in ("BASE_SHA", "HEAD_SHA", "PR_NUMBER"):
@@ -212,13 +216,37 @@ class ReviewWorkflowTests(unittest.TestCase):
                 self.assertIn(f"model: ${{{{ vars.{model} }}}}", step)
                 self.assertIn("allow-bot-users: mk-factory", step)
 
+    def test_a_hung_model_call_ends_inside_its_step_so_the_report_still_runs(self) -> None:
+        found = steps(self.jobs["codex"])
+        for key in ("first", "fallback"):
+            self.assertIn("timeout-minutes: 12", found[key], key)
+        self.assertRegex(self.jobs["codex"], r"(?m)^    timeout-minutes: 30$")
+
+    def test_the_codex_cli_is_pinned(self) -> None:
+        found = steps(self.jobs["codex"])
+        for key in ("first", "fallback"):
+            self.assertIn('codex-version: "0.172.0"', found[key], key)
+
+    def test_the_answer_step_is_the_last_one_of_the_codex_job(self) -> None:
+        self.assertEqual(list(steps(self.jobs["codex"]))[-1], "answer")
+
     def test_the_fallback_runs_only_after_a_failure_and_when_it_is_configured(self) -> None:
         self.assertIn("if: steps.first.outcome == 'failure' && vars.FACTORY_REVIEW_FALLBACK_MODEL != ''",
                       steps(self.jobs["codex"])["fallback"])
 
     def test_the_job_answers_with_the_fallback_when_it_succeeded_else_the_first(self) -> None:
         block = self.jobs["codex"]
-        self.assertIn("answer: ${{ steps.fallback.outputs.final-message || steps.first.outputs.final-message }}", block)
+        step = steps(block)["answer"]
+        self.assertIn("answer: ${{ steps.answer.outputs.answer }}", block)
+        self.assertIn("FALLBACK: ${{ steps.fallback.outputs.final-message }}", step)
+        self.assertIn("FIRST: ${{ steps.first.outputs.final-message }}", step)
+        script = run_blocks(step)[0]
+        self.assertIn("answer=${FALLBACK:-$FIRST}", script)
+        self.assertIn("wc -c", script)
+        self.assertIn("-le 100000", script)
+        self.assertIn('echo "answer<<$delimiter"', script)
+        self.assertIn("/dev/urandom", script)
+        self.assertIn(">> \"$GITHUB_OUTPUT\"", script)
         self.assertIn("model: ${{ steps.fallback.outcome == 'success' && vars.FACTORY_REVIEW_FALLBACK_MODEL"
                       " || vars.FACTORY_REVIEW_MODEL }}", block)
 
@@ -228,6 +256,7 @@ class ReviewWorkflowTests(unittest.TestCase):
         self.assertIn("python -m factory.review.report --answer-file \"$RUNNER_TEMP/answer.json\" "
                       "--head \"$HEAD_SHA\" --model \"$MODEL\" --out \"$RUNNER_TEMP/comment.md\"", script)
         self.assertIn("|| status=$?", script)
+        self.assertIn('if [ -s "$RUNNER_TEMP/comment.md" ]; then', script)
         self.assertIn('gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md"', script)
         self.assertLess(script.index("gh api"), script.index('exit "$status"'))
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.jobs["review"])

@@ -18,6 +18,7 @@ _MODEL = re.compile(r"[A-Za-z0-9._:-]{1,100}")
 _FINDING_LIMITS = {"file": (0, 300), "title": (1, 200), "detail": (1, 2000)}
 _FINDING_KEYS = {"severity", "line", *_FINDING_LIMITS}
 _SUMMARY_LIMIT = (1, 2000)
+MAX_LINE = 10_000_000
 _TEXT_LIMIT = 4000  # room for what neutralising adds to a 2,000-character text
 _CELL_LIMIT = 300
 _DETAIL_CUTS = (_TEXT_LIMIT, 1000, 400, 150, 0)  # tried in turn until the comment fits
@@ -32,6 +33,10 @@ def _text_problems(where: str, value: object, low: int, high: int) -> list[str]:
         return [f"{where} must be a string"]
     if not low <= len(value) <= high:
         return [f"{where} must be {low} to {high} characters"]
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate written as a JSON escape: the comment could not be written
+        return [f"{where} must be text that UTF-8 can hold"]
     return []
 
 
@@ -43,8 +48,8 @@ def _finding_problems(where: str, finding: object) -> list[str]:
     if "severity" in finding and finding["severity"] not in SEVERITIES:
         problems.append(f"{where}.severity must be one of {SEVERITIES}")
     line = finding.get("line", 0)
-    if not isinstance(line, int) or isinstance(line, bool) or line < 0:
-        problems.append(f"{where}.line must be an integer from 0")
+    if not isinstance(line, int) or isinstance(line, bool) or not 0 <= line <= MAX_LINE:
+        problems.append(f"{where}.line must be an integer from 0 to {MAX_LINE:,}")
     for key, (low, high) in _FINDING_LIMITS.items():
         if key in finding:
             problems += _text_problems(f"{where}.{key}", finding[key], low, high)
@@ -79,10 +84,11 @@ def _quote(text: str) -> str:
     return "\n".join(f"> {line}" if line else ">" for line in text.split("\n"))
 
 
-def _where(finding: Mapping) -> str:
+def _where(finding: Mapping, *, in_table: bool = False) -> str:
     """The file and line in a code span that a backtick in the file name cannot end."""
     file = textsafe.single_line(finding["file"], _CELL_LIMIT) or "(none)"
-    return "`" + f"{file}:{finding['line']}".replace("`", "'") + "`"
+    where = f"{file}:{finding['line']}".replace("`", "'")
+    return "`" + (where.replace("|", ESCAPED_PIPE) if in_table else where) + "`"
 
 
 def _title(finding: Mapping) -> str:
@@ -106,7 +112,7 @@ def _assemble(heading: str, summary: str, table: Sequence[str], details: Sequenc
 
 
 def _table_row(finding: Mapping) -> str:
-    return f"| {finding['severity']} | {_where(finding)} | {_title(finding).replace('|', ESCAPED_PIPE)} |"
+    return f"| {finding['severity']} | {_where(finding, in_table=True)} | {_title(finding).replace('|', ESCAPED_PIPE)} |"
 
 
 def _detail_block(number: int, finding: Mapping, limit: int) -> str:
@@ -114,21 +120,31 @@ def _detail_block(number: int, finding: Mapping, limit: int) -> str:
     return f"{number}. **{finding['severity']}** {_where(finding)} {_title(finding)}\n\n{_quote(detail)}"
 
 
-def _findings_comment(data: Mapping, head: str, model: str) -> str:
+def _findings_comment(data: Mapping, head: str, model: str) -> str | None:
+    """The comment, cut until it fits: details first, then findings from the end; None when nothing fits."""
     outcome = verdict(data)
     findings = data["findings"]
     heading = _heading(model, outcome)
     summary = textsafe.neutralise(data["summary"], _TEXT_LIMIT).strip()
     table = [_table_row(f) for f in findings]
     marker = markers.encode_review({"head": head, "verdict": outcome, "findings": len(findings)})
-    body = ""
     for limit in _DETAIL_CUTS:
         details = [_detail_block(n, f, limit) for n, f in enumerate(findings, 1)] if limit else []
         note = _CUT_NOTE if findings and limit < _TEXT_LIMIT else ""
         body = _assemble(heading, summary, table, details, note, marker)
         if len(body) <= MAX_COMMENT:
-            break
-    return body
+            return body
+    for kept in range(len(findings) - 1, 0, -1):
+        note = f"{len(findings) - kept} findings were left out to fit the comment size limit."
+        body = _assemble(heading, summary, table[:kept], [], note, marker)
+        if len(body) <= MAX_COMMENT:
+            return body
+    return None
+
+
+def _unavailable(head: str, model: str) -> tuple[str, str]:
+    marker = markers.encode_review({"head": head, "verdict": "unavailable", "findings": 0})
+    return _assemble(_heading(model, "unavailable"), _UNAVAILABLE, [], [], "", marker), "unavailable"
 
 
 def comment(answer: str | None, head: str, model: str) -> tuple[str, str]:
@@ -140,9 +156,9 @@ def comment(answer: str | None, head: str, model: str) -> tuple[str, str]:
     except (ValueError, RecursionError):
         data = None
     if data is None or validate(data):
-        marker = markers.encode_review({"head": head, "verdict": "unavailable", "findings": 0})
-        return _assemble(_heading(model, "unavailable"), _UNAVAILABLE, [], [], "", marker), "unavailable"
-    return _findings_comment(data, head, model), verdict(data)
+        return _unavailable(head, model)
+    body = _findings_comment(data, head, model)
+    return (body, verdict(data)) if body is not None else _unavailable(head, model)
 
 
 def _read(path: Path) -> str | None:
@@ -166,8 +182,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--model", required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    body, outcome = comment(_read(args.answer_file), args.head, args.model)
-    args.out.write_text(body, encoding="utf-8", newline="\n")
+    try:
+        body, outcome = comment(_read(args.answer_file), args.head, args.model)
+        encoded = body.encode("utf-8")
+    except Exception:  # whatever went wrong, only a `fail` verdict may fail the job
+        body, outcome = _unavailable(args.head, args.model)
+        encoded = body.encode("utf-8")
+    try:
+        args.out.write_bytes(encoded)
+    except OSError:  # nothing is written, so the workflow posts nothing
+        outcome = "unavailable"
     print(outcome)
     return 1 if outcome == "fail" else 0
 

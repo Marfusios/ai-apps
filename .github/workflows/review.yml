@@ -6,7 +6,7 @@ name: Review
 # code from the base commit, never anything from the pull request.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened]
 
 permissions: {}
 
@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      answer: ${{ steps.fallback.outputs.final-message || steps.first.outputs.final-message }}
+      answer: ${{ steps.answer.outputs.answer }}
       model: ${{ steps.fallback.outcome == 'success' && vars.FACTORY_REVIEW_FALLBACK_MODEL || vars.FACTORY_REVIEW_MODEL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,10 +43,11 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
-          set -eu
-          if printf '%s' "$LABELS" | grep -Eq '"stage:(design|plan)"'; then
+          set -euo pipefail
+          # A change that touches only epic documents is a design or a plan; anything else, or nothing, is code.
+          kind=$(git diff --name-only -z "$BASE_SHA...$HEAD_SHA" | python3 -c 'import re, sys; paths = [p for p in sys.stdin.buffer.read().split(b"\0") if p]; print("document" if paths and all(re.fullmatch(rb"apps/[^/]+/docs/epics/.+", p) for p in paths) else "code")')
+          if [ "$kind" = "document" ]; then
             prompt=document.md
           else
             prompt=code.md
@@ -67,6 +68,7 @@ jobs:
         id: first
         if: steps.prepare.outputs.ready == 'true'
         continue-on-error: true
+        timeout-minutes: 12
         uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1.14
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -75,10 +77,12 @@ jobs:
           permission-profile: ":read-only"
           model: ${{ vars.FACTORY_REVIEW_MODEL }}
           allow-bot-users: mk-factory
+          codex-version: "0.172.0"
       - name: Review with the fallback model
         id: fallback
         if: steps.first.outcome == 'failure' && vars.FACTORY_REVIEW_FALLBACK_MODEL != ''
         continue-on-error: true
+        timeout-minutes: 12
         uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1.14
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -87,6 +91,27 @@ jobs:
           permission-profile: ":read-only"
           model: ${{ vars.FACTORY_REVIEW_FALLBACK_MODEL }}
           allow-bot-users: mk-factory
+          codex-version: "0.172.0"
+      # One environment variable cannot hold much more than this, so a larger answer is passed on as none.
+      - name: Pass on the answer when it is small enough
+        id: answer
+        if: always()
+        env:
+          FALLBACK: ${{ steps.fallback.outputs.final-message }}
+          FIRST: ${{ steps.first.outputs.final-message }}
+        run: |
+          answer=${FALLBACK:-$FIRST}
+          if [ "$(printf '%s' "$answer" | wc -c)" -le 100000 ]; then
+            kept=$answer
+          else
+            kept=
+          fi
+          delimiter="answer-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "answer<<$delimiter"
+            printf '%s\n' "$kept"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
 
   review:
     needs: codex
@@ -94,6 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      contents: read
       pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -120,7 +146,7 @@ jobs:
           printf '%s' "$ANSWER" > "$RUNNER_TEMP/answer.json"
           status=0
           python -m factory.review.report --answer-file "$RUNNER_TEMP/answer.json" --head "$HEAD_SHA" --model "$MODEL" --out "$RUNNER_TEMP/comment.md" || status=$?
-          if [ -f "$RUNNER_TEMP/comment.md" ]; then
+          if [ -s "$RUNNER_TEMP/comment.md" ]; then
             gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md"
           fi
           exit "$status"

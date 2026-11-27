@@ -13,7 +13,7 @@ _REVIEW_MARKER = re.compile(re.escape(REVIEW_PREFIX) + r"(.*?)" + re.escape(_SUF
 
 def _encode(prefix: str, data: Mapping[str, object]) -> str:
     payload = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    payload = "".join(f"\\u{ord(char):04x}" if char in "<>" else char for char in payload)  # a JSON escape
+    payload = payload.replace("<", r"\u003c").replace(">", r"\u003e")
     return prefix + payload + _SUFFIX
 
 
