@@ -20,13 +20,13 @@ keyword search and an AI evidence search.
 ## How it fits together
 
 ```mermaid
-flowchart LR
+flowchart TB
     people["People<br/>trusted maintainers"]
     subgraph gh["GitHub"]
         issues[("Issues, labels,<br/>pull requests, comments")]
         checks["GitHub Actions<br/>repository checks"]
     end
-    subgraph host["The owner's server"]
+    subgraph host["The owner's server: connects out only"]
         dispatcher["Dispatcher<br/>host user 1<br/>holds the GitHub App key"]
         runner["Runner<br/>host user 2<br/>holds the Claude token"]
         agent["Agent container<br/>rootless, no GitHub credential"]
@@ -34,12 +34,12 @@ flowchart LR
     internet["Public internet<br/>Claude, package registries"]
 
     people -- "label, answer, review, merge" --> issues
-    dispatcher -- "polls, pushes a branch,<br/>opens a draft PR, comments<br/>(outbound only)" --> issues
     issues -- "every pull request" --> checks
+    issues <-- "polls, then pushes a branch,<br/>opens a draft PR, comments" --> dispatcher
     dispatcher -- "job files" --> runner
     runner -- "result and git bundle" --> dispatcher
     runner -- "one job at a time" --> agent
-    agent -- "outbound only" --> internet
+    agent --> internet
 ```
 
 Two programs run on the owner's server, under two different users, and exchange plain files in a
