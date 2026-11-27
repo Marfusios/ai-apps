@@ -108,17 +108,18 @@ A marker is the JSON object in the hidden comment that ends each bot comment. `o
   - `encode(data: Mapping[str, object]) -> str`: `<!-- factory:v1 ` + compact JSON with sorted keys, every `<` and `>` written as `<` and `>` + ` -->`, on one line
   - `parse(body: str) -> dict | None`: the object of the last marker in `body`; `None` when there is no marker or it does not hold a JSON object
 
-`neutralise` applies these rules in order, everywhere in the text, code spans included (GitHub's own idea of a code span is not ours to guess):
+`neutralise` applies these rules in order, everywhere in the text, code spans included (GitHub's own idea of a code span is not ours to guess). It is applied exactly once to a text. The table is the rule set as built; the test listing under it shows the first cases and predates the rules that review added:
 
 | # | Rule |
 | --- | --- |
-| 1 | Remove control characters other than newline and tab (carriage returns go). |
-| 2 | `<!--` becomes `&lt;!--`; `<img` in any letter case becomes `&lt;img`. |
-| 3 | `![` becomes `[` (an image becomes a link, so nothing is fetched on view). |
+| 1 | Remove control characters other than newline and tab (carriage returns go). Then an `&` that starts a character reference becomes `&amp;`. |
+| 2 | `<!--` becomes `&lt;!--`; `<img` and `<image` in any letter case lose their `<` the same way. |
+| 3 | Every run of `!` directly before `[` is removed (an image becomes a link, so nothing is fetched on view). |
 | 4 | `@` followed by a letter or digit gets `ZWSP` after it. |
 | 5 | `#` followed by a digit gets `ZWSP` after it; so does `GH-` followed by a digit, in any letter case. |
-| 6 | A closing keyword (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`, any letter case) followed by an optional colon, whitespace and `http://` or `https://` gets `ZWSP` after its first letter. |
-| 7 | A result longer than `limit` is cut to `limit - 15` characters and ends with `\n\n(truncated)`. |
+| 6 | Every closing keyword (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`, any letter case) that stands as a whole word gets `ZWSP` after its first letter, whatever follows it. |
+| 7 | The word `mermaid`, in any letter case, gets `ZWSP` after its first letter (no diagram is rendered). |
+| 8 | A result longer than `limit` is cut so that, with `\n\n(truncated)` appended, it is exactly `limit` characters. A `limit` shorter than that suffix is a `ValueError`. |
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -266,16 +267,17 @@ The spool has two subtrees, and each program writes only in its own, so neither 
   - `read_bounded(path: Path, limit: int) -> bytes`: raises `SpoolError` when the path is a symbolic link, is not a regular file, is missing, or holds more than `limit` bytes. Opens with `O_NOFOLLOW` where the platform has it, checks `fstat` on the open descriptor, and reads at most `limit + 1` bytes
   - `validate_run(data: object) -> list[str]`
   - `class Spool`, built from the root path:
-    - `prepare(side: str) -> None`: `side` is `"dispatcher"` (creates `jobs/`) or `"runner"` (creates `runs/`); directory mode `0o2750` where the platform supports it
+    - `prepare(side: str) -> None`: `"dispatcher"` creates `jobs/` (mode `0o2750`) and `runs/` (mode `0o2770`, so the runner's group can add run directories); `"runner"` creates nothing and raises `SpoolError` unless `runs/` is a real directory. The spool root itself is not writable by the runner, so neither subtree can be replaced
     - `submit(job_id: str, files: Mapping[str, bytes]) -> None`: writes the files into `jobs/.incoming-<job id>/`, then renames it to `jobs/<job id>/`; raises `SpoolError` if the job exists
     - `job_ids() -> list[str]`: names in `jobs/` that match `JOB_ID` fully, sorted
-    - `state(job_id: str) -> str`: `"closed"` if `jobs/<id>/closed.json` exists, else `"finished"` if `runs/<id>/run.json` exists, else `"running"` if `runs/<id>/claimed.json` exists, else `"queued"`
+    - `state(job_id: str) -> str`: `"closed"` if `jobs/<id>/closed.json` exists, else `"finished"` if `runs/<id>/run.json` exists or `runs/<id>` is a link or not a directory, else `"running"` if `runs/<id>/claimed.json` exists, else `"queued"`
     - `request(job_id: str) -> dict`: `jobs/<id>/request.json` as a JSON object
-    - `job_file(job_id: str, name: str) -> Path`, `run_file(job_id: str, name: str) -> Path`: `name` must be a plain file name
+    - `job_file(job_id: str, name: str) -> Path`: `name` must be a plain file name
+    - `read_run_file(job_id: str, name: str, limit: int) -> bytes`: the only way to read a file the runner wrote. Refuses a link or a non-directory at `runs/<id>` (opened with `O_DIRECTORY | O_NOFOLLOW` and read through `dir_fd` where the platform allows) and gives the guarantees of `read_bounded` for the file
     - `close(job_id: str, reason: str, now: datetime) -> None`: writes `jobs/<id>/closed.json` with `reason` and `closed_at`
     - `claim(job_id: str, now: datetime) -> bool`: creates `runs/<id>/` exclusively and writes `claimed.json`; `False` when the directory already exists
     - `finish(job_id: str, run: Mapping[str, object], files: Mapping[str, Path]) -> None`: copies each named file into `runs/<id>/`, then writes `run.json` through a temporary name and `os.replace`
-    - `run_record(job_id: str) -> dict`: `run.json` read with `read_bounded(…, MAX_RECORD_BYTES)` and checked with `validate_run`; raises `SpoolError` carrying the problems
+    - `run_record(job_id: str) -> dict`: `run.json` read with `read_run_file(…, MAX_RECORD_BYTES)` and checked with `validate_run`; its `job_id` must be the directory's; raises `SpoolError` carrying the problems
     - `prune(side: str, now: datetime) -> list[str]`: the dispatcher removes its job directories closed more than `KEEP_DAYS` days ago; the runner removes run directories whose job directory is gone. Returns the removed ids
 
 Every method that takes a job id raises `SpoolError` unless `JOB_ID.fullmatch` accepts it, before touching the file system.
@@ -290,9 +292,9 @@ Every method that takes a job id raises `SpoolError` unless `JOB_ID.fullmatch` a
 | `reason` | one of `RUN_REASONS`, or `null`; required to be a reason when status is `refused` or `crashed` |
 | `started_at`, `finished_at` | strings `YYYY-MM-DDTHH:MM:SSZ` |
 | `duration_seconds` | integer 0 to 1,000,000 |
-| `model` | string of at most 100 characters |
+| `model` | matches `[A-Za-z0-9._:\[\]-]{0,100}` |
 | `turns` | integer 0 to 100,000, or `null` |
-| `resets_at` | integer (Unix seconds), or `null` |
+| `resets_at` | integer from 0 to 4102444800 (Unix seconds), or `null` |
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -605,7 +607,7 @@ def test_decide_is_deterministic(self): ...                                # sam
 - Test: `factory/tests/test_gitops.py`, `factory/tests/test_bundle_check.py`
 
 **Interfaces:**
-- Consumes: `Bot` (Task 5); `Config`, `is_writable` (Task 2); `hygiene` (Task 1); `spool.read_bounded` is not used here: the caller hands over a bundle it already copied (Task 10).
+- Consumes: `Bot` (Task 5); `Config`, `is_writable` (Task 2); `hygiene` (Task 1); the caller hands over a bundle it already copied out of the spool (Task 10).
 - Produces `factory.gitops`:
   - `class GitError(Exception)`: carries the git subcommand and exit status, never the output or the environment
   - `run_git(repo: Path | None, *args: str, token: str | None = None, input: bytes | None = None, timeout: int = 300) -> bytes`: runs `git` with `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` set to the null device, and, when `token` is given, `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=http.extraHeader`, `GIT_CONFIG_VALUE_0=Authorization: Basic <base64 of "x-access-token:<token>">`. `repo` is passed as `--git-dir`. Raises `GitError` on a non-zero exit or a timeout
@@ -751,7 +753,7 @@ def test_title_is_one_neutral_line(self): ...
 - Test: `factory/tests/test_publish.py`
 
 **Interfaces:**
-- Consumes: `Spool`, `read_bounded`, `SpoolError` (Task 3); `GitHub` and `FakeGitHub` (Task 4); `Issue`, `Bot`, `branch_for` (Task 5); `gitops`, `bundle_check` (Task 8); `compose` (Task 9); `hygiene`, `markers` (Task 1); `result.validate`, `result.MAX_RESULT_BYTES`.
+- Consumes: `Spool`, `Spool.read_run_file`, `SpoolError` (Task 3); `GitHub` and `FakeGitHub` (Task 4); `Issue`, `Bot`, `branch_for` (Task 5); `gitops`, `bundle_check` (Task 8); `compose` (Task 9); `hygiene`, `markers` (Task 1); `result.validate`, `result.MAX_RESULT_BYTES`.
 - Produces `factory.publish`:
   - `@dataclass(frozen=True) class Publisher: spool: Spool; github: GitHub; config: Config; bot: Bot; workrepo: Path; scratch: Path; push_url: str; token: Callable[[], str]`
   - `Publisher.publish(job_id: str, issue: Issue, now: datetime) -> str`: returns the outcome it recorded
@@ -767,14 +769,14 @@ Working out the outcome:
 | `run_record` raises `SpoolError` | `crashed` | reason `internal` |
 | run status `usage_limit` | `usage_limit` | `retry_at` is `resets_at` when it lies between `now` and `now` + 8 days, else `now` + `usage_limit_backoff_minutes` |
 | run status `timeout`, `crashed`, `refused` | the same word | with the run's `reason` |
-| `completed`, `result.json` missing, unreadable through `read_bounded`, not JSON, or not valid for the stage | `crashed` | reason `agent_error`; the validation problems are not posted |
+| `completed`, `result.json` missing, unreadable through `spool.read_run_file`, not JSON, or not valid for the stage | `crashed` | reason `agent_error`; the validation problems are not posted |
 | the result's outcome is `failed` | `failed` | commits are not kept |
 | any text in the result has a `hygiene.text_problems` finding | `rejected` | problem `the result's text contains <label>`; nothing of the text is posted |
 | `needs_input` | `needs_input` | a bundle, if present, is checked and pushed when the verdict is good; a bad verdict adds "the work so far was not kept" with its problems |
 | `done`, no bundle or a bad verdict | `rejected` | with the verdict's problems |
 | `done`, good verdict | `done` | |
 
-The bundle is first copied into `scratch` through `read_bounded` (limit `max_bundle_megabytes`), and `bundle_check.check` runs on that private copy, so the runner cannot swap the file between the check and the push.
+The bundle is first copied into `scratch` through `spool.read_run_file` (limit `max_bundle_megabytes`), and `bundle_check.check` runs on that private copy, so the runner cannot swap the file between the check and the push.
 
 Writes, in order, each skipped when its effect already exists:
 
@@ -884,7 +886,7 @@ def test_job_views_closes_a_job_with_an_unreadable_request(self): ...
 - Test: `factory/tests/test_pod.py`, `factory/tests/test_runner.py`
 
 **Interfaces:**
-- Consumes: `Spool`, `read_bounded`, `RUN_REASONS` (Task 3); `jobs.validate_request` (Task 6); `Config` (Task 2); `app_config.load`; `image.build.harness_digest` and `image.build.IMAGE_LABEL` (Task 13 — until it lands, the runner takes the digest function as a parameter, default `None` meaning "do not check").
+- Consumes: `Spool`, `read_bounded`, `RUN_REASONS` (Task 3; `Spool.prepare("runner")` only checks that the dispatcher has created `runs/`); `jobs.validate_request` (Task 6); `Config` (Task 2); `app_config.load`; `image.build.harness_digest` and `image.build.IMAGE_LABEL` (Task 13 — until it lands, the runner takes the digest function as a parameter, default `None` meaning "do not check").
 - Produces `factory.pod`:
   - `@dataclass(frozen=True) class Mounts: checkout: Path; job: Path; out: Path`
   - `CONTAINER_ENV: tuple[str, ...]`: the names the agent container receives
