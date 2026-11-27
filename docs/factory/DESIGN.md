@@ -423,8 +423,8 @@ described only by an image name, environment values, a readiness command, and a 
 limit: no host mounts, no extra container flags, and it joins the same confined pod.
 And images may come only from registries listed in the factory's own configuration.
 
-For AirCase, the gate in this version is its offline checks (type check and unit
-tests; it has no linter or formatter yet). Tests that need its database and search index
+For AirCase, the gate in this version is its offline checks (type check, lint and unit
+tests; it has no formatter yet). Tests that need its database and search index
 join the gate once service containers are built.
 
 **Skills** (`.claude/skills/`)
