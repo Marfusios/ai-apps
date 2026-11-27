@@ -24,19 +24,19 @@ from factory.github_auth import AuthError, InstallationToken
 from factory.gitops import GitError
 from factory.publish import Publisher
 from factory.snapshot import Bot, Issue, branch_for
-from factory.spool import TIME_FORMAT, Spool, SpoolError, new_job_id
+from factory.spool import JOB_ID, TIME_FORMAT, Spool, SpoolError, new_job_id
 
 log = logging.getLogger("factory.dispatcher")
 
 REPOSITORY = re.compile(r"(?!\.+/)[A-Za-z0-9._-]+/(?!\.+$)[A-Za-z0-9._-]+")
 LOGIN = re.compile(r"[A-Za-z0-9-]+(?:\[bot\])?")
 DIGITS = re.compile(r"[0-9]+")  # explicit [0-9]: \d would accept other scripts' digits
-WORK_BRANCH_ISSUE = re.compile(r"factory/fix-([0-9]{1,9})")
 STAGE = "fix_issue"
 SETTLE_WINDOW = timedelta(minutes=10)  # how long a published job still holds its issue while GitHub's listing lags
 UNREADABLE_REQUEST = "unreadable request"
 FIRST_RETRY_SECONDS = 60
 LONGEST_RETRY_SECONDS = 30 * 60
+SHORTEST_RATE_LIMIT_SLEEP_SECONDS = 60  # a reset time that is not ahead must not make the loop spin
 LONGEST_SLEEP_SECONDS = 3600
 SLEEP_SLICE_SECONDS = 1.0
 PRUNE_EVERY = timedelta(hours=1)
@@ -107,11 +107,13 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
                     Path(mirror_dir), Path(state_dir))
 
 
-def _issue_of(request: object) -> int | None:
-    """The issue a request is for, read from its work branch; None when the request does not name one."""
+def _issue_of(job_id: str, request: object) -> int | None:
+    """The issue a job is for, named by its id; None unless the request's branch is that issue's work branch."""
+    if JOB_ID.fullmatch(job_id) is None:
+        return None
+    number = int(job_id.split("-")[2])
     branch = request.get("branch") if isinstance(request, dict) else None
-    found = WORK_BRANCH_ISSUE.fullmatch(branch) if isinstance(branch, str) else None
-    return int(found.group(1)) if found else None
+    return number if branch == branch_for(number) else None
 
 
 def _closed_recently(spool: Spool, job_id: str, now: datetime) -> bool:
@@ -122,7 +124,7 @@ def _closed_recently(spool: Spool, job_id: str, now: datetime) -> bool:
         return False
     reason = record.get("reason") if record else None
     stamp = record.get("closed_at") if record else None
-    if reason not in compose.OUTCOME_WORDS or not isinstance(stamp, str):
+    if not (isinstance(reason, str) and reason in compose.OUTCOME_WORDS and isinstance(stamp, str)):
         return False
     try:
         closed_at = datetime.strptime(stamp, TIME_FORMAT).replace(tzinfo=timezone.utc)
@@ -141,7 +143,7 @@ def job_views(spool: Spool, now: datetime, *, close_unreadable: bool = True) -> 
     for job_id in spool.job_ids():
         state = spool.state(job_id)
         try:
-            issue = _issue_of(spool.request(job_id))
+            issue = _issue_of(job_id, spool.request(job_id))
         except SpoolError:
             issue = None
         if state == "closed":
@@ -195,9 +197,8 @@ class Dispatcher:
         self._git = git
         self._clock = clock
         self._publish_failures: dict[str, tuple[int, datetime]] = {}  # job id -> failed attempts, next attempt
-        started = clock()
-        self._last_prune = started
-        self._last_gc = started
+        self._last_prune = clock()
+        self._last_gc: datetime | None = None  # none yet: the first idle housekeeping collects
 
     def prepare(self) -> None:
         self._spool.prepare("dispatcher")
@@ -211,9 +212,14 @@ class Dispatcher:
         if dry_run:
             return actions
         issues = {issue.number: issue for issue in current.issues}
+        waiting = {view.job_id for view in views if view.state != "closed"}
+        self._publish_failures = {job: failure for job, failure in self._publish_failures.items() if job in waiting}
+        failed_issues: set[int] = set()  # what follows a failed action for an issue may depend on it
         for action in actions:
             if isinstance(action, PublishRun):
                 self._publish(action, issues[action.issue], now)  # a failure delays this job only
+                continue
+            if getattr(action, "issue", None) in failed_issues:
                 continue
             try:
                 self._apply(action, issues, now)
@@ -221,7 +227,8 @@ class Dispatcher:
                 raise
             except RECOVERABLE as error:
                 log.error("%s failed: %s", action.describe(), type(error).__name__)
-                break
+                if hasattr(action, "issue"):
+                    failed_issues.add(action.issue)
         return actions
 
     def run(self, stop: threading.Event) -> None:
@@ -232,7 +239,8 @@ class Dispatcher:
             try:
                 self.tick()
             except RateLimited as error:
-                delay = min(max(error.retry_at - self._clock().timestamp(), 0.0), float(LONGEST_SLEEP_SECONDS))
+                wait = error.retry_at - self._clock().timestamp()
+                delay = float(min(max(wait, SHORTEST_RATE_LIMIT_SLEEP_SECONDS), LONGEST_SLEEP_SECONDS))
                 log.error("GitHub's rate limit is reached; waiting %d seconds", delay)
             except RECOVERABLE as error:
                 log.error("the poll failed: %s", type(error).__name__)
@@ -240,28 +248,32 @@ class Dispatcher:
             _sleep(stop, delay)
 
     def housekeeping(self) -> None:
-        """Prune the spool about hourly and collect garbage in the git repositories about daily."""
+        """Prune the spool about hourly and collect garbage in the git repositories about daily; never raises."""
         now = self._clock()
         if now - self._last_prune >= PRUNE_EVERY:
             self._last_prune = now
             try:
                 self._spool.prune("dispatcher", now)
-            except SpoolError as error:
+            except RECOVERABLE as error:
                 log.error("pruning the spool failed: %s", type(error).__name__)
-        if now - self._last_gc >= GC_EVERY and self._is_idle():
-            self._last_gc = now
-            for repository in (self._settings.mirror, self._settings.workrepo):
-                try:
-                    self._git.run_git(repository, "gc", "--quiet")
-                except (GitError, OSError) as error:
-                    log.error("git maintenance failed: %s", type(error).__name__)
+        if self._last_gc is None or now - self._last_gc >= GC_EVERY:
+            try:
+                if self._is_idle():
+                    self._last_gc = now
+                    self._collect_garbage()
+            except RECOVERABLE as error:
+                log.error("git maintenance failed: %s", type(error).__name__)
+
+    def _collect_garbage(self) -> None:
+        for repository in (self._settings.mirror, self._settings.workrepo):
+            try:
+                self._git.run_git(repository, "gc", "--quiet")
+            except (GitError, OSError) as error:
+                log.error("git maintenance failed: %s", type(error).__name__)
 
     def _is_idle(self) -> bool:
         """True when no job is waiting, running or waiting to be published."""
-        try:
-            return all(self._spool.state(job_id) == "closed" for job_id in self._spool.job_ids())
-        except SpoolError:
-            return False
+        return all(self._spool.state(job_id) == "closed" for job_id in self._spool.job_ids())
 
     def _publish(self, action: PublishRun, issue: Issue, now: datetime) -> None:
         """Publish a finished run unless its retry time has not come. A failure delays the next attempt, nothing more."""

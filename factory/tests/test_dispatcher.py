@@ -20,7 +20,7 @@ from factory.dispatcher import Dispatcher, Settings, SettingsError, job_views, s
 from factory.github_api import GitHubError, RateLimited
 from factory.publish import Publisher
 from factory.snapshot import Bot
-from factory.spool import Spool, new_job_id
+from factory.spool import Spool, SpoolError, new_job_id
 from factory.tests.fakes import FakeGitHub
 from factory.tests.gitrepo import Repo
 
@@ -136,6 +136,14 @@ class JobViewsTest(unittest.TestCase):
                 self.assertEqual(self.spool.state(job), "closed")
                 self.assertEqual(self.spool.read_job_json(job, "closed.json")["reason"], "unreadable request")
 
+    def test_a_request_for_another_issue_than_its_job_is_unreadable(self):
+        job = new_job_id("fix_issue", 12, NOW)
+        record = jobs.request_file(job_id=job, stage="fix_issue", app="demo", branch="factory/fix-13",
+                                   base_sha="a" * 40, repository=REPOSITORY, config=CONFIG, bot=BOT)
+        self.spool.submit(job, {"request.json": json.dumps(record).encode()})
+        self.assertEqual(job_views(self.spool, NOW), [])
+        self.assertEqual(self.spool.read_job_json(job, "closed.json")["reason"], "unreadable request")
+
     def test_a_dry_view_does_not_close_the_job(self):
         job = self.submit(request=b"not json")
         self.assertEqual(job_views(self.spool, NOW, close_unreadable=False), [])
@@ -155,6 +163,16 @@ class JobViewsTest(unittest.TestCase):
         job = self.submit(12)
         self.spool.close(job, "the issue is closed or no longer labelled", NOW - timedelta(minutes=2))
         self.assertEqual(job_views(self.spool, NOW), [])
+
+    def test_a_closed_record_with_an_odd_reason_or_time_gives_no_view(self):
+        stamp = (NOW - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for record in ({"reason": ["done"], "closed_at": stamp}, {"reason": {"a": 1}, "closed_at": stamp},
+                       {"reason": "done", "closed_at": "yesterday"}, {"reason": "done", "closed_at": 5},
+                       {"reason": "done"}):
+            with self.subTest(record=record):
+                job = self.submit(12)
+                self.spool.job_file(job, "closed.json").write_text(json.dumps(record))
+                self.assertEqual(job_views(self.spool, NOW), [])
 
     def test_a_closed_record_that_cannot_be_read_gives_no_view(self):
         job = self.submit(12)
@@ -198,12 +216,13 @@ class DispatcherTestCase(unittest.TestCase):
         answers[key(f"{repo}/issues", {"state": "open", "labels": "factory:halt", "per_page": "1"})] = []
         answers[key(f"{repo}/contents/apps", {})] = [{"name": "demo", "type": "dir"}]
 
-    def build(self, spool: Spool) -> Dispatcher:
+    def build(self, spool: Spool, settings: Settings | None = None) -> Dispatcher:
+        settings = settings or self.settings
         publisher = Publisher(
-            spool=spool, github=self.github, config=CONFIG, bot=BOT, workrepo=self.settings.workrepo,
-            scratch=self.settings.scratch, push_url=str(self.tmp / "remote.git"), token=lambda: TOKEN,
+            spool=spool, github=self.github, config=CONFIG, bot=BOT, workrepo=settings.workrepo,
+            scratch=settings.scratch, push_url=str(self.tmp / "remote.git"), token=lambda: TOKEN,
         )
-        return Dispatcher(self.settings, CONFIG, self.github, spool, publisher, token=lambda: TOKEN, git=self.git,
+        return Dispatcher(settings, CONFIG, self.github, spool, publisher, token=lambda: TOKEN, git=self.git,
                           clock=lambda: self.now)
 
     def runner_finishes(self, job: str, status: str = "timeout") -> None:
@@ -222,6 +241,17 @@ class DispatcherTestCase(unittest.TestCase):
 
     def calls_to(self, method: str, path: str) -> list:
         return [body for called_method, called, body in self.github.calls if (called_method, called) == (method, path)]
+
+    @contextlib.contextmanager
+    def quiet_logging(self):
+        """`main` configures logging on the root logger; leave it as it was."""
+        root = logging.getLogger()
+        handlers, level = list(root.handlers), root.level
+        try:
+            yield
+        finally:
+            root.handlers[:] = handlers
+            root.setLevel(level)
 
     def tree(self) -> set[Path]:
         return set(self.tmp.rglob("*"))
@@ -281,6 +311,37 @@ class TickTest(DispatcherTestCase):
         (line,) = [record.getMessage() for record in logged.records]
         self.assertEqual(line, f"{SetStatus(12, 'status:building', ()).describe()} failed: GitHubError")
 
+    def decided(self, *actions):
+        return mock.patch.object(dispatcher_module, "decide", return_value=list(actions))
+
+    def test_a_failed_action_skips_the_rest_of_its_issue_only(self):
+        self.dispatcher.tick()
+        job = self.only_job()
+        self.runner_finishes(job)
+        self.github.fail.add(("POST", f"{self.github.repo}/issues/3/labels"))
+        with self.decided(SetStatus(3, "status:building", ()), StartJob(3, "demo"), PublishRun(job, 12)), \
+                mock.patch.object(Dispatcher, "_start_job") as start, self.assertLogs("factory.dispatcher", "ERROR"):
+            self.dispatcher.tick()
+        start.assert_not_called()
+        self.assertEqual(self.spool.state(job), "closed")
+
+    def test_a_failed_notice_skips_that_issues_status_and_not_another_issues(self):
+        self.github.fail.add(("POST", self.comments))
+        with self.decided(PostNotice(12, "needs-app"), SetStatus(12, "status:needs-human", ()),
+                          SetStatus(3, "status:queued", ())), self.assertLogs("factory.dispatcher", "ERROR"):
+            self.dispatcher.tick()
+        self.assertEqual(self.calls_to("POST", self.labels), [])
+        self.assertEqual(self.calls_to("POST", f"{self.github.repo}/issues/3/labels"), [{"labels": ["status:queued"]}])
+
+    def test_a_failed_close_skips_nothing_else(self):
+        self.dispatcher.tick()
+        job = self.only_job()
+        with self.decided(CloseJob(job, "gone"), SetStatus(12, "status:queued", ())), \
+                mock.patch.object(self.spool, "close", side_effect=SpoolError("no")), \
+                self.assertLogs("factory.dispatcher", "ERROR"):
+            self.dispatcher.tick()
+        self.assertEqual(self.calls_to("POST", self.labels)[-1], {"labels": ["status:queued"]})
+
     def test_a_rate_limit_while_applying_reaches_the_loop(self):
         with mock.patch.object(Publisher, "set_status", side_effect=RateLimited(429, "limit", 0.0)):
             with self.assertRaises(RateLimited):
@@ -304,15 +365,21 @@ class TickTest(DispatcherTestCase):
 
 
 class DryRunTest(DispatcherTestCase):
+    def fresh_dispatcher(self) -> tuple[Dispatcher, Path]:
+        """A dispatcher whose spool, mirror and state directories do not exist."""
+        root = self.tmp / "fresh"
+        settings = settings_from_env(valid_env(root))
+        return self.build(Spool(settings.spool_dir), settings), root
+
     def test_dry_run_writes_nothing(self):
         before = self.tree()
-        bare = self.build(Spool(self.tmp / "no-spool"))
+        bare, root = self.fresh_dispatcher()
         actions = bare.tick(dry_run=True)
         self.assertIn(StartJob(12, "demo"), actions)
         self.assertEqual(self.github.calls, [])
         self.assertEqual(self.git.mirror_requests, [])
         self.assertEqual(self.tree(), before)
-        self.assertEqual(self.spool.job_ids(), [])
+        self.assertFalse(root.exists())
 
     def test_dry_run_leaves_a_job_with_an_unreadable_request_open(self):
         job = new_job_id("fix_issue", 12, NOW)
@@ -321,19 +388,47 @@ class DryRunTest(DispatcherTestCase):
         self.assertEqual(self.spool.state(job), "queued")
 
     def test_main_prints_the_actions_of_a_dry_run_and_creates_nothing(self):
-        bare = self.build(Spool(self.tmp / "no-spool"))
+        bare, root = self.fresh_dispatcher()
         before = self.tree()
-        root_handlers = list(logging.getLogger().handlers)
-        self.addCleanup(lambda: logging.getLogger().handlers.__setitem__(slice(None), root_handlers))
         out = io.StringIO()
-        with mock.patch.dict(os.environ, valid_env(self.tmp)), \
+        with mock.patch.dict(os.environ, valid_env(root)), \
                 mock.patch.object(dispatcher_module, "build_dispatcher", return_value=bare), \
-                contextlib.redirect_stdout(out):
+                contextlib.redirect_stdout(out), self.quiet_logging():
             status = dispatcher_module.main(["--dry-run"])
         self.assertEqual(status, 0)
         self.assertIn(StartJob(12, "demo").describe(), out.getvalue().splitlines())
         self.assertEqual(self.github.calls, [])
         self.assertEqual(self.tree(), before)
+        self.assertFalse(root.exists())
+
+    def test_building_the_dispatcher_creates_nothing_and_makes_no_request(self):
+        root = self.tmp / "fresh"
+        settings = settings_from_env(valid_env(root))
+        with mock.patch.object(dispatcher_module, "GitHub") as github_class, \
+                mock.patch.object(dispatcher_module, "InstallationToken") as token_class:
+            dispatcher_module.build_dispatcher(settings, CONFIG)
+        tokens = token_class.return_value
+        github_class.assert_called_once_with(REPOSITORY, tokens.get, refresh=tokens.refresh)
+        self.assertEqual(github_class.return_value.mock_calls, [])
+        self.assertEqual(tokens.mock_calls, [])
+        self.assertFalse(root.exists())
+
+
+class OnceTest(DispatcherTestCase):
+    def run_main(self, *argv: str) -> int:
+        with mock.patch.dict(os.environ, valid_env(self.tmp)), \
+                mock.patch.object(dispatcher_module, "build_dispatcher", return_value=self.dispatcher), \
+                self.quiet_logging():
+            return dispatcher_module.main(list(argv))
+
+    def test_once_returns_zero_after_a_clean_tick(self):
+        self.assertEqual(self.run_main("--once"), 0)
+        self.assertEqual(len(self.spool.job_ids()), 1)
+
+    def test_once_returns_one_when_the_tick_raised(self):
+        self.github.fail.add(f"{self.github.repo}/issues")
+        with self.assertLogs("factory.dispatcher", "ERROR"):
+            self.assertEqual(self.run_main("--once"), 1)
 
 
 class PublishTest(DispatcherTestCase):
@@ -347,10 +442,14 @@ class PublishTest(DispatcherTestCase):
         self.assertEqual(self.spool.read_job_json(job, "closed.json")["reason"], "timeout")
         self.assertEqual(len(self.calls_to("POST", self.comments)), 1)
 
-    def test_a_publish_that_fails_is_retried_only_after_its_delay(self):
+    def finished_job(self) -> str:
         self.dispatcher.tick()
         job = self.only_job()
         self.runner_finishes(job)
+        return job
+
+    def test_a_publish_that_fails_is_retried_only_after_its_delay(self):
+        job = self.finished_job()
         self.github.fail_once.add(("POST", self.comments))
         with self.assertLogs("factory.dispatcher", "ERROR") as logged:
             self.dispatcher.tick()
@@ -368,19 +467,41 @@ class PublishTest(DispatcherTestCase):
         self.assertEqual(self.spool.state(job), "closed")
 
     def test_the_delay_doubles_with_each_failure_up_to_half_an_hour(self):
-        self.dispatcher.tick()
-        job = self.only_job()
-        self.runner_finishes(job)
-        self.github.fail.add(("POST", self.comments))
-        delays = []
-        with self.assertLogs("factory.dispatcher", "ERROR"):
-            for _ in range(8):
+        job = self.finished_job()
+        attempt_at = NOW
+        with mock.patch.object(Publisher, "publish", side_effect=GitHubError(502, "down")) as publish, \
+                self.assertLogs("factory.dispatcher", "ERROR"):
+            for attempts, delay in enumerate([60, 120, 240, 480, 960, 1800, 1800, 1800], start=1):
+                self.now = attempt_at
                 self.dispatcher.tick()
-                _, next_attempt = self.dispatcher._publish_failures[job]
-                delays.append(int((next_attempt - self.now).total_seconds()))
-                self.now = next_attempt
-        self.assertEqual(delays, [60, 120, 240, 480, 960, 1800, 1800, 1800])
+                self.assertEqual(publish.call_count, attempts)
+                self.now = attempt_at + timedelta(seconds=delay - 1)
+                self.dispatcher.tick()
+                self.assertEqual(publish.call_count, attempts)
+                attempt_at += timedelta(seconds=delay)
         self.assertEqual(self.spool.state(job), "finished")
+
+    def test_a_rate_limit_in_a_publication_reaches_the_loop_and_is_not_counted(self):
+        self.finished_job()
+        answers = [RateLimited(429, "limit", 0.0), "timeout"]
+        with mock.patch.object(Publisher, "publish", side_effect=answers) as publish:
+            with self.assertRaises(RateLimited):
+                self.dispatcher.tick()
+            self.dispatcher.tick()  # at the same time: no delay was set
+        self.assertEqual(publish.call_count, 2)
+
+    def test_the_delay_of_a_job_that_is_gone_is_forgotten(self):
+        job = self.finished_job()
+        with mock.patch.object(Publisher, "publish", side_effect=GitHubError(502, "down")) as publish, \
+                self.assertLogs("factory.dispatcher", "ERROR"):
+            self.dispatcher.tick()
+            self.spool.close(job, "discarded", NOW)
+            self.now = NOW + timedelta(seconds=10)
+            self.dispatcher.tick()  # the job has no view now
+            self.spool.job_file(job, "closed.json").unlink()
+            self.now = NOW + timedelta(seconds=20)
+            self.dispatcher.tick()
+        self.assertEqual(publish.call_count, 2)
 
     def test_a_failed_publish_does_not_stop_the_actions_that_follow(self):
         self.dispatcher.tick()
@@ -426,6 +547,11 @@ class LoopTest(DispatcherTestCase):
         slept = self.run_once_with(RateLimited(429, "limit", NOW.timestamp() + 120))
         self.assertEqual(slept, [120.0])
 
+    def test_a_rate_limit_that_is_not_ahead_still_sleeps_a_minute(self):
+        for retry_at in (NOW.timestamp(), NOW.timestamp() - 500, NOW.timestamp() + 5):
+            with self.subTest(retry_at=retry_at):
+                self.assertEqual(self.run_once_with(RateLimited(429, "limit", retry_at)), [60.0])
+
     def test_a_rate_limit_sleeps_at_most_an_hour(self):
         slept = self.run_once_with(RateLimited(429, "limit", NOW.timestamp() + 86_400))
         self.assertEqual(slept, [3600.0])
@@ -441,26 +567,41 @@ class LoopTest(DispatcherTestCase):
 
 
 class HousekeepingTest(DispatcherTestCase):
-    def test_git_is_collected_daily_when_no_job_is_pending(self):
+    def collected(self) -> list[Path | None]:
+        return [repo for repo, args in self.git.maintenance if args == ("gc", "--quiet")]
+
+    def test_git_is_collected_on_the_first_idle_housekeeping_and_then_daily(self):
+        self.dispatcher.housekeeping()
+        self.assertEqual(self.collected(), [self.settings.mirror, self.settings.workrepo])
+        self.now = NOW + timedelta(hours=23)
+        self.dispatcher.housekeeping()
+        self.assertEqual(len(self.collected()), 2)
         self.now = NOW + timedelta(hours=25)
         self.dispatcher.housekeeping()
-        self.assertEqual(self.git.maintenance, [
-            (self.settings.mirror, ("gc", "--quiet")), (self.settings.workrepo, ("gc", "--quiet"))])
-        self.dispatcher.housekeeping()
-        self.assertEqual(len(self.git.maintenance), 2)
+        self.assertEqual(len(self.collected()), 4)
 
     def test_git_is_not_collected_while_a_job_is_waiting(self):
         self.dispatcher.tick()
-        self.now = NOW + timedelta(hours=25)
         self.dispatcher.housekeeping()
         self.assertEqual(self.git.maintenance, [])
+        self.spool.close(self.only_job(), "done", NOW)
+        self.dispatcher.housekeeping()
+        self.assertEqual(len(self.collected()), 2)
 
     def test_a_failed_collection_is_logged_and_ignored(self):
-        self.now = NOW + timedelta(hours=25)
         with mock.patch.object(self.git, "run_git", side_effect=gitops.GitError("gc", 1)), \
                 self.assertLogs("factory.dispatcher", "ERROR") as logged:
             self.dispatcher.housekeeping()
         self.assertEqual(len(logged.records), 2)
+
+    def test_an_operating_system_error_in_housekeeping_is_logged_and_ignored(self):
+        self.now = NOW + timedelta(hours=2)
+        with mock.patch.object(self.spool, "job_ids", side_effect=OSError("disk")), \
+                mock.patch.object(self.spool, "prune", side_effect=OSError("disk")), \
+                self.assertLogs("factory.dispatcher", "ERROR") as logged:
+            self.dispatcher.housekeeping()
+        self.assertEqual([record.getMessage() for record in logged.records],
+                         ["pruning the spool failed: OSError", "git maintenance failed: OSError"])
 
     def test_the_spool_is_pruned_hourly(self):
         self.now = NOW + timedelta(minutes=61)
