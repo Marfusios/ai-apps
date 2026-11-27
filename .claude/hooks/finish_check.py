@@ -174,12 +174,6 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run, *,
     return problems
 
 
-def release(process: subprocess.Popen[bytes], reader: threading.Thread) -> None:
-    """Close the pipe unless the reader is still blocked in it, in which case it is abandoned."""
-    if not reader.is_alive():
-        process.stdout.close()
-
-
 def run_command(argv: Sequence[str], cwd: Path, timeout_seconds: int) -> tuple[int, str]:
     """Run a command and return its exit code and combined output; nothing here waits without a bound."""
     try:
@@ -196,9 +190,11 @@ def run_command(argv: Sequence[str], cwd: Path, timeout_seconds: int) -> tuple[i
                 chunks.append(chunk)
         except OSError:
             pass
+        finally:
+            process.stdout.close()  # whichever thread is left to do it: an abandoned reader closes the pipe on its own
 
     # An unbuffered pipe read by our own thread has no lock that close() could wait on, so a reader
-    # stuck behind a surviving grandchild can simply be abandoned.
+    # stuck behind a surviving grandchild can simply be abandoned: it closes the pipe when the grandchild lets go.
     reader = threading.Thread(target=read_output, daemon=True)
     reader.start()
     try:
@@ -212,11 +208,9 @@ def run_command(argv: Sequence[str], cwd: Path, timeout_seconds: int) -> tuple[i
         with contextlib.suppress(subprocess.TimeoutExpired):
             process.wait(timeout=KILL_GRACE)
         reader.join(KILL_GRACE)
-        release(process, reader)
         collected = b"".join(chunks).decode("utf-8", errors="replace")
         return 124, f"timed out after {timeout_seconds} seconds" + (f"\n{tail(collected)}" if collected.strip() else "")
     reader.join(KILL_GRACE)
-    release(process, reader)
     return process.returncode, b"".join(chunks).decode("utf-8", errors="replace")
 
 

@@ -22,7 +22,13 @@ CASES = [
     ("F&#x69;xes https://x", "F&amp;#x69;xes https://x"),
     ("a & b &c d", "a & b &c d"),  # not a character reference
     ("<IMAGE src=x> <image>", f"<{Z}IMAGE src=x> <{Z}image>"),
-    ("Fixes <https://github.com/o/r/issues/5>", f"F{Z}ixes <{Z}https://github.com/{Z}o/r/issues/5>"),
+    ("Fixes <https://github.com/o/r/issues/5>", f"F{Z}ixes https://github.com/{Z}o/r/issues/5"),
+    ("see <https://example.com/docs> and <http://example.org/a?b=c#d>",
+     "see https://example.com/docs and http://example.org/a?b=c#d"),
+    ("<HTTPS://example.com/x>", "HTTPS://example.com/x"),
+    ("<https://user@example.com>", f"https://user@{Z}example.com"),  # the later rules still apply to the URL
+    ("<ftp://example.com> <mailto:a@b.c> <https://> <https://a b>",
+     f"<{Z}ftp://example.com> <{Z}mailto:a@{Z}b.c> <{Z}https://> <{Z}https://a b>"),  # not an autolink
     ("**Fixes** https://github.com/o/r/issues/5", f"**F{Z}ixes** https://github.com/{Z}o/r/issues/5"),
     ("Fixes [it](https://github.com/o/r/issues/5)", f"F{Z}ixes [it](https://github.com/{Z}o/r/issues/5)"),
     ("fix the bug", f"f{Z}ix the bug"),

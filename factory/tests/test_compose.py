@@ -135,10 +135,23 @@ class RunCommentTests(unittest.TestCase):
                     assert_contained(self, comment(outcome="failed", **build(text)), prefix)
 
     def test_a_list_item_starting_with_a_bracket_cannot_become_a_checkbox(self) -> None:
-        body = comment(questions=["[x] done?"], problems=["[ ] a"])
-        self.assertIn(f"1. {textsafe.ZWSP}[", body)
-        self.assertIn(f"- {textsafe.ZWSP}[", body)
-        self.assertNotIn("1. [", body)
+        body = comment(questions=["[x] done?"], problems=["[ ] a"], follow_ups=[{"title": "[x] t", "reason": ""}])
+        self.assertIn(f"1. [{textsafe.ZWSP}x] done?", body)
+        self.assertIn(f"- [{textsafe.ZWSP} ] a", body)
+        self.assertIsNone(re.search(r"(?m)^(?:[0-9]+[.)]|[-*+]) +\[[ xX]\]", body))
+
+    def test_a_short_summary_is_never_replaced_by_a_longer_line(self) -> None:
+        with mock.patch.object(compose, "MAX_COMMENT", 100):
+            body = comment(summary="short")
+        self.assertIn("> short", body)
+        self.assertNotIn(compose.OMITTED_SUMMARY, body)
+
+    def test_the_failure_reason_cut_never_makes_its_section_longer(self) -> None:
+        reason = "f" * (compose.CUT_FLOOR + 5)
+        with mock.patch.object(compose, "MAX_COMMENT", 100):
+            body = comment(outcome="failed", failure_reason=reason)
+        self.assertIn("> " + reason, body)
+        self.assertNotIn("(truncated)", body)
 
     def test_a_short_summary_survives_an_overflow_elsewhere(self) -> None:
         body = comment(summary="short", questions=["q" * 2000] * 20, failure_reason="f" * 4000,
@@ -166,11 +179,10 @@ class RunCommentTests(unittest.TestCase):
 
     def test_an_overflow_that_needs_many_cuts_is_composed_in_one_pass(self) -> None:
         started = time.perf_counter()
-        body = comment(summary="s" * 491, questions=["q " * 1000] * 20,
-                       follow_ups=[{"title": "T", "reason": "r\n" * 500}] * 10)
+        body = comment(summary="a\n" * 1582, questions=["q " * 1000] * 16,
+                       follow_ups=[{"title": "t" * 120, "reason": "r\n" * 499 + "r"}] * 10)
         self.assertLess(time.perf_counter() - started, 1.0)
         self.assertLessEqual(len(body), compose.MAX_COMMENT)
-        self.assertIn("> " + "s" * 491, body)
         self.assertEqual(markers.parse(body)["outcome"], "needs_input")
         self.assertTrue(body.endswith("-->"))
 

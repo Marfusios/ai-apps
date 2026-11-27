@@ -1,6 +1,7 @@
 """Patterns for credentials, personal paths and private addresses, shared by the repository checker and the dispatcher."""
 
 import ipaddress
+import itertools
 import re
 import unicodedata
 from pathlib import PurePath
@@ -11,12 +12,13 @@ PRIVATE_NETWORKS = tuple(
 )
 # A full stop after the address ends a sentence; one followed by a digit makes a longer dotted number.
 IP_ADDRESS = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\d|\.\d)")
+PERSONAL_PATH_LABEL = "personal filesystem path"
 PATTERNS = (
     ("possible provider key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
     ("possible GitHub token", re.compile(r"\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}\b")),
     ("possible Hugging Face token", re.compile(r"\bhf_[A-Za-z0-9]{20,}\b")),
     ("private key", re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")),
-    ("personal filesystem path", re.compile(r"/(?:home|Users)/[\w.-]+/")),
+    (PERSONAL_PATH_LABEL, re.compile(r"/(?:home|Users)/[\w.-]+/")),
 )
 PRIVATE_ADDRESS_LABEL = "private network address"
 
@@ -64,14 +66,15 @@ def line_problems(line: str) -> list[str]:
     return problems
 
 
-def text_problems(text: str) -> list[tuple[int, str]]:
-    """The line number (from 1) and label of every problem in every line of a text.
+def text_problems(text: str, limit: int | None = None) -> list[tuple[int, str]]:
+    """The line number (from 1) and label of every problem in every line of a text, or of the first `limit`.
 
     Lines end only at a newline: `str.splitlines` would also end one at control characters that the bot removes
     before posting, which joins what they separated.
     """
-    return [
+    found = (
         (number, label)
         for number, line in enumerate(text.split("\n"), 1)
         for label in line_problems(line)
-    ]
+    )
+    return list(itertools.islice(found, limit))

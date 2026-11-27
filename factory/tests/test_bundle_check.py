@@ -83,6 +83,8 @@ REJECTED = [  # (name, commits, fragment one problem must contain, options for t
      "apps/demo/k.bin: line 1: possible provider key", {}, {}),
     ("credential among NUL bytes", [{"apps/demo/k.bin": b"\x00\x01" + KEY.encode() + b"\x00"}],
      "apps/demo/k.bin: line 1: possible provider key", {}, {}),
+    ("credential split by a control character the bot removes", [{"apps/demo/k.txt": KEY[:10] + "\x1c" + KEY[10:]}],
+     "apps/demo/k.txt: line 1: possible provider key", {}, {}),
     ("oversized file", [{"apps/demo/big.bin": b"x" * (MEGABYTE * 3 // 2)}], "apps/demo/big.bin: larger than 1 MB", {},
      {"config": limits(max_file_megabytes=1)}),
 ]

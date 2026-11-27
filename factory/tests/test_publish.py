@@ -767,9 +767,10 @@ class UsageLimitTest(PublishTestCase):
             "no reset time": (None, fallback),
             "a reset in the past": (NOW - timedelta(hours=1), fallback),
             "a reset right now": (NOW, fallback),
-            "a reset more than eight days ahead": (NOW + timedelta(days=8, seconds=1), fallback),
+            "a reset more than six hours ahead": (NOW + timedelta(hours=6, seconds=1), fallback),
+            "a reset eight days ahead": (NOW + timedelta(days=8), fallback),
             "a reset at the end of the range": (datetime(2100, 1, 1, tzinfo=timezone.utc), fallback),
-            "a reset eight days ahead": (NOW + timedelta(days=8), stamp(NOW + timedelta(days=8))),
+            "a reset six hours ahead": (NOW + timedelta(hours=6), stamp(NOW + timedelta(hours=6))),
             "a reset in a minute": (NOW + timedelta(minutes=1), stamp(NOW + timedelta(minutes=1))),
         }
         for name, (resets, expected) in cases.items():

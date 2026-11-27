@@ -1,6 +1,7 @@
 """Tests for the finish check hook: when a factory run may end its turn."""
 
 import contextlib
+import gc
 import io
 import json
 import os
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import time
 import unittest
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from unittest import mock
@@ -450,6 +452,17 @@ class RunCommandTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 10)
         self.assertEqual(code, 124)
         self.assertIn("timed out after 1 seconds", output)
+
+    @unittest.skipUnless(shutil.which("sh"), "needs a POSIX shell")
+    def test_a_pipe_given_up_on_is_closed_when_its_reader_ends(self) -> None:
+        # On Windows the grandchild outlives the killed shell and holds the pipe longer than the grace period.
+        with warnings.catch_warnings(record=True) as caught, mock.patch.object(finish_check, "KILL_GRACE", 0.2):
+            warnings.simplefilter("always", ResourceWarning)
+            code, _ = finish_check.run_command(["sh", "-c", "sleep 2 & wait"], Path.cwd(), 1)
+            time.sleep(2.5)
+            gc.collect()
+        self.assertEqual(code, 124)
+        self.assertEqual([str(warning.message) for warning in caught if warning.category is ResourceWarning], [])
 
     @unittest.skipUnless(shutil.which("sh"), "needs a POSIX shell")
     def test_a_process_that_hit_the_timeout_with_a_grandchild_still_exits_cleanly(self) -> None:

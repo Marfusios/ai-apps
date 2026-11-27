@@ -89,6 +89,22 @@ class RepoScriptTests(unittest.TestCase):
         self.assertIn("factory/config.toml", result.stdout)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_check_repo_scans_lines_as_the_bot_posts_them_and_names_each_problem(self) -> None:
+        self.assertEqual(self.new_app().returncode, 0)
+        key = "sk-" + "a" * 24
+        home = "/" + "home" + "/someone/x"
+        address = ".".join(("192", "168", "1", "1"))
+        notes = self.repo / "apps" / "demo-app" / "notes.txt"
+        notes.write_text(f"fine\n{home}\n{address}\n{key[:10]}\x1c{key[10:]}\n", encoding="utf-8")
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        prefix = f"  {Path('apps', 'demo-app', 'notes.txt')}"
+        self.assertEqual([line for line in result.stdout.splitlines() if "notes.txt" in line], [
+            f"{prefix}:2: personal filesystem path; remove it before committing",
+            f"{prefix}:3: private network address; use portable configuration",
+            f"{prefix}:4: possible provider key; remove it before committing",
+        ])
+
     def test_this_repository_passes(self) -> None:
         result = _run(ROOT / "scripts" / "check_repo.py", ROOT)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

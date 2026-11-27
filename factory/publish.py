@@ -30,7 +30,7 @@ BASE_BRANCH = "main"
 STAGE_LABEL = "stage:fix"
 NOT_FOUND = 404
 # The longest usage window is a week: a reset time further ahead than that and a day is not believed.
-LATEST_RESET = timedelta(days=8)
+LATEST_RESET = timedelta(hours=6)  # a process in the container can forge the event; this bounds one forgery
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 NOT_KEPT = "the work so far was not kept"
 STATUS_AFTER = {"done": BUILDING, "usage_limit": QUEUED}  # every other outcome waits for a person
@@ -299,7 +299,7 @@ class Publisher:
         return _Settled("done", **timing, **texts, **kept)
 
     def _retry_at(self, resets_at: int | None, now: datetime) -> str:
-        """The reported reset when it lies in the next eight days, else now plus the configured backoff."""
+        """The reported reset when it lies in the next six hours, else now plus the configured backoff."""
         if resets_at is not None:
             reset = datetime.fromtimestamp(resets_at, timezone.utc)
             if now < reset <= now + LATEST_RESET:

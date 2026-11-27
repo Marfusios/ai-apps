@@ -68,6 +68,20 @@ class TextProblemTests(unittest.TestCase):
         self.assertEqual(hygiene.text_problems(f"ok\x1d{home}"), [(1, "personal filesystem path")])
 
 
+    def test_a_limit_ends_the_scan_after_that_many_problems(self) -> None:
+        home = "/" + "home" + "/someone/x"
+        text = "\n".join([home] * 5)
+        self.assertEqual(hygiene.text_problems(text, limit=2), [(1, "personal filesystem path"),
+                                                               (2, "personal filesystem path")])
+        self.assertEqual(len(hygiene.text_problems(text)), 5)
+
+
+class LabelTests(unittest.TestCase):
+    def test_the_personal_path_label_is_the_one_the_patterns_carry(self) -> None:
+        self.assertEqual(hygiene.PERSONAL_PATH_LABEL, "personal filesystem path")
+        self.assertIn(hygiene.PERSONAL_PATH_LABEL, [label for label, _ in hygiene.PATTERNS])
+
+
 class PrivateFileTests(unittest.TestCase):
     def test_private_file(self) -> None:
         for name in (".env", "apps/x/.env.local", "a/secrets/b.txt", "k.pem"):

@@ -51,16 +51,16 @@ def check_file(path: Path, errors: list[str]) -> None:
     except UnicodeDecodeError:
         return
 
-    for number, line in enumerate(content.splitlines(), 1):
-        for label in hygiene.line_problems(line):
-            if label == hygiene.PRIVATE_ADDRESS_LABEL:
-                # hygiene.py declares the private ranges it checks; allow those declarations.
-                if path == Path("factory/hygiene.py"):
-                    continue
-                errors.append(f"{path}:{number}: private network address; use portable configuration")
-            else:
-                errors.append(f"{path}:{number}: {label}; remove it before committing")
-        if path.name.endswith(".env.example"):
+    for number, label in hygiene.text_problems(content):
+        if label == hygiene.PRIVATE_ADDRESS_LABEL:
+            # hygiene.py declares the private ranges it checks; allow those declarations.
+            if path == Path("factory/hygiene.py"):
+                continue
+            errors.append(f"{path}:{number}: private network address; use portable configuration")
+        else:
+            errors.append(f"{path}:{number}: {label}; remove it before committing")
+    if path.name.endswith(".env.example"):
+        for number, line in enumerate(content.split("\n"), 1):
             assignment = ASSIGNMENT.match(line.strip())
             if assignment and SECRET_VARIABLE.search(assignment[1]):
                 value = assignment[2].strip()

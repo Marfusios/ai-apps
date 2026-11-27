@@ -59,8 +59,9 @@ PERSON_HEADER = re.compile(rb"(author|committer) (.*)")
 COUNT = re.compile(rb"[0-9]{1,12}\n")
 DRIVE = re.compile(r"[A-Za-z]:")
 # An app may well have a `src/home/` directory: in names and link targets only credentials are refused.
-NOT_A_CREDENTIAL = "personal filesystem path"
-CREDENTIAL_PATTERNS = tuple((label, pattern) for label, pattern in hygiene.PATTERNS if label != NOT_A_CREDENTIAL)
+CREDENTIAL_PATTERNS = tuple(
+    (label, pattern) for label, pattern in hygiene.PATTERNS if label != hygiene.PERSONAL_PATH_LABEL
+)
 CREDENTIAL_LABELS = frozenset(label for label, _ in CREDENTIAL_PATTERNS)
 
 MALFORMED = "the job is malformed"
@@ -344,12 +345,10 @@ def _into_git(target: str) -> bool:
 def _findings(content: bytes) -> tuple[tuple[int, str], ...]:
     """Hygiene's findings in any content, text or binary: a byte that is not UTF-8 must not hide a key.
 
-    Like `hygiene.text_problems`, but it stops after the first few: a problem list shows no more than MAX_PROBLEMS,
-    and a file full of findings must not fill memory with problem sentences.
+    It stops after the first few: a problem list shows no more than MAX_PROBLEMS, and a file full of findings must
+    not fill memory with problem sentences.
     """
-    lines = content.decode("utf-8", "replace").splitlines()
-    found = ((number, label) for number, line in enumerate(lines, 1) for label in hygiene.line_problems(line))
-    return tuple(itertools.islice(found, MAX_PROBLEMS + 1))
+    return tuple(hygiene.text_problems(content.decode("utf-8", "replace"), limit=MAX_PROBLEMS + 1))
 
 
 def _link_target(content: bytes) -> str | None:

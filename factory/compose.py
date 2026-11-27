@@ -105,10 +105,8 @@ def _quote(text: str) -> str:
 
 
 def _item(marker: str, content: str) -> str:
-    """A list item whose continuation lines stay inside it, and whose text cannot become a checkbox."""
+    """A list item whose continuation lines stay inside it; the neutralised text holds no checkbox to start it."""
     first, *rest = content.split("\n")
-    if first.startswith("["):
-        first = textsafe.ZWSP + first
     indent = " " * len(marker)
     return "\n".join([marker + first, *(indent + line if line.strip() else "" for line in rest)])
 
@@ -270,13 +268,18 @@ def run_comment(
         excess = len(render(summary_section)) - MAX_COMMENT
     if excess > 0 and summary_text:
         cut = _cut(summary_text, summary_render, len(summary_section) - excess)
-        summary_section = summary_render(cut) if cut is not None else OMITTED_SUMMARY
+        if cut is not None:
+            summary_section = summary_render(cut)
+        elif len(OMITTED_SUMMARY) < len(summary_section):
+            summary_section = OMITTED_SUMMARY
         excess = len(render(summary_section)) - MAX_COMMENT
     if excess > 0 and failure_text:
-        cut = _cut(failure_text, failure_render, len(failure_render(failure_text)) - excess)
+        before = len(failure_render(failure_text))
+        cut = _cut(failure_text, failure_render, before - excess)
         if cut is None and len(failure_text) > CUT_FLOOR:
             cut = failure_text[:CUT_FLOOR] + CUT_MARK
-        failure_text = cut or failure_text
+        if cut is not None and len(failure_render(cut)) < before:
+            failure_text = cut
     return render(summary_section)
 
 
