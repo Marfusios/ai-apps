@@ -6,10 +6,10 @@ container, and the workspace is removed with Python.
 """
 
 import argparse
+import dataclasses
 import logging
 import os
 import re
-import shutil
 import signal
 import socket
 import stat
@@ -25,6 +25,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
+try:
+    import fcntl
+except ImportError:  # not on Windows: there the lock is skipped
+    fcntl = None
+
 from factory import jobs, pod
 from factory.app_config import AppConfigError
 from factory.app_config import load as load_app_config
@@ -32,7 +37,8 @@ from factory.bundle_check import MEGABYTE
 from factory.config import Config
 from factory.config import load as load_config
 from factory.result import MAX_RESULT_BYTES
-from factory.spool import MAX_UNIX_SECONDS, MODEL_NAME, TIME_FORMAT, Spool, SpoolError, read_bounded, validate_run
+from factory.spool import (JOB_ID, MAX_UNIX_SECONDS, MODEL_NAME, TIME_FORMAT, Spool, SpoolError, read_bounded,
+                           validate_run)
 
 log = logging.getLogger("factory.runner")
 
@@ -50,6 +56,8 @@ CLONE_SECONDS = 300
 GIT_SECONDS = 60
 BUNDLE_SECONDS = 600
 CLEANUP_SECONDS = 30
+HOUSEKEEPING_SECONDS = 3600
+PODMAN_FAILURES = (125, 126, 127)  # Podman's own statuses: it could not start the container
 EMPTY_BUNDLE = "Refusing to create empty bundle"
 PRIVATE_MODE = 0o600
 DIRECTORY_MODE = 0o700
@@ -103,6 +111,8 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
             problems.append(f"{name} is missing")
         elif not Path(value).is_absolute():
             problems.append(f"{name} must be an absolute path")
+        elif re.search("[:,]", value[len(Path(value).drive):]):
+            problems.append(f"{name} must not contain a colon or a comma")  # Podman reads them in -v
         else:
             return value
         return ""
@@ -140,23 +150,48 @@ def confined() -> bool:
     return False
 
 
-def _clear_read_only(function: Callable[[str], object], path: str, _error: object) -> None:
-    """Make a path and its directory writable and retry: git object files are read-only."""
-    for target in (os.path.dirname(path), path):
+def _is_real_directory(info: os.stat_result) -> bool:
+    reparse = getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return stat.S_ISDIR(info.st_mode) and not reparse
+
+
+def remove_tree(path: Path) -> bool:
+    """Remove a tree an agent has written in; return whether it is gone. It never raises and never follows a link.
+
+    A real directory is made writable (`0o700`), emptied and removed; anything else, a link included, is unlinked
+    without being followed. No other mode is changed, except that a read-only regular file (git leaves them) is
+    made writable where the platform refuses to delete it otherwise. An error does not stop the walk.
+    """
+    stack: list[tuple[str, bool]] = [(os.fspath(path), False)]
+    while stack:
+        current, emptied = stack.pop()
         try:
-            os.chmod(target, stat.S_IRWXU)
+            if emptied:
+                os.rmdir(current)
+                continue
+            info = os.lstat(current)
+            if not _is_real_directory(info):
+                _unlink(current, info)
+                continue
+            os.chmod(current, stat.S_IRWXU)
+            names = os.listdir(current)
+        except FileNotFoundError:
+            continue
         except OSError:
-            pass
-    function(path)
+            continue
+        stack.append((current, True))
+        stack.extend((os.path.join(current, name), False) for name in names)
+    return not os.path.lexists(path)
 
 
-def remove_tree(path: Path) -> None:
-    if not os.path.lexists(path):
-        return
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=_clear_read_only)
-    else:
-        shutil.rmtree(path, onerror=_clear_read_only)
+def _unlink(path: str, info: os.stat_result) -> None:
+    try:
+        os.unlink(path)
+    except PermissionError:
+        if not stat.S_ISREG(info.st_mode):
+            raise
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        os.unlink(path)
 
 
 def transcript_lines(path: Path) -> Iterator[str]:
@@ -168,8 +203,9 @@ def transcript_lines(path: Path) -> Iterator[str]:
                 return
             complete = line.endswith("\n")
             if not complete and len(line) == MAX_TRANSCRIPT_LINE + 2:
-                while not stream.readline(MAX_TRANSCRIPT_LINE).endswith("\n"):
-                    pass
+                rest = stream.readline(MAX_TRANSCRIPT_LINE)
+                while rest and not rest.endswith("\n"):
+                    rest = stream.readline(MAX_TRANSCRIPT_LINE)
                 continue
             content = line[:-1] if complete else line
             if len(content) <= MAX_TRANSCRIPT_LINE:
@@ -187,8 +223,25 @@ class Outcome:
 CRASHED = Outcome("crashed", "internal")
 
 
-class BundleFailed(Exception):
-    """The bundle container did not produce a bundle for a reason other than there being no commits."""
+class AlreadyRunning(Exception):
+    """Another runner holds the lock on the work directory."""
+
+
+def acquire_lock(work_dir: Path) -> BinaryIO | None:
+    """Take the exclusive lock that keeps a second runner from touching a live job; None where there is no flock.
+
+    The lock lasts as long as the returned file stays open.
+    """
+    if fcntl is None:
+        return None
+    work_dir.mkdir(mode=DIRECTORY_MODE, parents=True, exist_ok=True)
+    handle = open(work_dir / "runner.lock", "ab")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        raise AlreadyRunning from None
+    return handle
 
 
 class Runner:
@@ -212,6 +265,9 @@ class Runner:
         self._clock = clock
         self._confined = confined
         self._digest = digest
+        self._stopping = False
+        self._container: str | None = None  # the agent container that is running now
+        self._last_housekeeping = clock()
 
     @property
     def _work(self) -> Path:
@@ -236,16 +292,42 @@ class Runner:
             label = output.read(MAX_STDERR_BYTES).decode("utf-8", errors="replace").strip()
         return self._digest is None or label == self._digest()
 
+    def stop(self) -> None:
+        """Ask the runner to stop: kill the running agent container; that job is recorded as an internal crash."""
+        self._stopping = True
+        if self._container is not None:
+            self._podman("kill", self._container)
+
+    def housekeeping(self) -> None:
+        """Prune old transcripts and the spool about once an hour; a failure is logged and ignored."""
+        now = self._clock()
+        if (now - self._last_housekeeping).total_seconds() < HOUSEKEEPING_SECONDS:
+            return
+        self._last_housekeeping = now
+        try:
+            self.prune_transcripts()
+            self._spool.prune("runner", now)
+        except (SpoolError, OSError) as error:
+            log.error("housekeeping failed: %s", type(error).__name__)
+
     def recover(self) -> list[str]:
-        """Finish every job still `running` as crashed: with one runner, nothing can still be running at start-up."""
+        """Finish every job still `running` as crashed and clear leftovers.
+
+        With one runner (the lock sees to it) nothing can still be running at start-up, so a container found for
+        such a job is an orphan: it is removed before its workspace. Workspaces of every other job are removed too.
+        """
         recovered = []
         for job_id in self._spool.job_ids():
             if self._spool.state(job_id) != "running":
                 continue
+            self._remove_containers(job_id)
             now = self._clock()
             self._spool.finish(job_id, _record(job_id, CRASHED, now, now), {})
-            self._clean(job_id)
             recovered.append(job_id)
+        for parent in (self._work, self._work / "staging"):
+            for entry in parent.iterdir() if parent.is_dir() else ():
+                if JOB_ID.fullmatch(entry.name):
+                    self._clean(entry.name)
         return recovered
 
     def prune_transcripts(self) -> list[str]:
@@ -281,7 +363,8 @@ class Runner:
                 self._spool.finish(job_id, _record(job_id, outcome, started, self._clock()), outcome.files)
             except Exception as error:
                 log.error("job %s: the run could not be recorded: %s", job_id, type(error).__name__)
-                self._spool.finish(job_id, _record(job_id, CRASHED, started, self._clock()), {})
+                outcome = CRASHED
+                self._spool.finish(job_id, _record(job_id, outcome, started, self._clock()), {})
             log.info("job %s: %s", job_id, outcome.status)
         except Exception as error:
             log.error("job %s: no run record could be written: %s", job_id, type(error).__name__)
@@ -290,10 +373,8 @@ class Runner:
 
     def _clean(self, job_id: str) -> None:
         for path in (self._work / job_id, self._work / "staging" / job_id):
-            try:
-                remove_tree(path)
-            except OSError as error:
-                log.error("job %s: a work directory could not be removed: %s", job_id, type(error).__name__)
+            if not remove_tree(path):
+                log.error("job %s: a work directory could not be removed completely", job_id)
 
     def _execute(self, job_id: str) -> Outcome:
         if not self._confined():
@@ -370,18 +451,28 @@ class Runner:
 
     def _agent(self, job_id: str, request: Mapping, mounts: pod.Mounts, staging: Path) -> Outcome:
         name = f"factory-{job_id}"
+        if self._stopping:
+            return CRASHED
         transcripts = self._work / "transcripts"
         transcripts.mkdir(mode=DIRECTORY_MODE, parents=True, exist_ok=True)
         transcript = transcripts / f"{job_id}.jsonl"
         argv = pod.agent_argv(request, mounts, self._settings.image, name)
-        with _private_file(transcript) as stdout, _private_file(transcripts / f"{job_id}.err") as stderr:
-            try:
-                self._run(argv, cwd=self._work, stdout=stdout, stderr=stderr,
-                          timeout=request["timeout_minutes"] * 60)
-            except subprocess.TimeoutExpired:
-                self._remove_container(name)
-                return Outcome("timeout")
+        self._container = name
+        try:
+            with _private_file(transcript) as stdout, _private_file(transcripts / f"{job_id}.err") as stderr:
+                try:
+                    status = self._run(argv, cwd=self._work, stdout=stdout, stderr=stderr,
+                                       timeout=request["timeout_minutes"] * 60)
+                except subprocess.TimeoutExpired:
+                    self._remove_containers(job_id, agent_only=True)
+                    return Outcome("timeout")
+        finally:
+            self._container = None
+        if self._stopping:
+            return CRASHED
         facts = pod.read_transcript(transcript_lines(transcript))
+        if status in PODMAN_FAILURES and not facts.model:
+            return Outcome("crashed", "internal", facts)  # Podman never ran the CLI
         result = _take(mounts.out / "result.json", MAX_RESULT_BYTES, staging / "result.json")
         if facts.limited and result is None:
             return Outcome("usage_limit", facts=facts)
@@ -390,45 +481,55 @@ class Runner:
         if result is None:
             return Outcome("crashed", "agent_error", facts)
         files = {"result.json": result}
-        try:
-            bundle = self._bundle(job_id, request, mounts, staging)
-        except BundleFailed:
-            return Outcome("crashed", "internal", facts)
+        bundle = self._bundle(job_id, request, mounts, staging)
         if bundle is not None:
             files["commits.bundle"] = bundle
         return Outcome("completed", None, facts, files)
 
     def _bundle(self, job_id: str, request: Mapping, mounts: pod.Mounts, staging: Path) -> Path | None:
-        """Bundle the agent's commits in a container; None when there are none or the bundle is not usable."""
-        bundle = mounts.out / "commits.bundle"
-        if os.path.lexists(bundle):
-            bundle.unlink()  # whatever the agent left under this name is not the runner's bundle
-        name = f"factory-{job_id}-bundle"
-        argv = pod.bundle_argv(request, mounts, self._settings.image, name)
+        """Bundle the agent's commits in a container of its own; None when there is no usable bundle.
+
+        The container writes to a fresh directory the agent never saw, so nothing the agent left in `out` can
+        interfere. A failure costs only the bundle: the agent's result is still handed over.
+        """
+        bundle_out = mounts.out.parent / "bundle-out"
+        bundle_out.mkdir(mode=DIRECTORY_MODE)
+        argv = pod.bundle_argv(request, dataclasses.replace(mounts, out=bundle_out), self._settings.image,
+                               f"factory-{job_id}-bundle")
         errors = staging / "bundle.err"
         with _private_file(errors) as stderr:
             try:
                 status = self._run(argv, cwd=self._work, stderr=stderr, timeout=BUNDLE_SECONDS)
             except subprocess.TimeoutExpired:
-                self._remove_container(name)
-                raise BundleFailed from None
+                self._remove_containers(job_id, bundle_only=True)
+                log.error("job %s: the bundle container timed out; no bundle is handed over", job_id)
+                return None
         if status != 0:
             try:
                 text = read_bounded(errors, MAX_STDERR_BYTES).decode("utf-8", errors="replace")
             except SpoolError:
-                raise BundleFailed from None
+                text = ""
             if EMPTY_BUNDLE not in text:
-                raise BundleFailed
+                log.error("job %s: the bundle container failed; no bundle is handed over", job_id)
             return None
-        return _take(bundle, self._config.dispatcher.max_bundle_megabytes * MEGABYTE, staging / "commits.bundle")
+        limit = self._config.dispatcher.max_bundle_megabytes * MEGABYTE
+        return _take(bundle_out / "commits.bundle", limit, staging / "commits.bundle")
 
-    def _remove_container(self, name: str) -> None:
-        """Best effort: a container that outlived its timeout must not keep running."""
-        for argv in (["podman", "kill", name], ["podman", "rm", "-f", name]):
-            try:
-                self._run(argv, cwd=self._work, timeout=CLEANUP_SECONDS)
-            except (OSError, subprocess.TimeoutExpired):
-                log.error("%s did not finish", " ".join(argv[:2]))
+    def _podman(self, *arguments: str) -> None:
+        """Best effort: a failure is logged and nothing else."""
+        argv = ["podman", *arguments]
+        try:
+            self._run(argv, cwd=self._work, timeout=CLEANUP_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            log.error("%s did not finish", " ".join(argv[:2]))
+
+    def _remove_containers(self, job_id: str, *, agent_only: bool = False, bundle_only: bool = False) -> None:
+        names = [] if bundle_only else [f"factory-{job_id}"]
+        names += [] if agent_only else [f"factory-{job_id}-bundle"]
+        for name in names:
+            if agent_only:
+                self._podman("kill", name)
+            self._podman("rm", "-f", name)
 
 
 def _private_file(path: Path) -> BinaryIO:
@@ -510,15 +611,22 @@ def serve(runner: Runner, stop: threading.Event, *, once: bool = False) -> None:
             handled = None
         if once:
             return
+        runner.housekeeping()
         if handled is None:
             _sleep(stop, IDLE_SECONDS)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="factory.runner", description="Run the factory's queued jobs.")
     parser.add_argument("--once", action="store_true", help="handle at most one job and exit")
-    parser.add_argument("--check", action="store_true", help="check confinement, image and spool; write nothing")
-    args = parser.parse_args(argv)
+    parser.add_argument("--check", action="store_true",
+                        help="check confinement, image and spool, and exit; it creates the work directory and a "
+                        "temporary file in it, and takes no lock")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         settings = settings_from_env(os.environ)
@@ -532,6 +640,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("\n".join(lines))
         return 0 if healthy else 1
     try:
+        lock = acquire_lock(settings.work_dir)  # held until the process ends
+    except AlreadyRunning:
+        log.error("another runner holds the lock on the work directory")
+        return 1
+    try:
         spool.prepare("runner")
         runner.prune_transcripts()
         recovered = runner.recover()
@@ -541,10 +654,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if recovered:
         log.warning("finished %d job(s) left running as crashed", len(recovered))
     stop = threading.Event()
+
+    def request_stop(*_: object) -> None:
+        stop.set()
+        runner.stop()
+
     for name in ("SIGINT", "SIGTERM"):
         if hasattr(signal, name):
-            signal.signal(getattr(signal, name), lambda *_: stop.set())
-    serve(runner, stop, once=args.once)
+            signal.signal(getattr(signal, name), request_stop)
+    try:
+        serve(runner, stop, once=args.once)
+    finally:
+        if lock is not None:
+            lock.close()
     return 0
 
 

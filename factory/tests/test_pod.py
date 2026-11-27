@@ -33,18 +33,17 @@ class ArgvTests(unittest.TestCase):
         self.assertFalse(any(a.startswith("CLAUDE_CODE_OAUTH_TOKEN=") for a in argv))
         self.assertEqual(after_image(argv)[:3], ["claude", "-p", "/factory-fix-issue"])
 
-    def test_agent_argv_has_the_mounts_and_the_environment_in_order(self):
-        argv = pod.agent_argv(REQUEST, MOUNTS, IMAGE, "factory-x")
-        self.assertEqual(argv[:6], ["podman", "run", "--rm", "--pull=never", "--name", "factory-x"])
-        self.assertEqual(argv[argv.index("-v"):argv.index("-w") + 2], [
+    def test_agent_argv_is_exactly_the_documented_command(self):
+        self.assertEqual(pod.agent_argv(REQUEST, MOUNTS, IMAGE, "factory-x"), [
+            "podman", "run", "--rm", "--pull=never", "--name", "factory-x", "--log-driver=none",
+            "--userns=keep-id:uid=1000,gid=1000", "--cap-drop=all", "--security-opt=no-new-privileges",
+            "--network=slirp4netns",
             "-v", f"{MOUNTS.checkout}:/workspace:rw", "-v", f"{MOUNTS.job}:/factory/job:ro",
             "-v", f"{MOUNTS.out}:/factory/out:rw", "-w", "/workspace",
-        ])
-        pairs = [argv[i + 1] for i, word in enumerate(argv) if word == "--env"]
-        self.assertEqual(pairs, [
-            "FACTORY_RUN=1", "FACTORY_STAGE=fix_issue", "FACTORY_JOB_DIR=/factory/job",
-            "FACTORY_RESULT_PATH=/factory/out/result.json", f"FACTORY_BASE_SHA={'a' * 40}",
-            "DISABLE_AUTOUPDATER=1", "CLAUDE_CODE_OAUTH_TOKEN",
+            "--env", "FACTORY_RUN=1", "--env", "FACTORY_STAGE=fix_issue", "--env", "FACTORY_JOB_DIR=/factory/job",
+            "--env", "FACTORY_RESULT_PATH=/factory/out/result.json", "--env", f"FACTORY_BASE_SHA={'a' * 40}",
+            "--env", "DISABLE_AUTOUPDATER=1", "--env", "CLAUDE_CODE_OAUTH_TOKEN",
+            IMAGE, *pod.claude_argv(REQUEST),
         ])
 
     def test_container_env_names_the_variables_the_agent_receives(self):
@@ -53,18 +52,15 @@ class ArgvTests(unittest.TestCase):
             "DISABLE_AUTOUPDATER", "CLAUDE_CODE_OAUTH_TOKEN",
         ))
 
-    def test_bundle_argv_has_no_network_and_no_token(self):
-        argv = pod.bundle_argv(REQUEST, MOUNTS, IMAGE, "factory-x-bundle")
-        self.assertIn("--network=none", argv)
-        self.assertNotIn("--network=slirp4netns", argv)
-        self.assertFalse(any("TOKEN" in word or word.startswith("FACTORY_") for word in argv))
-        self.assertNotIn("--env", argv)
-        self.assertEqual(after_image(argv), [
-            "git", "-C", "/workspace", "bundle", "create", "/factory/out/commits.bundle",
+    def test_bundle_argv_is_exactly_the_documented_command_with_no_network_and_no_token(self):
+        self.assertEqual(pod.bundle_argv(REQUEST, MOUNTS, IMAGE, "factory-x-bundle"), [
+            "podman", "run", "--rm", "--pull=never", "--name", "factory-x-bundle", "--log-driver=none",
+            "--userns=keep-id:uid=1000,gid=1000", "--cap-drop=all", "--security-opt=no-new-privileges",
+            "--network=none",
+            "-v", f"{MOUNTS.checkout}:/workspace:ro", "-v", f"{MOUNTS.out}:/factory/out:rw", "-w", "/workspace",
+            IMAGE, "git", "-C", "/workspace", "bundle", "create", "/factory/out/commits.bundle",
             f"{'a' * 40}..refs/heads/factory/fix-7",
         ])
-        self.assertIn("--cap-drop=all", argv)
-        self.assertIn(f"{MOUNTS.out}:/factory/out:rw", argv)
 
 
 class TranscriptTests(unittest.TestCase):

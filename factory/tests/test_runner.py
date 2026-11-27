@@ -21,7 +21,7 @@ from factory import config as factory_config
 from factory import runner
 from factory.bundle_check import MEGABYTE
 from factory.result import MAX_RESULT_BYTES
-from factory.spool import Spool, SpoolError, new_job_id, validate_run
+from factory.spool import MAX_UNIX_SECONDS, Spool, SpoolError, new_job_id, validate_run
 from factory.tests import gitrepo
 from factory.tests.gitrepo import Repo
 
@@ -98,7 +98,7 @@ class FakePodman:
 
     def __init__(self) -> None:
         self.calls: list[Call] = []
-        self.agent: Callable[[Container], None] = good_script
+        self.agent: Callable[[Container], int | None] = good_script
         self.image_status = 0
         self.image_label = DIGEST
         self.bundle_runs = 0
@@ -114,8 +114,8 @@ class FakePodman:
         if argv[:2] == ["podman", "run"]:
             container = Container(mount(argv, "/workspace"), mount(argv, "/factory/out"), stdout, argv)
             if "claude" in argv:
-                self.agent(container)
-                return 0
+                status = self.agent(container)
+                return 0 if status is None else status
             return self._bundle(container, stderr)
         return 0
 
@@ -459,15 +459,28 @@ class AgentRunTests(RunnerCase):
         self.assertTrue(self.delivered(job, "result.json").exists())
         self.assertFalse(self.delivered(job, "commits.bundle").exists())
 
-    def test_a_bundle_the_agent_planted_is_not_handed_over(self):
-        def script(container: Container) -> None:
-            (container.out / "result.json").write_text(RESULT, encoding="utf-8")
+    def test_a_bundle_the_agent_planted_has_no_effect_on_the_bundle_handed_over(self):
+        def plant_file(container: Container) -> None:
+            good_script(container)
             (container.out / "commits.bundle").write_bytes(b"planted")
 
-        self.fake.agent = script
-        job = self.submit()
-        self.runner().run_next()
-        self.assertFalse(self.delivered(job, "commits.bundle").exists())
+        def plant_directory(container: Container) -> None:
+            good_script(container)
+            (container.out / "commits.bundle").mkdir()
+
+        for minutes, script in enumerate((plant_file, plant_directory)):
+            with self.subTest(script=script.__name__):
+                self.fake.agent = script
+                job = self.submit(minutes=minutes)
+                self.runner().run_next()
+                heads = gitrepo.git("bundle", "list-heads", str(self.delivered(job, "commits.bundle")))
+                self.assertIn(f"refs/heads/{BRANCH}", heads)
+
+    def test_the_bundle_container_does_not_share_the_agents_out_directory(self):
+        self.handle()
+        agent, bundle = [mount(call.argv, "/factory/out") for call in self.fake.podman_runs]
+        self.assertNotEqual(agent, bundle)
+        self.assertEqual(agent.parent, bundle.parent)
 
     def test_an_oversized_bundle_is_left_out(self):
         small = dataclasses.replace(CONFIG, dispatcher=dataclasses.replace(CONFIG.dispatcher, max_bundle_megabytes=1))
@@ -486,15 +499,20 @@ class AgentRunTests(RunnerCase):
         self.assertEqual(self.spool.run_record(job)["status"], "completed")
         self.assertFalse(self.delivered(job, "commits.bundle").exists())
 
-    def test_a_failing_bundle_is_an_internal_crash(self):
+    def test_a_failing_bundle_container_still_hands_over_the_result(self):
         def failing(argv, **kwargs):
             if argv[:2] == ["podman", "run"] and "claude" not in argv:
                 kwargs["stderr"].write(b"fatal: Invalid revision range")
                 return 128
             return self.fake(argv, **kwargs)
 
-        record = self.handle(run=failing)
-        self.assertEqual((record["status"], record["reason"]), ("crashed", "internal"))
+        job = self.submit()
+        with self.assertLogs("factory.runner", level="ERROR"):
+            self.runner(run=failing).run_next()
+        record = self.spool.run_record(job)
+        self.assertEqual((record["status"], record["reason"]), ("completed", None))
+        self.assertEqual(self.delivered(job, "result.json").read_text(encoding="utf-8"), RESULT)
+        self.assertFalse(self.delivered(job, "commits.bundle").exists())
 
     def test_the_bundle_container_runs_with_a_timeout_and_its_own_name(self):
         job = self.submit()
@@ -504,16 +522,71 @@ class AgentRunTests(RunnerCase):
         self.assertIn("--network=none", bundle.argv)
         self.assertIsNotNone(bundle.timeout)
 
-    def test_a_timed_out_bundle_is_an_internal_crash_and_its_container_is_removed(self):
+    def test_a_timed_out_bundle_still_hands_over_the_result_and_its_container_is_removed(self):
         def slow(argv, **kwargs):
             if argv[:2] == ["podman", "run"] and "claude" not in argv:
                 raise subprocess.TimeoutExpired(argv, 1)
             return self.fake(argv, **kwargs)
 
         job = self.submit()
-        self.runner(run=slow).run_next()
-        self.assertEqual(self.spool.run_record(job)["reason"], "internal")
+        with self.assertLogs("factory.runner", level="ERROR"):
+            self.runner(run=slow).run_next()
+        self.assertEqual(self.spool.run_record(job)["status"], "completed")
+        self.assertTrue(self.delivered(job, "result.json").exists())
+        self.assertFalse(self.delivered(job, "commits.bundle").exists())
         self.assertIn(["podman", "rm", "-f", f"factory-{job}-bundle"], [call.argv for call in self.fake.calls])
+
+    def test_a_podman_failure_without_an_init_line_is_an_internal_crash(self):
+        for minutes, status in enumerate((125, 126, 127)):
+            with self.subTest(status=status):
+                self.fake.agent = lambda container, status=status: status
+                record = self.handle(self.submit(minutes=minutes))
+                self.assertEqual((record["status"], record["reason"]), ("crashed", "internal"))
+
+    def test_a_podman_status_after_the_cli_started_is_an_agent_error(self):
+        def script(container: Container) -> int:
+            container.stdout.write(f"{INIT}\n".encode())
+            return 125
+
+        self.fake.agent = script
+        self.assertEqual(self.handle()["reason"], "agent_error")
+
+    def test_a_stop_request_kills_the_running_container_and_records_an_internal_crash(self):
+        instance = self.runner()
+
+        def script(container: Container) -> None:
+            good_script(container)
+            instance.stop()
+
+        self.fake.agent = script
+        job = self.submit()
+        instance.run_next()
+        record = self.spool.run_record(job)
+        self.assertEqual((record["status"], record["reason"]), ("crashed", "internal"))
+        self.assertIn(["podman", "kill", f"factory-{job}"], [call.argv for call in self.fake.calls])
+        self.assertEqual(self.fake.bundle_runs, 0)
+
+    def test_a_stop_request_before_the_agent_starts_starts_no_container(self):
+        instance = self.runner()
+        instance.stop()
+        job = self.submit()
+        instance.run_next()
+        self.assertEqual(self.spool.run_record(job)["reason"], "internal")
+        self.assertEqual(self.fake.podman_runs, [])
+
+    def test_a_reset_time_beyond_the_year_2100_is_not_recorded(self):
+        beyond = MAX_UNIX_SECONDS + 1
+        limited = '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":%d}}' % beyond
+        self.fake.agent = lambda container: container.stdout.write(f"{limited}\n".encode()) and None
+        record = self.handle()
+        self.assertEqual((record["status"], record["resets_at"]), ("usage_limit", None))
+
+    def test_a_reset_time_that_is_not_an_integer_is_not_recorded(self):
+        for minutes, value in enumerate(("true", '"1795863600"', "1795863600.5")):
+            limited = '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":%s}}' % value
+            self.fake.agent = lambda container, text=limited: container.stdout.write(f"{text}\n".encode()) and None
+            record = self.handle(self.submit(minutes=minutes))
+            self.assertEqual((record["status"], record["resets_at"]), ("usage_limit", None), value)
 
     def test_no_host_command_runs_in_the_checkout_after_the_agent(self):
         self.handle()
@@ -566,11 +639,13 @@ class FailureTests(RunnerCase):
             real(job_id, run, files)
 
         job = self.submit()
-        with mock.patch.object(spool, "finish", finish), self.assertLogs("factory.runner", level="ERROR"):
+        with mock.patch.object(spool, "finish", finish), self.assertLogs("factory.runner", level="INFO") as logs:
             self.runner().run_next()
         record = spool.run_record(job)
         self.assertEqual((record["status"], record["reason"]), ("crashed", "internal"))
         self.assertEqual(calls[1], {})
+        self.assertIn("crashed", logs.output[-1])
+        self.assertNotIn("completed", logs.output[-1])
         self.assertFalse((self.work / job).exists())
 
     def test_when_no_record_can_be_written_the_runner_goes_on(self):
@@ -583,7 +658,7 @@ class FailureTests(RunnerCase):
 
     def test_a_workspace_that_cannot_be_removed_is_logged_not_raised(self):
         job = self.submit()
-        with mock.patch.object(runner, "remove_tree", side_effect=OSError("busy")), \
+        with mock.patch.object(runner, "remove_tree", return_value=False), \
                 self.assertLogs("factory.runner", level="ERROR"):
             self.runner().run_next()
         self.assertEqual(self.spool.run_record(job)["status"], "completed")
@@ -623,6 +698,61 @@ class QueueTests(RunnerCase):
         self.assertEqual((record["status"], record["reason"]), ("crashed", "internal"))
         self.assertEqual(self.spool.state(queued), "queued")
         self.assertFalse((self.work / stuck).exists())
+
+    def test_recover_removes_the_containers_before_the_workspace_and_clears_old_workspaces(self):
+        stuck, finished = self.submit(minutes=1), self.submit(minutes=2)
+        self.spool.claim(stuck, NOW)
+        for job in (stuck, finished):
+            (self.work / job / "checkout").mkdir(parents=True)
+        (self.work / "staging" / finished).mkdir(parents=True)
+        self.spool.claim(finished, NOW)
+        self.spool.finish(finished, runner._record(finished, runner.CRASHED, NOW, NOW), {})
+        seen = []
+
+        def spy(argv, **kwargs):
+            if argv[:3] == ["podman", "rm", "-f"]:
+                seen.append((argv[3], (self.work / stuck).exists()))
+            return self.fake(argv, **kwargs)
+
+        self.runner(run=spy).recover()
+        self.assertEqual(seen, [(f"factory-{stuck}", True), (f"factory-{stuck}-bundle", True)])
+        self.assertFalse((self.work / stuck).exists())
+        self.assertFalse((self.work / finished).exists())
+        self.assertFalse((self.work / "staging" / finished).exists())
+
+    def test_a_container_that_cannot_be_removed_does_not_stop_recovery(self):
+        stuck = self.submit()
+        self.spool.claim(stuck, NOW)
+
+        def broken(argv, **kwargs):
+            raise OSError("no podman")
+
+        with self.assertLogs("factory.runner", level="ERROR"):
+            self.assertEqual(self.runner(run=broken).recover(), [stuck])
+        self.assertEqual(self.spool.run_record(stuck)["reason"], "internal")
+
+    def test_housekeeping_prunes_the_spool_and_transcripts_about_once_an_hour(self):
+        moment = [NOW]
+        instance = self.runner(clock=lambda: moment[0])
+        with mock.patch.object(self.spool, "prune") as prune:
+            instance.housekeeping()
+            moment[0] = NOW + timedelta(minutes=59)
+            instance.housekeeping()
+            self.assertEqual(prune.call_count, 0)
+            moment[0] = NOW + timedelta(minutes=61)
+            instance.housekeeping()
+            self.assertEqual(prune.call_count, 1)
+            self.assertEqual(prune.call_args.args[0], "runner")
+            instance.housekeeping()
+            self.assertEqual(prune.call_count, 1)
+
+    def test_a_failing_housekeeping_is_logged_and_ignored(self):
+        moment = [NOW]
+        instance = self.runner(clock=lambda: moment[0])
+        moment[0] = NOW + timedelta(hours=2)
+        with mock.patch.object(self.spool, "prune", side_effect=SpoolError("x")), \
+                self.assertLogs("factory.runner", level="ERROR"):
+            instance.housekeeping()
 
     def test_old_transcripts_are_deleted_at_start_up(self):
         directory = self.work / "transcripts"
@@ -668,6 +798,16 @@ class SettingsTests(unittest.TestCase):
             self.assertIn(name, message)
         self.assertNotIn("relative-secret", message)
         self.assertNotIn("bad image", message)
+
+    def test_a_directory_that_podman_would_read_as_a_separator_is_rejected(self):
+        for name in ("FACTORY_WORK_DIR", "FACTORY_SPOOL_DIR", "FACTORY_MIRROR_DIR"):
+            for bad in ("a:b", "a,b"):
+                with self.subTest(name=name, bad=bad):
+                    value = str(Path(self.absolute("s"))) + bad
+                    with self.assertRaises(runner.SettingsError) as raised:
+                        runner.settings_from_env(self.env(**{name: value}))
+                    self.assertIn(name, str(raised.exception))
+                    self.assertNotIn(bad, str(raised.exception))
 
     def test_a_missing_token_is_a_problem(self):
         env = self.env()
@@ -717,16 +857,111 @@ class FileHelperTests(unittest.TestCase):
         path.write_text("a\nb", encoding="utf-8")
         self.assertEqual(list(runner.transcript_lines(path)), ["a", "b"])
 
+    def test_transcript_lines_end_at_an_unterminated_overlong_last_line(self):
+        path = self.root / "t.jsonl"
+        path.write_text("first\n" + "x" * 40, encoding="utf-8")
+        found = []
+        with mock.patch.object(runner, "MAX_TRANSCRIPT_LINE", 10):
+            worker = threading.Thread(target=lambda: found.extend(runner.transcript_lines(path)), daemon=True)
+            worker.start()
+            worker.join(timeout=10)
+        self.assertFalse(worker.is_alive(), "transcript_lines did not end at the end of the file")
+        self.assertEqual(found, ["first"])
+
     def test_remove_tree_removes_read_only_files(self):
         objects = self.root / "w" / "objects" / "ab"
         objects.mkdir(parents=True)
         (objects / "cd").write_text("x", encoding="utf-8")
         os.chmod(objects / "cd", stat.S_IREAD)
-        runner.remove_tree(self.root / "w")
+        self.assertTrue(runner.remove_tree(self.root / "w"))
         self.assertFalse((self.root / "w").exists())
 
     def test_remove_tree_of_nothing_is_fine(self):
-        runner.remove_tree(self.root / "missing")
+        self.assertTrue(runner.remove_tree(self.root / "missing"))
+
+    @unittest.skipUnless(os.name == "posix", "directory modes that forbid listing exist only on POSIX")
+    def test_remove_tree_removes_a_directory_the_agent_made_unreadable(self):
+        locked = self.root / "w" / "checkout" / "locked"
+        locked.mkdir(parents=True)
+        (locked / "file").write_text("x", encoding="utf-8")
+        (locked / "inner").mkdir()
+        (locked / "inner" / "deep").write_text("y", encoding="utf-8")
+        os.chmod(locked / "inner", 0)
+        os.chmod(locked, 0)
+        self.assertTrue(runner.remove_tree(self.root / "w"))
+        self.assertFalse((self.root / "w").exists())
+
+    @unittest.skipUnless(hasattr(os, "symlink") and os.name == "posix", "needs POSIX symbolic links and modes")
+    def test_remove_tree_unlinks_a_link_without_touching_its_target(self):
+        outside = self.root / "outside.txt"
+        outside.write_text("keep", encoding="utf-8")
+        os.chmod(outside, 0o644)
+        outside_dir = self.root / "outside-dir"
+        outside_dir.mkdir()
+        (outside_dir / "inner.txt").write_text("keep too", encoding="utf-8")
+        os.chmod(outside_dir, 0o755)
+        locked = self.root / "w" / "locked"
+        locked.mkdir(parents=True)
+        (locked / "file-link").symlink_to(outside)
+        (locked / "dir-link").symlink_to(outside_dir, target_is_directory=True)
+        os.chmod(locked, 0o500)
+        self.assertTrue(runner.remove_tree(self.root / "w"))
+        self.assertFalse((self.root / "w").exists())
+        self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE(outside_dir.stat().st_mode), 0o755)
+        self.assertEqual((outside_dir / "inner.txt").read_text(encoding="utf-8"), "keep too")
+
+    def test_remove_tree_reports_a_tree_it_could_not_remove_and_keeps_going(self):
+        (self.root / "w").mkdir()
+        (self.root / "w" / "a").write_text("x", encoding="utf-8")
+        (self.root / "w" / "b").write_text("y", encoding="utf-8")
+        real = os.unlink
+
+        def stubborn(path, *args, **kwargs):
+            if os.path.basename(path) == "a":
+                raise PermissionError("held")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(os, "unlink", stubborn), mock.patch.object(os, "chmod"):
+            self.assertFalse(runner.remove_tree(self.root / "w"))
+        self.assertEqual([path.name for path in (self.root / "w").iterdir()], ["a"])
+
+
+class LockTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.work = Path(tmp.name) / "work"
+
+    def fake_fcntl(self, held: bool) -> mock.Mock:
+        module = mock.Mock(LOCK_EX=2, LOCK_NB=4)
+        module.flock.side_effect = BlockingIOError if held else None
+        return module
+
+    def test_a_held_lock_is_reported(self):
+        with mock.patch.object(runner, "fcntl", self.fake_fcntl(held=True)), \
+                self.assertRaises(runner.AlreadyRunning):
+            runner.acquire_lock(self.work)
+
+    def test_a_free_lock_is_taken_on_the_runner_lock_file_without_blocking(self):
+        fcntl = self.fake_fcntl(held=False)
+        with mock.patch.object(runner, "fcntl", fcntl):
+            handle = runner.acquire_lock(self.work)
+        self.addCleanup(handle.close)
+        self.assertEqual(fcntl.flock.call_args.args[1], 2 | 4)
+        self.assertTrue((self.work / "runner.lock").exists())
+
+    def test_without_fcntl_there_is_no_lock(self):
+        with mock.patch.object(runner, "fcntl", None):
+            self.assertIsNone(runner.acquire_lock(self.work))
+
+    @unittest.skipUnless(os.name == "posix", "flock exists only on POSIX")
+    def test_two_start_ups_in_one_process_cannot_both_hold_the_lock(self):
+        first = runner.acquire_lock(self.work)
+        self.addCleanup(first.close)
+        with self.assertRaises(runner.AlreadyRunning):
+            runner.acquire_lock(self.work)
 
 
 class ProgramTests(RunnerCase):
@@ -778,6 +1013,29 @@ class ProgramTests(RunnerCase):
         stop.set()
         runner._sleep(stop, 60.0)
 
+    def test_the_help_of_check_says_what_it_does_write(self):
+        text = runner.build_parser().format_help()
+        self.assertNotIn("write nothing", text)
+        self.assertIn("work directory", text)
+
+    def test_main_exits_with_status_1_when_another_runner_holds_the_lock(self):
+        env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
+               "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                mock.patch.object(runner, "acquire_lock", side_effect=runner.AlreadyRunning), \
+                self.assertLogs("factory.runner", level="ERROR") as logs:
+            self.assertEqual(runner.main(["--once"]), 1)
+        self.assertEqual(len(logs.records), 1)
+
+    def test_check_does_not_take_the_lock(self):
+        env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
+               "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+        instance = self.runner()
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                mock.patch.object(runner, "Runner", lambda *_: instance), mock.patch("sys.stdout", io.StringIO()), \
+                mock.patch.object(runner, "acquire_lock", side_effect=AssertionError("locked")):
+            self.assertEqual(runner.main(["--check"]), 0)
+
     def test_main_reports_bad_settings_without_echoing_them(self):
         env = {"FACTORY_SPOOL_DIR": "relative-secret"}
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
@@ -804,6 +1062,7 @@ class ProgramTests(RunnerCase):
         instance = self.runner()
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
                 mock.patch.object(runner, "Runner", lambda *_: instance), \
+                mock.patch.object(runner, "acquire_lock", return_value=None), \
                 self.assertLogs("factory.runner", level="WARNING"):
             self.assertEqual(runner.main(["--once"]), 0)
         self.assertEqual(self.spool.run_record(stuck)["reason"], "internal")
@@ -813,6 +1072,7 @@ class ProgramTests(RunnerCase):
         env = {"FACTORY_SPOOL_DIR": str(self.root / "nowhere"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
                "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                mock.patch.object(runner, "acquire_lock", return_value=None), \
                 self.assertLogs("factory.runner", level="ERROR"):
             self.assertEqual(runner.main(["--once"]), 1)
 
