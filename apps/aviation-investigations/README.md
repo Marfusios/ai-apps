@@ -2583,3 +2583,21 @@ the existing content hash. A mismatch stops it; prompts are never fetched by sea
 Generation spans link these versions and export model names. Export failures remain
 non-blocking, produce at most one sanitized warning every five minutes, and appear
 with the last successful export time in the admin overview.
+
+## License and third-party data
+
+AirCase's code and documentation are released under the repository's
+[MIT License](../../LICENSE). That license does not cover the investigation data.
+
+- **NTSB material.** The fixtures in `fixtures/ntsb` and `fixtures/ntsb-ui`, the mock
+  data in `web/mock`, the passages quoted in `evals/`, the vocabulary in
+  `shared/vocab.ts` and the profile in `docs/data-profile-2026-10-16.json` are taken
+  from, or generated from, the National Transportation Safety Board's public aviation
+  database (the `avall.zip` snapshot of 2026-10-16). It is United States government
+  material, not this project's work, and NTSB does not endorse this project. A few
+  passages quote or credit third parties, such as a manufacturer's manual or a
+  photograph's source; those remain their owners'.
+- **Evaluation data is not a record of fact.** The datasets under `evals/` contain
+  judgments written by language models and, on purpose, claims that the investigations
+  do not support, used to test whether the checker catches them. Do not read them as
+  statements about any investigation.

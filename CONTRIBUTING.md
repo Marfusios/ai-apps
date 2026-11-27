@@ -1,13 +1,21 @@
 # Contributing
 
+Coding agents and people should read [AGENTS.md](AGENTS.md) and the
+[engineering standards](docs/engineering.md) first. Report security problems as
+described in [SECURITY.md](SECURITY.md).
+
 Start with a small, independently runnable app. Explain the question it answers,
 the data it uses, and how someone can reproduce its behavior from a fresh clone.
 
 1. Follow [the development guide](docs/development.md) to create an app directory.
+   Each app has an `AGENTS.md` with its instructions for agents and a `factory.toml`
+   with its commands.
 2. Keep configuration portable and document required variables in `.env.example`.
 3. Add small fixtures and tests for the behavior that matters. For retrieval apps,
    include representative questions and their expected supporting passages.
-4. Run the app's checks and `python3 scripts/check_repo.py`.
+4. Run the app's checks and `python3 scripts/check_repo.py`. When `factory/`,
+   `scripts/` or `.claude/hooks/` change, also run
+   `python3 -m unittest discover -s factory/tests -t .`.
 5. Update the app README and [catalog](apps/README.md). Describe what changed and
    how it was validated in the pull request.
 
@@ -24,3 +32,7 @@ packages should have a clear purpose, their own tests, and documented consumers.
 
 Use public or synthetic examples in documentation and screenshots. Credentials,
 private datasets, and machine-specific connection details stay outside Git.
+
+## Security
+
+Do not report a vulnerability in a public issue. See [SECURITY.md](SECURITY.md).

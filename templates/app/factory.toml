@@ -1,0 +1,12 @@
+# What this file means: docs/factory/DESIGN.md, section 9.
+schema = 1
+
+[commands]
+setup = "echo \"Set by this app's first plan step\""
+check = "echo \"Set by this app's first plan step\""
+
+[quality]
+format = "none: set by this app's first plan step"
+lint = "none: set by this app's first plan step"
+types = "none: set by this app's first plan step"
+tests = "none: set by this app's first plan step"

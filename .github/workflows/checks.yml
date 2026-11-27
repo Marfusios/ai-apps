@@ -22,3 +22,5 @@ jobs:
           python-version: "3.11"
       - name: Check repository conventions
         run: python scripts/check_repo.py
+      - name: Test repository tools
+        run: python -m unittest discover -s factory/tests -t .

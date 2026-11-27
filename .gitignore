@@ -12,6 +12,7 @@ secrets/
 *.key
 *.p12
 *.pfx
+.claude/settings.local.json
 
 # Local datasets, outputs, databases, and model artifacts.
 data/
@@ -59,3 +60,5 @@ Thumbs.db
 
 # Local planning and controller reports stay outside version control.
 .superpowers/
+/reports/
+/research_notes/

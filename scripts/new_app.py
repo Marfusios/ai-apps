@@ -33,13 +33,20 @@ def main() -> int:
     row = f"| [{title}]({args.name}/README.md) | Describe the app's purpose. | Scaffold |\n"
     updated_catalog = catalog.replace(CATALOG_MARKER, row + CATALOG_MARKER)
     shutil.copytree(ROOT / "templates" / "app", destination)
-    readme_path = destination / "README.md"
-    readme = readme_path.read_text(encoding="utf-8")
-    readme = readme.replace("{{APP_TITLE}}", title).replace("{{APP_SLUG}}", args.name)
-    readme_path.write_text(readme, encoding="utf-8")
+    for path in sorted(destination.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        filled = text.replace("{{APP_TITLE}}", title).replace("{{APP_SLUG}}", args.name)
+        if filled != text:
+            path.write_text(filled, encoding="utf-8", newline="")
     catalog_path.write_text(updated_catalog, encoding="utf-8")
     print(f"Created apps/{args.name}/ and registered it as a scaffold in apps/README.md.")
-    print("Next: choose the app's stack and follow docs/development.md.")
+    print("Next: write the app's design (the factory-design skill). It chooses the stack and fills in")
+    print("AGENTS.md; the app's first plan step sets the commands in factory.toml. See docs/development.md.")
     return 0
 
 

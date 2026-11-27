@@ -1,0 +1,46 @@
+#!/bin/sh
+# Run the hook script named by $1 with the first Python 3.11 or newer found. Exit 2, which blocks the tool
+# call, when that is impossible or the hook fails: a guard that cannot run must not wave things through.
+hook=${1-}
+case $0 in
+    */*) dir=${0%/*} ;;
+    *) dir=. ;;
+esac
+case $hook in
+    '' | *[!A-Za-z0-9_]*)
+        printf '%s\n' "hook launcher: give the name of a hook in $dir" >&2
+        exit 2 ;;
+esac
+if [ ! -f "$dir/$hook.py" ]; then
+    printf '%s\n' "hook launcher: there is no $hook hook in $dir" >&2
+    exit 2
+fi
+shift
+# The Stop hook treats exit 2 as "keep going", so an interactive session without a suitable Python would never
+# be able to end. Outside a factory run that hook has nothing to do anyway.
+if [ "$hook" = finish_check ] && [ "${FACTORY_RUN-}" != 1 ]; then
+    exit 0
+fi
+check='import sys; sys.exit(sys.version_info < (3, 11))'
+python=
+for candidate in python3 python; do
+    if "$candidate" -c "$check" </dev/null >/dev/null 2>&1; then
+        python=$candidate
+        break
+    fi
+done
+# Not exec: a hook that dies exits with 1, which Claude Code reports without blocking the call.
+if [ -n "$python" ]; then
+    "$python" "$dir/$hook.py" "$@"
+elif py -3 -c "$check" </dev/null >/dev/null 2>&1; then
+    # The Windows launcher takes the version as a second word, so it is tried on its own.
+    py -3 "$dir/$hook.py" "$@"
+else
+    printf '%s\n' "hook launcher: no Python 3.11 or newer found to run the $hook hook" >&2
+    exit 2
+fi
+status=$?
+if [ "$status" -ne 0 ]; then
+    printf '%s\n' "hook launcher: the $hook hook failed with exit status $status" >&2
+    exit 2
+fi

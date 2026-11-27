@@ -22,10 +22,23 @@ documents are in `apps/aviation-investigations/docs/`. See the
 apps/                 Individual applications and the application catalog
 packages/             Reusable code shared by multiple applications
 templates/app/        Starting documentation and configuration for a new app
-docs/                 Development and configuration conventions
+docs/                 Development and configuration conventions, engineering
+                      standards, and the software factory's design
+factory/              The software factory's code and configuration
 scripts/              Portable repository tools (Python standard library only)
-.github/workflows/    Automated repository checks
+.claude/              Hooks, skills and subagents for coding-agent sessions
+.github/              Issue forms, pull request template, and automated checks
 ```
+
+## How apps are built here
+
+Apps are built by coding agents from GitHub issues. An epic issue becomes a design, a
+plan, and then one pull request per plan step, and a smaller issue becomes a single fix
+pull request. A person approves and merges every one. The dispatcher that runs agents from
+issues and the automated second-model review of each pull request are still being built;
+the agent harness is the first step. Read the [design](docs/factory/DESIGN.md), the
+[agent instructions](AGENTS.md), and the [engineering standards](docs/engineering.md) for
+the details.
 
 ## Getting started
 
@@ -37,6 +50,7 @@ Docker requirements.
 git clone https://github.com/Marfusios/ai-apps.git
 cd ai-apps
 python3 scripts/check_repo.py
+python3 -m unittest discover -s factory/tests -t .
 ```
 
 On Windows, use `py -3` in place of `python3` if that is how Python is installed.
@@ -83,17 +97,22 @@ make external calls; automated checks and tests should work offline by default.
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding an app or shared package.
 Coding agents should also follow [AGENTS.md](AGENTS.md).
 
-## Checks and publication
+## Checks
 
 ```bash
 python3 scripts/check_repo.py
+python3 -m unittest discover -s factory/tests -t .
 ```
 
-The same command runs in GitHub Actions. It checks app structure, local Markdown
+The same two commands run in GitHub Actions. The checker verifies app structure, local Markdown
 links, empty secret placeholders, and common accidental credential/private-path
 patterns in tracked or non-ignored files. These checks are useful safeguards, not
 a complete secret audit of repository history.
 
-Before making the repository public, review its history, data redistribution
-permissions, and dependency licenses, and select a repository license. A license
-has not been selected yet.
+## License
+
+The code and documentation in this repository are released under the
+[MIT License](LICENSE).
+
+The license does not cover third-party material that an app includes as test or
+evaluation data. Each app's README says what that material is and where it came from.
