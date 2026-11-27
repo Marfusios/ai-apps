@@ -368,9 +368,9 @@ described only by an image name, environment values, a readiness command, and a 
 limit: no host mounts, no extra container flags, and it joins the same confined pod.
 And images may come only from registries listed in the factory's own configuration.
 
-For AirCase, the gate in this version is its offline checks (lint, type check, unit
-tests). Tests that need its database and search index join the gate once service
-containers are built.
+For AirCase, the gate in this version is its offline checks (type check and unit
+tests; it has no linter or formatter yet). Tests that need its database and search index
+join the gate once service containers are built.
 
 **Skills** (`.claude/skills/`)
 
@@ -397,10 +397,13 @@ shell launcher that finds the interpreter, so they run on Windows and Linux)
 
 | Hook | When | Blocks |
 | --- | --- | --- |
-| `guard_git` | before a shell command | force pushes in every spelling, pushes to `main`, deleting remote branches or tags, skipping hooks. Merging pull requests and changing repository rules or settings are refused in factory runs and need the person's confirmation in an interactive session |
+| `guard_git` | before a shell command | force pushes in their common spellings, pushes to `main`, deleting remote branches or tags, skipping hooks. Merging pull requests and changing repository rules or settings are refused in factory runs and need the person's confirmation in an interactive session |
 | `guard_paths` | before a file write | git's own files; credential files; in factory runs, anything outside the writable paths |
 | `guard_quality` | before a file write | new inline suppressions of the linter, type checker, or a test (a skipped or focused test) that carry no reason |
 | `finish_check` | when the agent tries to stop (factory runs only) | finishing with failing repository checks, a failing quick command in a touched app, uncommitted work, or an invalid result file |
+
+The hooks are a guard against mistakes and casual attempts, not a security boundary; the limits
+are listed in `factory/AGENT_CONTRACT.md`.
 
 The same denials are repeated as permission rules, since each mechanism covers gaps in
 the other: rules on shell arguments are easy to sidestep, and a hook sees the whole

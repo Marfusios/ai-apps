@@ -19,14 +19,14 @@ older name `aviation-casebook`). For anything beyond this file read `README.md` 
 - `web/`: the React client (`web/src`) and the mock API (`web/mock`). `web/src` imports `shared/` only.
 - `worker/`: command-line jobs (`worker/cli.ts`): ingestion, index building, the importer. Imports `shared/` and `server/`.
 - `scripts/`: operator and build scripts (fixtures, compose, release, provisioning). Imports the four above.
-- `evals/`: retrieval and ranking evaluations. Imports `shared/`, `server/`, `worker/`, and once `scripts/`.
+- `evals/`: retrieval and ranking evaluations. Imports `shared/`, `server/`, `worker/`, and in places `scripts/`.
 - `tests/`: `unit/`, `web/`, `integration/`, `e2e/`, `e2e-real/`, `support/`. May import everything.
 - `fixtures/`: public sample data, not code.
 
 Not a clean layering, so do not add to it:
 
 - `server/` and `worker/` import each other: the server uses worker modules (`worker/index/`,
-  `worker/ingest/normalize.ts`, `worker/importer/status.ts`) and the worker uses 35 server files.
+  `worker/ingest/normalize.ts`, `worker/importer/status.ts`) and the worker uses many server files.
   Check for import cycles before adding a third edge.
 - `server/http/security-headers.ts` imports `web/src/csp-hashes.ts`.
 - `web/mock/` (not `web/src`) imports `server/briefs/*` and `worker/importer/status.ts`.
@@ -58,7 +58,8 @@ Run from `apps/aviation-investigations` (setup: `corepack enable && pnpm install
 - `pnpm typecheck`: `tsc` on the server and web projects (the fast check).
 - `pnpm test`: offline `unit` and `web` Vitest projects.
 - `pnpm test:integration`: the `integration` project. Needs the local services from
-  `compose.local-services.yaml`: `pnpm services:up`, `pnpm services:setup`, then `pnpm db:migrate`; `pnpm services:down` stops them.
+  `compose.local-services.yaml`: `pnpm services:up`, `pnpm services:setup`, then `pnpm db:migrate`, which is for these local services only and takes the
+  connection variables from the local setup; `pnpm services:down` stops them.
 - There is no linter and no formatter yet.
 
 ## Pitfalls
@@ -68,8 +69,9 @@ Run from `apps/aviation-investigations` (setup: `corepack enable && pnpm install
   `provision:shared`, `importer`, `ingest`, `db:restore-drill`, `extract:image`. They act on deployed or shared services.
 - Tests and development use only the local services; never point `DATABASE_URL` or the search
   variables at a shared server.
-- Provider-backed runs cost money and are opt-in: the `eval:*` commands need an explicit flag such as `--confirm-cost`.
-  Offline tests use the fake language-model provider.
+- Provider-backed runs cost money and are opt-in. Some `eval:*` commands call paid providers or act on
+  a running service, so read a command's script and flags before you run it; a factory run never runs
+  them. Offline tests use the fake language-model provider.
 - Fixtures under `fixtures/` are generated: rebuild them with `pnpm fixtures:build` and `pnpm fixtures:build-ui`, never by hand.
 - Secrets live in ignored dotenv files; list new variable names with empty values in `.env.example`.
 - The product name changed but directory, package, database and storage-key names did not; keep them.

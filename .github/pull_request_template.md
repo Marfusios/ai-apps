@@ -1,6 +1,6 @@
 ## What changed
 
-<!-- Describe the change in a few sentences. -->
+<!-- Describe the change in a few sentences, and name each new dependency with what it is for. -->
 
 ## Why
 

@@ -34,9 +34,9 @@ scripts/              Portable repository tools (Python standard library only)
 
 Apps are built by coding agents from GitHub issues. An epic issue becomes a design, a
 plan, and then one pull request per plan step, and a smaller issue becomes a single fix
-pull request. A second model reviews each pull request, and a person approves and merges
-every one. The dispatcher that runs agents from issues is still being built; the harness
-in this change is the first step. Read the [design](docs/factory/DESIGN.md), the
+pull request. A person approves and merges every one. The dispatcher that runs agents from
+issues and the automated second-model review of each pull request are still being built;
+the agent harness is the first step. Read the [design](docs/factory/DESIGN.md), the
 [agent instructions](AGENTS.md), and the [engineering standards](docs/engineering.md) for
 the details.
 

@@ -14,10 +14,12 @@ comments on the step issue. That text is the task; the step issue only mirrors i
 
 When `FACTORY_RUN` is not set, a person started this skill. Ask them which app, epic issue and
 step they mean. The step's text from `PLAN.md` on `main` stands in for `context.md`, and the
-commit that `git merge-base main HEAD` prints stands in for `$FACTORY_BASE_SHA`: set that variable
-to it in the shell before the later commands use it. Do the same work on a branch of your own,
-report in the conversation what the result file would hold, and write no result file. The git
-rules of `AGENTS.md` hold in both modes.
+commit that `git merge-base origin/main HEAD` prints stands in for `$FACTORY_BASE_SHA`. Find it
+once and write that commit's hash literally in place of `$FACTORY_BASE_SHA` in every later
+command, because a variable set in one command is gone in the next, and a diff against an empty
+variable prints nothing and succeeds. Do the same work on a branch of your own, report in the
+conversation what the result file would hold, and write no result file. The git rules of
+`AGENTS.md` hold in both modes.
 
 ## Prepare
 
@@ -61,7 +63,8 @@ commands from `apps/<app>`. Fix what fails, and commit.
    the review.
 2. Commit everything first, since the diff holds only committed work. Then run `mktemp -d`, note
    the directory it prints, which is outside the checkout, and write the diff there:
-   `git diff "$FACTORY_BASE_SHA"...HEAD > <directory>/step.diff`.
+   `git diff "$FACTORY_BASE_SHA"...HEAD > <directory>/step.diff`. Check that the file is not empty
+   before you hand it over: an empty diff means the base was wrong.
 3. Start the `step-reviewer` subagent and give it the diff file's path, the step's full text from
    `context.md`, and the app's path `apps/<app>`.
 4. It answers `VERDICT: pass` or `VERDICT: fail`, then one finding per line as

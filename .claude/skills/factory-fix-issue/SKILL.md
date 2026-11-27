@@ -13,10 +13,12 @@ title, and `$FACTORY_JOB_DIR/context.md` holds the issue's text and trusted comm
 
 When `FACTORY_RUN` is not set, a person started this skill. Ask them which issue and app they
 mean. The issue as `gh issue view <number> --comments` shows it stands in for `context.md`, and
-the commit that `git merge-base main HEAD` prints stands in for `$FACTORY_BASE_SHA`: set that
-variable to it in the shell before the later commands use it. Do the same work on a branch of your
-own, report in the conversation what the result file would hold, and write no result file. The git
-rules of `AGENTS.md` hold in both modes.
+the commit that `git merge-base origin/main HEAD` prints stands in for `$FACTORY_BASE_SHA`. Find it
+once and write that commit's hash literally in place of `$FACTORY_BASE_SHA` in every later
+command, because a variable set in one command is gone in the next, and a diff against an empty
+variable prints nothing and succeeds. Do the same work on a branch of your own, report in the
+conversation what the result file would hold, and write no result file. The git rules of
+`AGENTS.md` hold in both modes.
 
 ## Decide whether it is one fix
 
@@ -50,7 +52,8 @@ any code (last section) when:
 ## Review and verify
 
 1. Run `mktemp -d` and note the directory it prints, which is outside the checkout. Write the diff
-   of your commits there: `git diff "$FACTORY_BASE_SHA"...HEAD > <directory>/fix.diff`.
+   of your commits there: `git diff "$FACTORY_BASE_SHA"...HEAD > <directory>/fix.diff`. Check that the file is not empty
+   before you hand it over: an empty diff means the base was wrong.
 2. Start the `step-reviewer` subagent and give it the diff file's path, the issue's text with the
    behaviour it expects as the acceptance criteria, and the app's path `apps/<app>`.
 3. It answers `VERDICT: pass` or `VERDICT: fail`, then one finding per line as
