@@ -149,6 +149,13 @@ class SettlingTest(unittest.TestCase):
         other = issue(12, comments=(marker_comment(3, "needs_input", job="j0"), comment(4)))
         self.assertEqual(run(other, jobs=[self.CLOSED]), [])
 
+    def test_a_marker_whose_job_is_not_a_string_counts_as_no_job_and_raises_nothing(self):
+        for job in (["j1"], {"a": 1}, 5, None):
+            with self.subTest(job=job):
+                history = issue(12, comments=(marker_comment(3, "needs_input", job=job),))
+                self.assertEqual(run(history), HUMAN_12)
+                self.assertEqual(run(history, jobs=[self.CLOSED]), [])
+
     def test_a_fresh_issue_with_a_closed_job_does_not_start(self):
         self.assertEqual(run(issue(12), jobs=[self.CLOSED]), [])
 

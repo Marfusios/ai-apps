@@ -160,7 +160,8 @@ def _job_rows(issue: Issue, jobs: Sequence[JobView]) -> list[Action] | None:
 
 def _is_settling(issue: Issue, jobs: Sequence[JobView], bot: Bot) -> bool:
     """True while a job the dispatcher closed has no marker of its own on the issue yet: the poll may lag."""
-    seen = {marker.data.get("job") for marker in issue.markers(bot)}
+    jobs_seen = (marker.data.get("job") for marker in issue.markers(bot))
+    seen = {job for job in jobs_seen if isinstance(job, str)}  # any other value is unhashable or no job id
     return any(job.issue == issue.number and job.state == "closed" and job.job_id not in seen for job in jobs)
 
 
