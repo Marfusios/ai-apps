@@ -53,8 +53,7 @@ class ChooseAppTest(unittest.TestCase):
         self.assertIsNone(jobs.choose_app(stranger_form, apps, CONFIG))
         stranger_comment = issue(body="no form", comments=(comment("app: beta", "stranger"),))
         self.assertIsNone(jobs.choose_app(stranger_comment, apps, CONFIG))
-        impostor = bot_comment("app: beta")
-        impostor = comment(impostor.body, BOT.login, author_id=BOT.user_id + 1)
+        impostor = comment("app: beta", BOT.login, author_id=BOT.user_id + 1)
         self.assertIsNone(jobs.choose_app(issue(comments=(impostor,)), apps, CONFIG))
 
     def test_choose_app_returns_none_for_an_unknown_name_with_two_apps(self):
