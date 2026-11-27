@@ -780,7 +780,8 @@ class ProgramTests(RunnerCase):
 
     def test_main_reports_bad_settings_without_echoing_them(self):
         env = {"FACTORY_SPOOL_DIR": "relative-secret"}
-        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"),                 self.assertLogs("factory.runner", level="ERROR") as logs:
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                self.assertLogs("factory.runner", level="ERROR") as logs:
             self.assertEqual(runner.main([]), 2)
         self.assertNotIn("relative-secret", "\n".join(logs.output))
 
@@ -790,10 +791,10 @@ class ProgramTests(RunnerCase):
         for expected, confinement in ((0, True), (1, False)):
             instance = self.runner(confined=lambda: confinement)
             output = io.StringIO()
-            with mock.patch.dict(os.environ, env, clear=True), mock.patch("sys.stdout", output),                     mock.patch.object(logging, "basicConfig"), mock.patch.object(runner, "Runner", lambda *_: instance):
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch("sys.stdout", output), \
+                    mock.patch.object(logging, "basicConfig"), mock.patch.object(runner, "Runner", lambda *_: instance):
                 self.assertEqual(runner.main(["--check"]), expected)
             self.assertEqual(len(output.getvalue().splitlines()), 3)
-
 
     def test_main_recovers_jobs_left_running_and_then_handles_one_job(self):
         stuck, queued = self.submit(minutes=1), self.submit(minutes=2)
@@ -801,7 +802,9 @@ class ProgramTests(RunnerCase):
         env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
                "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
         instance = self.runner()
-        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"),                 mock.patch.object(runner, "Runner", lambda *_: instance),                 self.assertLogs("factory.runner", level="WARNING"):
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                mock.patch.object(runner, "Runner", lambda *_: instance), \
+                self.assertLogs("factory.runner", level="WARNING"):
             self.assertEqual(runner.main(["--once"]), 0)
         self.assertEqual(self.spool.run_record(stuck)["reason"], "internal")
         self.assertEqual(self.spool.state(queued), "finished")
@@ -809,7 +812,8 @@ class ProgramTests(RunnerCase):
     def test_main_stops_when_the_spool_is_not_ready(self):
         env = {"FACTORY_SPOOL_DIR": str(self.root / "nowhere"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
                "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
-        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"),                 self.assertLogs("factory.runner", level="ERROR"):
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                self.assertLogs("factory.runner", level="ERROR"):
             self.assertEqual(runner.main(["--once"]), 1)
 
 
