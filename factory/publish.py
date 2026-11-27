@@ -34,7 +34,6 @@ NOT_FOUND = 404
 LATEST_RESET = timedelta(hours=6)
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 NOT_KEPT = "the work so far was not kept"
-PUSH_REFUSED = 1  # git's exit status when the remote refuses a ref; a network or sign-in failure exits 128
 REFUSED_PUSH = "GitHub refused the push of the checked commits"
 BRANCH_MOVED = "the work branch changed on GitHub while the run was going"
 STATUS_AFTER = {"done": BUILDING, "usage_limit": QUEUED}  # every other outcome waits for a person
@@ -418,9 +417,7 @@ class Publisher:
             return self._store(job_id, settled.rejected(BRANCH_MOVED))
         try:
             gitops.push(self.workrepo, self.push_url, self.token(), settled.head_sha, branch)
-        except gitops.GitError as error:
-            if error.status != PUSH_REFUSED:
-                raise
+        except gitops.PushRefused:
             return self._store(job_id, settled.rejected(REFUSED_PUSH))
         return settled
 

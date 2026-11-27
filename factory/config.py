@@ -192,7 +192,9 @@ def load(path: Path | None = None) -> Config:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as error:
-        raise ConfigError(f"cannot read {path.name}: {error}") from error
+        # str(OSError) ends with the file's full path, which must not reach a log line
+        reason = (error.strerror or type(error).__name__) if isinstance(error, OSError) else error
+        raise ConfigError(f"cannot read {path.name}: {reason}") from error
     if data.get("schema") != 1 or isinstance(data.get("schema"), bool):
         raise ConfigError("schema must be 1")
     unknown = set(data) - KEYS

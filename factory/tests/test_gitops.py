@@ -204,6 +204,82 @@ class GitopsTestCase(unittest.TestCase):
             self.assertFalse(any(argument.startswith("+") for argument in arguments), argv)
             self.assertIn(arguments[-1], (f"{pushed}:refs/heads/{BRANCH}", f"{sibling}:refs/heads/{BRANCH}"))
 
+    def refused_by_the_remote(self, how: str) -> GitError:
+        """Push a commit that the bare remote refuses, one way or the other, and return what push raised."""
+        remote, workrepo = self.work_repository()
+        self.upstream.switch(BRANCH)
+        theirs = self.upstream.commit({"apps/demo/a.txt": "theirs"})
+        self.take(workrepo, "theirs")
+        if how == "not a fast-forward":
+            gitops.push(workrepo, str(remote), TOKEN, theirs, BRANCH)
+            self.upstream.switch(BRANCH, self.main)
+            mine = self.upstream.commit({"apps/demo/a.txt": "mine"})
+            self.take(workrepo, "mine")
+        else:
+            hook = remote / "hooks" / "pre-receive"
+            hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8", newline="\n")
+            hook.chmod(0o755)
+            mine = theirs
+        with self.assertRaises(GitError) as raised:
+            gitops.push(workrepo, str(remote), TOKEN, mine, BRANCH)
+        return raised.exception
+
+    def assert_refused(self, error: GitError) -> None:
+        self.assertIsInstance(error, gitops.PushRefused)
+        self.assertEqual((error.subcommand, error.status), ("push", 1))
+        self.assertEqual(str(error), "git push failed: exit status 1")
+
+    def test_push_says_so_when_the_branch_is_not_a_fast_forward(self):
+        self.assert_refused(self.refused_by_the_remote("not a fast-forward"))
+
+    def test_push_says_so_when_a_pre_receive_hook_rejects_the_ref(self):
+        self.assert_refused(self.refused_by_the_remote("a pre-receive hook"))
+
+    def test_push_that_fails_for_another_reason_is_not_a_refusal(self):
+        _, workrepo = self.work_repository()
+        nowhere = self.tmp / "never-created.git"
+        with self.assertRaises(GitError) as raised:
+            gitops.push(workrepo, str(nowhere), TOKEN, self.main, BRANCH)
+        self.assertNotIsInstance(raised.exception, gitops.PushRefused)
+        for text in (str(nowhere), self.tmp.name, TOKEN, "rejected"):
+            self.assertNotIn(text, str(raised.exception))
+
+    def test_a_push_that_failed_in_transit_is_not_a_refusal_even_with_output(self):
+        _, workrepo = self.work_repository()
+        with mock.patch("factory.gitops.run_git_status", return_value=(1, b"To url\n=\trefs/heads/x:refs/heads/x\t[up to date]\n")):
+            with self.assertRaises(GitError) as raised:
+                gitops.push(workrepo, URL, TOKEN, self.main, BRANCH)
+        self.assertNotIsInstance(raised.exception, gitops.PushRefused)
+
+    def test_push_reads_the_rejected_flag_only_at_the_start_of_a_line(self):
+        _, workrepo = self.work_repository()
+        cases = {
+            b"To url\n!\trefs/heads/x:refs/heads/x\t[rejected] (fetch first)\n": True,
+            b"To url\n \trefs/heads/x:refs/heads/x\t1..2\n!\trefs/heads/y:refs/heads/y\t[remote rejected]\n": True,
+            b"To url\n*\trefs/heads/x:refs/heads/x\t[new branch]\n": False,
+            b"To url\n \trefs/heads/x:refs/heads/x\t! [rejected]\n": False,
+            b"!no tab\n": False,
+            b"\xff!\t": False,
+        }
+        for output, refused in cases.items():
+            with self.subTest(output=output), mock.patch("factory.gitops.run_git_status", return_value=(1, output)):
+                with self.assertRaises(GitError) as raised:
+                    gitops.push(workrepo, URL, TOKEN, self.main, BRANCH)
+                self.assertEqual(isinstance(raised.exception, gitops.PushRefused), refused)
+
+    def test_push_stops_a_flood_of_output_and_raises_a_plain_error(self):
+        _, workrepo = self.work_repository()
+        with mock.patch("factory.gitops.PUSH_OUTPUT_LIMIT", 10), \
+                mock.patch("factory.gitops.run_git_status", wraps=gitops.run_git_status) as run:
+            with self.assertRaises(GitError):
+                gitops.push(workrepo, str(self.tmp / "never-created.git"), TOKEN, self.main, BRANCH)
+        self.assertEqual(run.call_args.kwargs["max_output"], 10)
+
+    def test_run_git_still_raises_on_a_failed_command_and_discards_its_output(self):
+        with self.assertRaises(GitError) as raised:
+            gitops.run_git(self.tmp / "missing.git", "status")
+        self.assertEqual(raised.exception.status, 128)
+
     def test_the_token_reaches_git_through_the_environment_only(self):
         calls = []
 

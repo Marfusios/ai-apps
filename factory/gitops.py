@@ -23,6 +23,7 @@ TIMEOUT_SECONDS = 300
 LINGER_SECONDS = 2  # how long the threads of a stopped git may take to end before they are abandoned
 ANSWERED_NO = 1  # the exit status of a yes-or-no git command, such as `merge-base --is-ancestor`, for "no"
 CHUNK = 65536
+PUSH_OUTPUT_LIMIT = 100_000  # bytes of `git push --porcelain` output that are read, far more than a push prints
 # Automatic gc and maintenance would start a git that outlives the call and holds its pipes.
 NO_MAINTENANCE = ("-c", "gc.auto=0", "-c", "maintenance.auto=false")
 
@@ -39,6 +40,10 @@ class GitError(Exception):
         self.subcommand = subcommand
         self.status: int | None = ending if isinstance(ending, int) else None
         super().__init__(f"git {subcommand} failed: {f'exit status {ending}' if isinstance(ending, int) else ending}")
+
+
+class PushRefused(GitError):
+    """A push failed because the remote, or git, rejected the ref; a failure in transit is a plain GitError."""
 
 
 class GitOutputTooLarge(GitError):
@@ -170,15 +175,16 @@ def _run(argv: list[str], env: dict[str, str], input: bytes | None, timeout: int
     return process.returncode, output.data
 
 
-def run_git(
+def run_git_status(
     repo: Path | None, *args: str, token: str | None = None, input: bytes | None = None,
     timeout: int = TIMEOUT_SECONDS, max_output: int | None = None,
-) -> bytes:
-    """Run git on `repo` and return its standard output.
+) -> tuple[int, bytes]:
+    """Run git on `repo` and return its exit status and standard output, whatever the status is.
 
     `repo` is passed as --git-dir, so git never looks for a repository. Standard error is discarded, since nothing
     of it may reach an error message. With `max_output`, git is stopped as soon as it prints more than that many
-    bytes, and GitOutputTooLarge is raised, so a caller can bound what a hostile repository makes it hold.
+    bytes, and GitOutputTooLarge is raised, so a caller can bound what a hostile repository makes it hold. A timeout
+    or a git that cannot run raises GitError; a failed command does not, so the caller must look at the status.
     """
     argv = ["git", *([f"--git-dir={repo}"] if repo is not None else []), *NO_MAINTENANCE, *args]
     subcommand = _subcommand(args)
@@ -190,8 +196,17 @@ def run_git(
         raise GitError(subcommand, type(error).__name__) from None
     if output is None:
         raise GitOutputTooLarge(subcommand, max_output)
+    return status, output
+
+
+def run_git(
+    repo: Path | None, *args: str, token: str | None = None, input: bytes | None = None,
+    timeout: int = TIMEOUT_SECONDS, max_output: int | None = None,
+) -> bytes:
+    """Run git on `repo` and return its standard output; a command that fails raises GitError, which keeps no output."""
+    status, output = run_git_status(repo, *args, token=token, input=input, timeout=timeout, max_output=max_output)
     if status != 0:
-        raise GitError(subcommand, status)
+        raise GitError(_subcommand(args), status)
     return output
 
 
@@ -232,4 +247,12 @@ def push(workrepo: Path, url: str, token: str, sha: str, branch: str) -> None:
     is_commit = isinstance(sha, str) and SHA.fullmatch(sha)
     if not (is_factory_branch and is_commit):
         raise GitError("push", "refused: only a commit pushed to a factory branch is allowed")
-    run_git(workrepo, "push", "--", url, f"{sha}:refs/heads/{branch}", token=token)
+    status, output = run_git_status(workrepo, "push", "--porcelain", "--", url, f"{sha}:refs/heads/{branch}",
+                                    token=token, max_output=PUSH_OUTPUT_LIMIT)
+    if status == 0:
+        return
+    # A rejected ref has its own porcelain line, flagged "!". Without one the push failed in transit (a server
+    # error, a dropped connection) or at signing in, and trying again can succeed.
+    if any(line.startswith("!	") for line in output.decode("utf-8", "replace").splitlines()):
+        raise PushRefused("push", status)
+    raise GitError("push", status)

@@ -14,7 +14,7 @@ from unittest import mock
 from factory import bundle_check, compose, gitops, jobs, markers
 from factory import config as factory_config
 from factory.github_api import GitHubError
-from factory.gitops import GitError
+from factory.gitops import GitError, PushRefused
 from factory.publish import MAX_SETTLED_BYTES, Publisher
 from factory.result import MAX_RESULT_BYTES
 from factory.snapshot import Bot, Comment, Issue
@@ -724,6 +724,12 @@ class WorkBranchOnGitHubTest(PublishTestCase):
                 self.assertEqual(self.remote_branch(), theirs)
                 self.assertRejectedFor(REFUSED_PUSH)
 
+    def test_a_refusal_the_push_reports_is_rejected_without_a_head(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        with mock.patch("factory.gitops.push", side_effect=PushRefused("push", 1)):
+            self.assertEqual(self.publish(), "rejected")
+        self.assertRejectedFor(REFUSED_PUSH)
+
     def test_a_repeat_after_a_refused_push_pushes_nothing_and_posts_once(self):
         self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
         self.someone_pushes()
@@ -737,7 +743,7 @@ class WorkBranchOnGitHubTest(PublishTestCase):
 
     def test_a_push_that_fails_for_another_reason_is_left_for_the_next_attempt(self):
         self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
-        for status in (128, None):
+        for status in (1, 128, None):  # 1 too: git exits 1 when an upload fails in transit, which is no refusal
             with self.subTest(status=status), \
                     mock.patch("factory.gitops.push", side_effect=GitError("push", status if status else "timeout")):
                 with self.assertRaises(GitError):

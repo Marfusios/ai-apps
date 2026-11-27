@@ -211,6 +211,13 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             load(Path(tempfile.gettempdir()) / "no-such-factory-config.toml")
 
+    def test_an_unreadable_file_is_named_without_its_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ConfigError) as caught:
+                load(Path(directory) / "missing.toml")
+        self.assertNotIn(Path(directory).name, str(caught.exception))
+        self.assertTrue(str(caught.exception).startswith("cannot read missing.toml: "))
+
 
 if __name__ == "__main__":
     unittest.main()
