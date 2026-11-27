@@ -184,7 +184,7 @@ class RunnerCase(unittest.TestCase):
             "schema": 1, "job_id": job_id, "stage": "fix_issue", "skill": "factory-fix-issue", "app": "demo",
             "branch": BRANCH, "base_sha": self.base, "repository_url": "https://github.com/owner/name.git",
             "model": "opus", "permission_mode": "auto", "timeout_minutes": 90, "max_turns": 300,
-            "git_name": "factory-test[bot]", "git_email": "bot@example.com", **changes,
+            "git_name": "factory-test[bot]", "git_email": "bot@example.com", "round": 0, "pull_request": 0, **changes,
         }
 
     def submit(self, minutes: int = 0, **changes) -> str:

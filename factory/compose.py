@@ -3,9 +3,9 @@
 A run comment is the bot's own lines (a header, fixed lead-ins and headings, one closing line, a hidden
 marker) around text written by an agent or taken from a bundle. Each piece of that text is neutralised
 once and then placed inside a Markdown container it cannot leave, so it can neither swallow the bot's
-lines nor repeat them at the start of a line: a block quote (`> `) for the summary and the failure
-reason, a list item with indented continuation lines for questions, problems and follow-ups. A blank line
-ends every container. The marker is always the last line. When the comment is over GitHub's size limit,
+lines nor repeat them at the start of a line: a block quote (`> `) for the summary, the failure
+reason and a reply to a review thread, a list item with indented continuation lines for questions,
+problems and follow-ups. A blank line ends every container. The marker is always the last line. When the comment is over GitHub's size limit,
 the already-neutralised questions are cut evenly, then the summary, then the failure reason, each at most
 once. A pull request body starts with the one line GitHub acts on, `Closes #<issue>`.
 """
@@ -79,7 +79,20 @@ _NOTICES: Mapping[str, tuple[str, str]] = {
         "the work branch, or close this issue.",
         "failed",
     ),
+    "fix-rounds-exhausted": (
+        "Three automated fix runs in a row did not make the checks pass. Comment `/factory retry` to start again, "
+        "or a person takes over the pull request.",
+        "failed",
+    ),
 }
+
+THREAD_REPLY_LIMIT = 4_000
+MAX_ROUND = 1_000
+_HEAD = re.compile(r"[0-9a-f]{40}")
+HANDOFF_TEXT = (
+    "The checks pass and the automated review found nothing blocking. The pull request is ready for a person's "
+    "review."
+)
 
 
 def _check(name: str, value: object, pattern: re.Pattern[str], *, optional: bool = False) -> str:
@@ -220,8 +233,14 @@ def run_comment(
     kept_commits: int = 0,
     retry_at: str = "",
     reason: str | None = None,
+    round: int = 0,
+    head: str = "",
 ) -> str:
-    """The comment after a run, ending with a marker that no other text in it can imitate."""
+    """The comment after a run, ending with a marker that no other text in it can imitate.
+
+    A `round` above 0 and a non-empty `head` (the branch head after the run) go into the marker; the round
+    also into the header.
+    """
     if outcome not in OUTCOME_WORDS:
         raise ValueError(f"unknown outcome: {outcome!r}")
     if reason is not None and reason not in REASON_WORDS:
@@ -234,11 +253,20 @@ def run_comment(
     _check("retry_at", retry_at, _RETRY_AT, optional=True)
     _check("pull_request_url", pull_request_url, PULL_REQUEST_URL, optional=True)
 
+    _check("head", head, _HEAD, optional=True)
+    if isinstance(round, bool) or not isinstance(round, int) or not 0 <= round <= MAX_ROUND:
+        raise ValueError("round must be an integer from 0 to 1000")
+
     marker = {"kind": "run", "job": job_id, "stage": stage, "outcome": outcome}
     if outcome == "usage_limit":
         marker["retry_at"] = retry_at
-    header = (f"**Factory run** · stage `{stage}` · **{OUTCOME_WORDS[outcome]}** · {_duration(duration_seconds)}"
-              f" · model `{model or 'unknown'}`")
+    if round:
+        marker["round"] = round
+    if head:
+        marker["head"] = head
+    round_part = f" · round {round}" if round else ""
+    header = (f"**Factory run** · stage `{stage}`{round_part} · **{OUTCOME_WORDS[outcome]}** · "
+              f"{_duration(duration_seconds)} · model `{model or 'unknown'}`")
     reason_line = f"This run ended because {REASON_WORDS[reason]}." if reason is not None else ""
     problems_section = _problems_section(problems)
     follow_ups_section = _follow_ups_section(follow_ups)
@@ -306,6 +334,20 @@ def pull_request_body(body: str, issue_number: int, follow_ups: Sequence[Mapping
     if items:
         parts.append("## Follow-ups\n\n" + "\n".join(items))
     return "\n\n".join(parts)
+
+
+def thread_reply(body: str) -> str:
+    """The agent's reply to a review thread: neutralised once, as a block quote under a fixed lead-in."""
+    text = _neutral(body, THREAD_REPLY_LIMIT)
+    if not text:
+        raise ValueError("a reply must have text")
+    return _quoted_section("The agent replies:", text)
+
+
+def handoff_comment(head: str) -> str:
+    """The fixed comment that hands a pull request over, with a marker naming the head it was handed over at."""
+    _check("head", head, _HEAD)
+    return f"{HANDOFF_TEXT}\n\n{markers.encode({'kind': 'handoff', 'head': head})}"
 
 
 def notice(key: str) -> str:

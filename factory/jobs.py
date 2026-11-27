@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from factory import markers
 from factory.config import MODEL, PERMISSION_MODES, STAGE_LIMITS, Config, is_trusted
@@ -12,6 +13,16 @@ SKILLS = {"fix_issue": "factory-fix-issue", "fix": "factory-fix", "revise": "fac
 MAX_CONTEXT_CHARS = 150_000
 MAX_ITEM_CHARS = 20_000
 MAX_TITLE_CHARS = 300
+MAX_LOG_CHARS = 20_000
+MAX_FAILED_CHECKS = 5
+MAX_NAME_CHARS = 100
+MAX_PATH_CHARS = 200
+# The least of a section that cutting it down to share the room keeps; below it a comment is dropped instead.
+SECTION_FLOOR = 1_000
+CUT_LINE = "(truncated)"
+MAX_ROUND = 1_000
+MAX_PULL_REQUEST = 2**53  # a bound that keeps the number exact in JSON readers
+THREAD_ID = re.compile(r"[A-Za-z0-9_=-]{1,100}")
 WITHHELD_TITLE = "(title withheld)"
 WITHHELD_BODY = "The issue was opened by someone outside the trusted list, so its text is not included."
 APP_LINE = re.compile(r"(?i:app):\s*([a-z0-9][a-z0-9-]*)\s*")
@@ -27,8 +38,19 @@ REPOSITORY_URL = re.compile(r"https://github\.com/(?!\.+/)[A-Za-z0-9._-]+/(?!\.+
 MAX_IDENTITY_CHARS = 200
 REQUEST_KEYS = (
     "schema", "job_id", "stage", "skill", "app", "branch", "base_sha", "repository_url", "model",
-    "permission_mode", "timeout_minutes", "max_turns", "git_name", "git_email",
+    "permission_mode", "timeout_minutes", "max_turns", "git_name", "git_email", "round", "pull_request",
 )
+
+
+@dataclass(frozen=True)
+class Thread:
+    """A review thread on a pull request: where it hangs and the (author, body) of each comment."""
+
+    id: str
+    path: str
+    line: int
+    first_comment_id: int
+    comments: tuple[tuple[str, str], ...]
 
 
 def is_retry(comment: Comment) -> bool:
@@ -135,8 +157,71 @@ def _comment_block(comment: Comment, config: Config, bot: Bot) -> str | None:
     return None
 
 
-def context(issue: Issue, config: Config, bot: Bot) -> str:
-    """The Markdown the agent reads: only text from trusted people and the factory itself."""
+def _one_line(text: str, limit: int) -> str:
+    """The text on one line of printable characters, cut to `limit`: a heading built from it cannot end early."""
+    return "".join(char for char in " ".join(text.split()) if char.isprintable())[:limit]
+
+
+def _section(heading: str, text: str) -> str:
+    return f"## {_one_line(heading, MAX_TITLE_CHARS)}\n\n{_quoted(text)}"
+
+
+def _cut_section(heading: str, text: str, size: int) -> str:
+    """The section with the longest start of the text whose rendering, with the cut line, is at most `size`."""
+    def render(length: int) -> str:
+        start = text[:length].rstrip("\n")
+        return _section(heading, f"{start}\n{CUT_LINE}" if start else CUT_LINE)
+
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(render(middle)) <= size:
+            low = middle
+        else:
+            high = middle - 1
+    return render(low)
+
+
+def _fit_sections(sections: Sequence[tuple[str, str]], rendered: list[str], room: int) -> list[str] | None:
+    """The sections in `room` characters, the longest cut first to an equal share; None below the floor."""
+    if not sections:
+        return [] if room >= 0 else None
+    sizes = [len(text) for text in rendered]
+    if sum(sizes) <= room:
+        return rendered
+    low, high = 0, max(sizes)
+    while low < high:  # the largest share that still fits
+        middle = (low + high + 1) // 2
+        if sum(min(size, middle) for size in sizes) <= room:
+            low = middle
+        else:
+            high = middle - 1
+    if low < SECTION_FLOOR:
+        return None
+    return [
+        _cut_section(heading, text, low) if size > low else whole
+        for (heading, text), whole, size in zip(sections, rendered, sizes)
+    ]
+
+
+def _leave_out_sections(rendered: list[str], room: int) -> list[str]:
+    """As many whole sections from the start as fit, then a line saying how many are left out."""
+    def line(kept: int) -> str:
+        return f"Sections left out to keep this text short: {len(rendered) - kept}."
+
+    kept = len(rendered)
+    while kept and sum(len(text) + 2 for text in rendered[:kept]) + len(line(kept)) + 2 > room:
+        kept -= 1
+    return [*rendered[:kept], line(kept)]
+
+
+def context(issue: Issue, config: Config, bot: Bot, *, sections: Sequence[tuple[str, str]] = ()) -> str:
+    """The Markdown the agent reads: only text from trusted people and the factory itself.
+
+    Each `(heading, text)` of `sections` follows the comments as `## <heading>` and the text quoted line by line.
+    To stay within `MAX_CONTEXT_CHARS` the sections are cut first, the longest down to an equal share (each keeps
+    at least `SECTION_FLOOR` characters), and only then are older comments dropped.
+    """
     trusted = is_trusted(issue.author, config)
     body = _cut(issue.body) if trusted else WITHHELD_BODY
     head = [f"# Issue #{issue.number}: {_title(issue, config)}"] + ([body] if body.strip() else [])
@@ -150,19 +235,79 @@ def context(issue: Issue, config: Config, bot: Bot) -> str:
             blocks.append(block)
     tail = [f"Comments by others, not included: {dropped}."] if dropped else []
 
-    def build(left_out: int) -> str:
+    def build(left_out: int, quoted: Sequence[str] = ()) -> str:
         note = [f"Older comments left out to keep this text short: {left_out}."] if left_out else []
-        return "\n\n".join([*head, "## Comments", *note, *blocks[left_out:], *tail]) + "\n"
+        return "\n\n".join([*head, "## Comments", *note, *blocks[left_out:], *tail, *quoted]) + "\n"
 
-    for left_out in range(len(blocks)):
-        text = build(left_out)
-        if len(text) <= MAX_CONTEXT_CHARS:
-            return text
-    return build(len(blocks))
+    rendered = [_section(heading, text) for heading, text in sections]
+    for left_out in range(len(blocks) + 1):
+        room = MAX_CONTEXT_CHARS - len(build(left_out)) - 2 * len(rendered)  # the blank line before each section
+        fitted = _fit_sections(sections, rendered, room)
+        if fitted is not None:
+            return build(left_out, fitted)
+    return build(len(blocks), _leave_out_sections(rendered, room + 2 * len(rendered)) if rendered else [])
 
 
-def job_file(*, stage: str, app: str, issue: Issue, branch: str, base_sha: str, config: Config) -> dict:
-    """The `job.json` the agent contract promises."""
+def _failed_check_name(name: str) -> str:
+    return _one_line(name, MAX_NAME_CHARS) or "(unnamed)"
+
+
+def fix_sections(logs: Sequence[tuple[str, str]], review_text: str) -> list[tuple[str, str]]:
+    """The sections of a `fix` run's context: the end of each failed check's log, then the automated review.
+
+    At most `MAX_FAILED_CHECKS` checks are shown; a last section says how many were left out and by name.
+    """
+    sections = []
+    for name, log in logs[:MAX_FAILED_CHECKS]:
+        tail = log[-MAX_LOG_CHARS:]
+        sections.append((f"Failed check: {_failed_check_name(name)}", tail if tail.strip() else "(the log is empty)"))
+    left_out = logs[MAX_FAILED_CHECKS:]
+    if left_out:
+        names = ", ".join(_failed_check_name(name) for name, _ in left_out)
+        sections.append(("Failed checks not shown", f"{len(left_out)} more failed checks were left out: {names}"))
+    if review_text.strip():
+        sections.append(("Automated review", review_text))
+    return sections
+
+
+def _thread_heading(thread: Thread) -> str:
+    path = _one_line(thread.path, MAX_PATH_CHARS) or "(no path)"
+    line = thread.line if isinstance(thread.line, int) and not isinstance(thread.line, bool) else 0
+    return f"Review thread {thread.id} ({path}:{line})" if line > 0 else f"Review thread {thread.id} ({path})"
+
+
+def _thread_text(thread: Thread, config: Config) -> str:
+    return "\n\n".join(f"{author}:\n{body}" for author, body in thread.comments if is_trusted(author, config))
+
+
+def revise_sections(
+    review_body: str, threads: Sequence[Thread], instruction: str, config: Config
+) -> list[tuple[str, str]]:
+    """The sections of a `revise` run's context: the review, its threads and the person's instruction.
+
+    A thread keeps only the comments of trusted people and vanishes when none is left; a thread whose id is not an
+    identifier (it comes from an API and goes into a heading) is dropped.
+    """
+    sections = [("Review", review_body)] if review_body.strip() else []
+    for thread in threads:
+        text = _thread_text(thread, config) if THREAD_ID.fullmatch(thread.id) else ""
+        if text.strip():
+            sections.append((_thread_heading(thread), text))
+    if instruction.strip():
+        sections.append(("Instruction", instruction))
+    return sections
+
+
+def thread_index(threads: Sequence[Thread]) -> dict[str, int]:
+    """`{thread id: first comment id}` for the threads whose id is an identifier: what `threads.json` holds."""
+    return {thread.id: thread.first_comment_id for thread in threads if THREAD_ID.fullmatch(thread.id)}
+
+
+def job_file(
+    *, stage: str, app: str, issue: Issue, branch: str, base_sha: str, config: Config, round: int = 0,
+    pull_request: int = 0,
+) -> dict:
+    """The `job.json` the agent contract promises. `pull_request` is the request's; the job file has no key for it."""
     return {
         "schema": 1,
         "stage": stage,
@@ -172,14 +317,18 @@ def job_file(*, stage: str, app: str, issue: Issue, branch: str, base_sha: str, 
         "step_id": None,
         "branch": branch,
         "base_sha": base_sha,
-        "round": 0,
+        "round": round,
     }
 
 
 def request_file(
-    *, job_id: str, stage: str, app: str, branch: str, base_sha: str, repository: str, config: Config, bot: Bot
+    *, job_id: str, stage: str, app: str, branch: str, base_sha: str, repository: str, config: Config, bot: Bot,
+    round: int = 0, pull_request: int = 0,
 ) -> dict:
-    """The `request.json` the runner reads to start the container."""
+    """The `request.json` the runner reads to start the container.
+
+    The dispatcher and the runner are deployed together, so requests without `round` and `pull_request` are refused.
+    """
     settings = config.stages[stage]
     return {
         "schema": 1,
@@ -196,6 +345,8 @@ def request_file(
         "max_turns": settings.max_turns,
         "git_name": bot.login,
         "git_email": bot.email,
+        "round": round,
+        "pull_request": pull_request,
     }
 
 
@@ -223,6 +374,10 @@ def _integer_in(value: object, key: str) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
 
 
+def _number_in(value: object, low: int, high: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+
 def validate_request(data: object) -> list[str]:
     """Every way `data` differs from what `request_file` builds; empty when it is acceptable."""
     if not isinstance(data, dict):
@@ -245,6 +400,8 @@ def validate_request(data: object) -> list[str]:
         "max_turns": _integer_in(data.get("max_turns"), "max_turns"),
         "git_name": _identity(data.get("git_name")),
         "git_email": _identity(data.get("git_email")),
+        "round": _number_in(data.get("round"), 0, MAX_ROUND),
+        "pull_request": _number_in(data.get("pull_request"), 0, MAX_PULL_REQUEST),
     }
     problems += [f"{key} is not acceptable" for key in REQUEST_KEYS if key in data and not checks[key]]
     return problems
