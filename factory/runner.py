@@ -101,12 +101,12 @@ def _run_capped(argv: list[str], env: Mapping[str, str] | None, cwd: Path | None
     program has ended the threads have COPY_LINGER_SECONDS to finish: a child that kept a pipe open cannot keep the
     runner waiting, and what it writes later is not kept.
     """
-    def target(output: BinaryIO | None, limit: int | None) -> object:
+    def destination(output: BinaryIO | None, limit: int | None) -> object:
         return subprocess.PIPE if limit is not None else (output or subprocess.DEVNULL)
 
     (stdout, stdout_limit), (stderr, stderr_limit) = streams
-    with subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=target(stdout, stdout_limit),
-                          stderr=target(stderr, stderr_limit)) as process:
+    with subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=destination(stdout, stdout_limit),
+                          stderr=destination(stderr, stderr_limit)) as process:
         copies = []
         for pipe, (output, limit) in zip((process.stdout, process.stderr), streams):
             if limit is not None:
