@@ -7,14 +7,14 @@ from factory import textsafe
 Z = textsafe.ZWSP
 CASES = [
     ("thanks @octocat and @org/team", f"thanks @{Z}octocat and @{Z}org/team"),
-    ("Closes #12, see GH-7 and gh-8", f"Closes #{Z}12, see GH-{Z}7 and gh-{Z}8"),
+    ("Closes #12, see GH-7 and gh-8", f"C{Z}loses #{Z}12, see GH-{Z}7 and gh-{Z}8"),
     ("fixes: https://github.com/o/r/issues/5", f"f{Z}ixes: https://github.com/o/r/issues/5"),
     ("RESOLVED https://github.com/o/r/pull/5", f"R{Z}ESOLVED https://github.com/o/r/pull/5"),
     ("a <!-- factory:v1 {} --> b", "a &lt;!-- factory:v1 {} --> b"),
     ("![x](https://example.com/a.png) <IMG src=x>", "[x](https://example.com/a.png) &lt;IMG src=x>"),
     ("line\r\nnext\x00\x07\tend", "line\nnext\tend"),
     ("issue # 5 and email a@", "issue # 5 and email a@"),  # nothing to break
-    ("prefixes https://x and fixed it", "prefixes https://x and fixed it"),  # not a whole word
+    ("prefixes https://x and fixed it", f"prefixes https://x and f{Z}ixed it"),  # only the whole word
     ("`@octocat` in code", f"`@{Z}octocat` in code"),  # code spans are not exempt
     ("!![x](u) and !!![x][r]", "[x](u) and [x][r]"),
     ("&#x40;octocat &commat;octocat", "&amp;#x40;octocat &amp;commat;octocat"),
@@ -25,10 +25,19 @@ CASES = [
     ("Fixes <https://github.com/o/r/issues/5>", f"F{Z}ixes <https://github.com/o/r/issues/5>"),
     ("**Fixes** https://github.com/o/r/issues/5", f"**F{Z}ixes** https://github.com/o/r/issues/5"),
     ("Fixes [it](https://github.com/o/r/issues/5)", f"F{Z}ixes [it](https://github.com/o/r/issues/5)"),
-    ("fix the bug", "fix the bug"),
-    ("```mermaid\ngraph TD\n```", "```text\ngraph TD\n```"),
-    ("~~~ Mermaid\nx\n~~~", "~~~ text\nx\n~~~"),
-    ("```python\nmermaid = 1\n```", "```python\nmermaid = 1\n```"),
+    ("fix the bug", f"f{Z}ix the bug"),
+    ("__Fixes__ https://x and _Fixes_ https://x", f"__F{Z}ixes__ https://x and _F{Z}ixes_ https://x"),
+    ("Fixes\nhttps://github.com/o/r/issues/5", f"F{Z}ixes\nhttps://github.com/o/r/issues/5"),
+    ('Fixes <a href="https://x">it</a>', f'F{Z}ixes <a href="https://x">it</a>'),
+    ("Closed-loop", f"C{Z}losed-loop"),
+    ("closet fixture prefixes unfixed fixes2", "closet fixture prefixes unfixed fixes2"),  # not whole words
+    ("```mermaid\ngraph TD\n```", f"```m{Z}ermaid\ngraph TD\n```"),
+    ("~~~ Mermaid\nx\n~~~", f"~~~ M{Z}ermaid\nx\n~~~"),
+    ("```\tmermaid\nx\n```", f"```\tm{Z}ermaid\nx\n```"),
+    ("> ```mermaid\n> x", f"> ```m{Z}ermaid\n> x"),
+    ("- ```mermaid\n  x", f"- ```m{Z}ermaid\n  x"),
+    ('<pre lang="mermaid">', f'<pre lang="m{Z}ermaid">'),
+    ("Mermaid diagrams are nice", f"M{Z}ermaid diagrams are nice"),
 ]
 
 
@@ -49,7 +58,6 @@ class NeutraliseTests(unittest.TestCase):
     def test_the_limit_counts_the_added_characters(self) -> None:
         self.assertLessEqual(len(textsafe.neutralise("@a" * 400, 100)), 100)
 
-
     def test_a_limit_smaller_than_the_truncation_mark_is_refused(self) -> None:
         with self.assertRaises(ValueError):
             textsafe.neutralise("x" * 100, 5)
@@ -57,7 +65,7 @@ class NeutraliseTests(unittest.TestCase):
 
 class SingleLineTests(unittest.TestCase):
     def test_single_line(self) -> None:
-        self.assertEqual(textsafe.single_line("  Fix\n the  @x\tbug ", 80), f"Fix the @{Z}x bug")
+        self.assertEqual(textsafe.single_line("  Fix\n the  @x\tbug ", 80), f"F{Z}ix the @{Z}x bug")
 
     def test_a_cut_title_stays_on_one_line_within_the_limit(self) -> None:
         out = textsafe.single_line("word " * 50, 40)

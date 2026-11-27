@@ -9,9 +9,9 @@ _CHARACTER_REFERENCE = re.compile(r"&(?=#|[A-Za-z][A-Za-z0-9]*;)")
 _EMBED_TAG = re.compile(r"<(?=(?:img|image))", re.IGNORECASE)
 _IMAGE_MARK = re.compile(r"!+\[")
 _CLOSING_KEYWORD = re.compile(
-    r"\b(close[sd]?|fix(?:es|ed)?|resolve[sd]?)([^A-Za-z0-9\n]{0,10}(?:https?://|\[))", re.IGNORECASE
+    r"(?<![A-Za-z0-9])(close[sd]?|fix(?:es|ed)?|resolve[sd]?)(?![A-Za-z0-9])", re.IGNORECASE
 )
-_MERMAID_FENCE = re.compile(r"^( *(?:`{3,}|~{3,}) *)mermaid\b", re.IGNORECASE | re.MULTILINE)
+_MERMAID = re.compile(r"mermaid", re.IGNORECASE)
 
 
 def _keep(char: str) -> bool:
@@ -26,10 +26,15 @@ def neutralise(text: str, limit: int) -> str:
     3. `<!--` becomes `&lt;!--`; `<img` and `<image` in any letter case become `&lt;img`, `&lt;image`.
     4. Every run of `!` directly before `[` is removed, so an image becomes a link.
     5. `@` before a letter or digit, `#` or `GH-` before a digit get a ZWSP after them.
-    6. A closing keyword followed by up to 10 non-alphanumeric characters and a URL or `[`
-       gets a ZWSP after its first letter.
-    7. A fenced block whose info string is `mermaid` becomes `text`.
+    6. A closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved)
+       standing as a whole word, neither preceded nor followed by an ASCII letter or digit, gets a
+       ZWSP after its first letter, whatever follows it.
+    7. The word `mermaid` gets a ZWSP after its first letter, wherever it appears, so no diagram renders.
     8. A result longer than `limit` is cut and ends with the truncation mark.
+
+    Apply this exactly once to a text: a second pass would escape its own `&amp;` and `&lt;`. Inside
+    code spans an `&` that starts a character reference is shown as a literal `&amp;`, an accepted
+    cost of treating code like any other text.
     """
     if limit < len(_TRUNCATED):
         raise ValueError(f"limit must be at least {len(_TRUNCATED)}")
@@ -41,8 +46,8 @@ def neutralise(text: str, limit: int) -> str:
     text = re.sub(r"@(?=[A-Za-z0-9])", "@" + ZWSP, text)
     text = re.sub(r"#(?=\d)", "#" + ZWSP, text)
     text = re.sub(r"(GH-)(?=\d)", r"\1" + ZWSP, text, flags=re.IGNORECASE)
-    text = _CLOSING_KEYWORD.sub(lambda m: m[1][0] + ZWSP + m[1][1:] + m[2], text)
-    text = _MERMAID_FENCE.sub(r"\1text", text)
+    text = _CLOSING_KEYWORD.sub(lambda m: m[0][0] + ZWSP + m[0][1:], text)
+    text = _MERMAID.sub(lambda m: m[0][0] + ZWSP + m[0][1:], text)
     if len(text) > limit:
         text = text[: limit - len(_TRUNCATED)] + _TRUNCATED
     return text
