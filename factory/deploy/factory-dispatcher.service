@@ -1,0 +1,21 @@
+# The factory's dispatcher: polls GitHub, starts jobs and publishes finished runs as the factory's bot.
+# A systemd user unit, installed by the dispatcher's user in ~/.config/systemd/user/.
+# docs/factory/HOST_SETUP.md says how to install it and which lines to change for another layout.
+
+[Unit]
+Description=Software factory dispatcher
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/factory/app
+EnvironmentFile=%h/.config/factory/dispatcher.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m factory.dispatcher
+UMask=0027
+NoNewPrivileges=yes
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target
