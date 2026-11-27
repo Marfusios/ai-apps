@@ -8,12 +8,16 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from collections.abc import Callable, Mapping
 
 API_ROOT = "https://api.github.com"
 TIMEOUT_SECONDS = 30
 MAX_BODY_BYTES = 10_000_000
 MAX_REMEMBERED = 500
+MAX_DOWNLOAD_BYTES = 200_000_000
+DOWNLOAD_CHUNK_BYTES = 65_536
+USER_AGENT = "factory-dispatcher"
 DEFAULT_RETRY_SECONDS = 60
 NEXT_LINK = re.compile(r'<([^>]*)>\s*;\s*rel="next"')
 
@@ -67,6 +71,22 @@ def _check_path(path: str) -> None:
 def _label(method: str, url: str) -> str:
     """Name a request in an error without its query, which could carry search text."""
     return f"{method} {urllib.parse.urlsplit(url).path}"
+
+
+def _tail(response, limit: int, label: str) -> bytes:
+    """The last `limit` bytes of a body read in chunks, so memory stays near the limit plus one chunk."""
+    chunks: deque[bytes] = deque()
+    kept = total = 0
+    while chunk := response.read(DOWNLOAD_CHUNK_BYTES):
+        total += len(chunk)
+        if total > MAX_DOWNLOAD_BYTES:
+            raise GitHubError(0, f"{label} answered more than {MAX_DOWNLOAD_BYTES} bytes")
+        chunks.append(chunk)
+        kept += len(chunk)
+        while len(chunks) > 1 and kept - len(chunks[0]) >= limit:
+            kept -= len(chunks.popleft())
+    data = b"".join(chunks)
+    return data[max(0, len(data) - limit):]
 
 
 def _page_size(url: str) -> int | None:
@@ -130,6 +150,58 @@ class GitHub:
     def delete(self, path: str) -> None:
         _check_path(path)
         self._send("DELETE", API_ROOT + path, None, None)
+
+    def graphql(self, query: str, variables: Mapping[str, object]) -> dict:
+        """Run a GraphQL call and return its `data`; GitHub reports failures in `errors` with a 200."""
+        answer = self._write("POST", "/graphql", {"query": query, "variables": dict(variables)})
+        errors = answer.get("errors") if isinstance(answer, dict) else None
+        data = answer.get("data") if isinstance(answer, dict) else None
+        if errors:
+            count = len(errors) if isinstance(errors, list) else 1
+            raise GitHubError(0, f"POST /graphql failed with {count} errors")
+        if not isinstance(data, dict):
+            raise GitHubError(0, "POST /graphql answered no data")
+        return data
+
+    def download_text(self, path: str, limit: int) -> str:
+        """The last `limit` bytes of a download, decoded as UTF-8 with replacement.
+
+        GitHub answers a log request with a 302 to a signed URL on another host. That URL is fetched without the
+        token or any other header of this client but the user agent, and neither request follows a further redirect.
+        Errors name the API path only: the signed URL carries a credential in its query.
+        """
+        _check_path(path)
+        label = f"GET {path}"
+        first = self._open(self._api_request("GET", API_ROOT + path, None, None, self._token), label)
+        if first.status == 302:
+            location = first.headers.get("location") or ""
+            first.close()
+            if not location.startswith("https://"):
+                raise GitHubError(0, f"{label} redirected somewhere other than an https URL")
+            request = urllib.request.Request(location, headers={"User-Agent": USER_AGENT}, method="GET")
+            response = self._open(request, label)
+        else:
+            response = first
+        return self._read_tail(response, limit, label).decode("utf-8", errors="replace")
+
+    def _read_tail(self, response, limit: int, label: str) -> bytes:
+        try:
+            if response.status != 200:
+                raise GitHubError(response.status, f"{label} failed")
+            return _tail(response, limit, label)
+        except (OSError, http.client.HTTPException) as error:
+            raise GitHubError(0, f"{label} failed on the network ({type(error).__name__})") from None
+        finally:
+            response.close()
+
+    def _open(self, request: urllib.request.Request, label: str):
+        """Open a request; an HTTPError is returned as the response it also is."""
+        try:
+            return self._opener(request, timeout=TIMEOUT_SECONDS)
+        except urllib.error.HTTPError as error:
+            return error
+        except (OSError, http.client.HTTPException) as error:
+            raise GitHubError(0, f"{label} failed on the network ({type(error).__name__})") from None
 
     @staticmethod
     def _url(path: str, params: Mapping[str, str] | None) -> str:
@@ -198,20 +270,26 @@ class GitHub:
         reset = _number(headers.get("x-ratelimit-reset"))
         return max(reset, now) if reset is not None else now + DEFAULT_RETRY_SECONDS
 
-    def _exchange(
-        self, method: str, url: str, data: bytes | None, etag: str | None, token: Callable[[], str]
-    ) -> tuple[int, object, bytes]:
+    @staticmethod
+    def _api_request(
+        method: str, url: str, data: bytes | None, etag: str | None, token: Callable[[], str]
+    ) -> urllib.request.Request:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "factory-dispatcher",
+            "User-Agent": USER_AGENT,
             "Authorization": f"Bearer {token()}",
         }
         if etag:
             headers["If-None-Match"] = etag
         if data is not None:
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        return urllib.request.Request(url, data=data, headers=headers, method=method)
+
+    def _exchange(
+        self, method: str, url: str, data: bytes | None, etag: str | None, token: Callable[[], str]
+    ) -> tuple[int, object, bytes]:
+        request = self._api_request(method, url, data, etag, token)
         label = _label(method, url)
         try:
             try:
