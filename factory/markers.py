@@ -23,6 +23,6 @@ def parse(body: str) -> dict | None:
         return None
     try:
         value = json.loads(found[-1])
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     return value if isinstance(value, dict) else None

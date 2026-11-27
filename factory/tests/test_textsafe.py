@@ -16,6 +16,19 @@ CASES = [
     ("issue # 5 and email a@", "issue # 5 and email a@"),  # nothing to break
     ("prefixes https://x and fixed it", "prefixes https://x and fixed it"),  # not a whole word
     ("`@octocat` in code", f"`@{Z}octocat` in code"),  # code spans are not exempt
+    ("!![x](u) and !!![x][r]", "[x](u) and [x][r]"),
+    ("&#x40;octocat &commat;octocat", "&amp;#x40;octocat &amp;commat;octocat"),
+    ("&#x23;12 &num;12 GH&#x2d;7", "&amp;#x23;12 &amp;num;12 GH&amp;#x2d;7"),
+    ("F&#x69;xes https://x", "F&amp;#x69;xes https://x"),
+    ("a & b &c d", "a & b &c d"),  # not a character reference
+    ("<IMAGE src=x> <image>", "&lt;IMAGE src=x> &lt;image>"),
+    ("Fixes <https://github.com/o/r/issues/5>", f"F{Z}ixes <https://github.com/o/r/issues/5>"),
+    ("**Fixes** https://github.com/o/r/issues/5", f"**F{Z}ixes** https://github.com/o/r/issues/5"),
+    ("Fixes [it](https://github.com/o/r/issues/5)", f"F{Z}ixes [it](https://github.com/o/r/issues/5)"),
+    ("fix the bug", "fix the bug"),
+    ("```mermaid\ngraph TD\n```", "```text\ngraph TD\n```"),
+    ("~~~ Mermaid\nx\n~~~", "~~~ text\nx\n~~~"),
+    ("```python\nmermaid = 1\n```", "```python\nmermaid = 1\n```"),
 ]
 
 
@@ -37,9 +50,20 @@ class NeutraliseTests(unittest.TestCase):
         self.assertLessEqual(len(textsafe.neutralise("@a" * 400, 100)), 100)
 
 
+    def test_a_limit_smaller_than_the_truncation_mark_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            textsafe.neutralise("x" * 100, 5)
+
+
 class SingleLineTests(unittest.TestCase):
     def test_single_line(self) -> None:
         self.assertEqual(textsafe.single_line("  Fix\n the  @x\tbug ", 80), f"Fix the @{Z}x bug")
+
+    def test_a_cut_title_stays_on_one_line_within_the_limit(self) -> None:
+        out = textsafe.single_line("word " * 50, 40)
+        self.assertNotIn("\n", out)
+        self.assertLessEqual(len(out), 40)
+        self.assertTrue(out.endswith("(truncated)"))
 
 
 if __name__ == "__main__":

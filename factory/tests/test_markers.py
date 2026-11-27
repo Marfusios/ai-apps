@@ -25,6 +25,9 @@ class MarkerTests(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertIsNone(markers.parse(body))
 
+    def test_deeply_nested_json_is_none_not_an_error(self) -> None:
+        self.assertIsNone(markers.parse("<!-- factory:v1 " + "[" * 100000 + " -->"))
+
 
 if __name__ == "__main__":
     unittest.main()

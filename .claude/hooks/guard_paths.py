@@ -30,7 +30,7 @@ def fallback_config() -> Config:
 
 
 def is_credential(parts: list[str]) -> bool:
-    """The test of scripts/check_repo.py's private_file, which the hook may not import."""
+    """The test of factory/hygiene.py's private_file, which the hook may not import."""
     name = parts[-1].lower()
     if name.endswith(".env.example"):
         return False
