@@ -23,6 +23,7 @@ BRANCH = re.compile(r"factory/[a-z0-9][a-z0-9-]{0,60}")
 BASE_SHA = re.compile(r"[0-9a-f]{40}")
 # A component made only of dots would turn the URL into a path that climbs out of github.com/<owner>.
 REPOSITORY_URL = re.compile(r"https://github\.com/(?!\.+/)[A-Za-z0-9._-]+/(?!\.+\.git)[A-Za-z0-9._-]+\.git")
+MAX_IDENTITY_CHARS = 200
 REQUEST_KEYS = (
     "schema", "job_id", "stage", "skill", "app", "branch", "base_sha", "repository_url", "model",
     "permission_mode", "timeout_minutes", "max_turns", "git_name", "git_email",
@@ -69,13 +70,18 @@ def _app_of_form(body: str) -> str | None:
 
 
 def choose_app(issue: Issue, apps: Sequence[str], config: Config) -> str | None:
-    """The app a run works on: a trusted comment's `app:` line, the issue form, or the only app."""
-    candidates = [_app_of_comments(issue, config)]
-    if is_trusted(issue.author, config):
-        candidates.append(_app_of_form(issue.body))
-    if len(apps) == 1:
-        candidates.append(apps[0])
-    return next((name for name in candidates if name is not None and name in apps), None)
+    """The app a run works on, or None when the dispatcher has to ask.
+
+    The last trusted `app:` line decides alone: naming an unknown app is a typo to ask about, not a reason to
+    guess. Only without such a line do the issue form and then the only app apply.
+    """
+    named = _app_of_comments(issue, config)
+    if named is not None:
+        return named if named in apps else None
+    form = _app_of_form(issue.body) if is_trusted(issue.author, config) else None
+    if form in apps:
+        return form
+    return apps[0] if len(apps) == 1 else None
 
 
 def _cut(text: str) -> str:
@@ -91,27 +97,29 @@ def _title(issue: Issue, config: Config) -> str:
 
 
 def _comment_block(comment: Comment, config: Config, bot: Bot) -> str | None:
-    """The comment as a Markdown section, or None when it is not the agent's to read."""
+    """The comment as a Markdown section, "" when it has no text, None when it is not the agent's to read."""
     if _is_bot(comment, bot):
-        body = comment.body.split(BOT_MARKER_START, 1)[0].rstrip()
-        return f"### The factory at {comment.created_at}\n\n{_cut(body)}" if body else None
-    if comment.author != bot.login and is_trusted(comment.author, config):
-        return f"### {comment.author} at {comment.created_at}\n\n{_cut(comment.body)}"
-    return None
+        heading, body = f"### The factory at {comment.created_at}", comment.body.split(BOT_MARKER_START, 1)[0]
+    elif comment.author != bot.login and is_trusted(comment.author, config):
+        heading, body = f"### {comment.author} at {comment.created_at}", comment.body
+    else:
+        return None
+    return f"{heading}\n\n{_cut(body)}" if body.strip() else ""
 
 
 def context(issue: Issue, config: Config, bot: Bot) -> str:
     """The Markdown the agent reads: only text from trusted people and the factory itself."""
     trusted = is_trusted(issue.author, config)
-    head = [f"# Issue #{issue.number}: {_title(issue, config)}", _cut(issue.body) if trusted else WITHHELD_BODY]
+    body = _cut(issue.body) if trusted else WITHHELD_BODY
+    head = [f"# Issue #{issue.number}: {_title(issue, config)}"] + ([body] if body.strip() else [])
     blocks = []
     dropped = 0
     for comment in issue.comments:
         block = _comment_block(comment, config, bot)
-        if block is not None:
-            blocks.append(block)
-        elif not _is_bot(comment, bot):
+        if block is None:
             dropped += 1
+        elif block:
+            blocks.append(block)
     tail = [f"Comments by others, not included: {dropped}."] if dropped else []
 
     def build(left_out: int) -> str:
@@ -167,8 +175,19 @@ def _matches(pattern: re.Pattern[str], value: object) -> bool:
     return isinstance(value, str) and pattern.fullmatch(value) is not None
 
 
-def _single_line(value: object) -> bool:
-    return isinstance(value, str) and bool(value) and "\n" not in value and "\r" not in value
+def _identity(value: object) -> bool:
+    """A git name or email: printable (so no NUL or line break), not blank, not an option for `git config`."""
+    return (
+        isinstance(value, str) and value.isprintable() and bool(value.strip()) and not value.startswith("-")
+        and len(value) <= MAX_IDENTITY_CHARS
+    )
+
+
+def _skill_fits(stage: object, skill: object) -> bool:
+    """The skill of a known stage; for an unknown stage, still some skill the factory has."""
+    if isinstance(stage, str) and stage in SKILLS:
+        return skill == SKILLS[stage]
+    return isinstance(skill, str) and skill in SKILLS.values()
 
 
 def _integer_in(value: object, key: str) -> bool:
@@ -184,10 +203,10 @@ def validate_request(data: object) -> list[str]:
     problems += [f"{key!r} is not a known key" for key in sorted(map(str, set(data) - set(REQUEST_KEYS)))]
     stage = data.get("stage")
     checks = {
-        "schema": data.get("schema") == 1 and not isinstance(data.get("schema"), bool),
+        "schema": isinstance(data.get("schema"), int) and not isinstance(data.get("schema"), bool) and data["schema"] == 1,
         "job_id": _matches(JOB_ID, data.get("job_id")),
         "stage": isinstance(stage, str) and stage in SKILLS,
-        "skill": not (isinstance(stage, str) and stage in SKILLS) or data.get("skill") == SKILLS[stage],
+        "skill": _skill_fits(stage, data.get("skill")),
         "app": _matches(APP, data.get("app")),
         "branch": _matches(BRANCH, data.get("branch")),
         "base_sha": _matches(BASE_SHA, data.get("base_sha")),
@@ -196,8 +215,8 @@ def validate_request(data: object) -> list[str]:
         "permission_mode": data.get("permission_mode") in PERMISSION_MODES,
         "timeout_minutes": _integer_in(data.get("timeout_minutes"), "timeout_minutes"),
         "max_turns": _integer_in(data.get("max_turns"), "max_turns"),
-        "git_name": _single_line(data.get("git_name")),
-        "git_email": _single_line(data.get("git_email")),
+        "git_name": _identity(data.get("git_name")),
+        "git_email": _identity(data.get("git_email")),
     }
     problems += [f"{key} is not acceptable" for key in REQUEST_KEYS if key in data and not checks[key]]
     return problems

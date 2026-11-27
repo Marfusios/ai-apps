@@ -151,6 +151,13 @@ class ConfigTest(unittest.TestCase):
             with self.subTest(name), self.assertRaises(ConfigError):
                 self.load_text(text)
 
+    def test_a_bot_account_cannot_be_trusted(self):
+        for login in ("factory[bot]", "Factory[BOT]"):
+            with self.subTest(login), self.assertRaises(ConfigError) as caught:
+                self.load_text(VALID.replace('trusted_logins = ["someone"]', f'trusted_logins = ["someone", "{login}"]'))
+            self.assertIn("trusted_logins", str(caught.exception))
+            self.assertIn("bot account", str(caught.exception))
+
     def test_invalid_settings_name_their_key(self):
         for name, old, new, key in INVALID_SETTINGS:
             with self.subTest(name):

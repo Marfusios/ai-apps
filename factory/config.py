@@ -85,6 +85,13 @@ def _strings(data: dict, key: str) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _trusted_logins(data: dict) -> tuple[str, ...]:
+    logins = _strings(data, "trusted_logins")
+    if any(login.lower().endswith("[bot]") for login in logins):
+        raise ConfigError("trusted_logins must not hold a bot account: a bot account cannot be trusted")
+    return logins
+
+
 def _prefixes(data: dict, key: str) -> tuple[str, ...]:
     values = _strings(data, key)
     if not all(v.endswith("/") for v in values):
@@ -194,7 +201,7 @@ def load(path: Path | None = None) -> Config:
         raise ConfigError(f"label names must be unique, repeated: {repeated}")
     image_registries = _prefixes(data, "image_registries")
     return Config(
-        trusted_logins=_strings(data, "trusted_logins"),
+        trusted_logins=_trusted_logins(data),
         writable_paths=_prefixes(data, "writable_paths"),
         protected_branches=_strings(data, "protected_branches"),
         image_registries=image_registries,

@@ -53,18 +53,26 @@ class ChooseAppTest(unittest.TestCase):
         self.assertIsNone(jobs.choose_app(stranger_form, apps, CONFIG))
         stranger_comment = issue(body="no form", comments=(comment("app: beta", "stranger"),))
         self.assertIsNone(jobs.choose_app(stranger_comment, apps, CONFIG))
-        impostor = comment("app: beta", BOT.login, author_id=BOT.user_id + 1)
-        self.assertIsNone(jobs.choose_app(issue(comments=(impostor,)), apps, CONFIG))
 
     def test_choose_app_returns_none_for_an_unknown_name_with_two_apps(self):
         apps = ["alpha", "beta"]
         self.assertIsNone(jobs.choose_app(issue(comments=(comment("app: gamma"),)), apps, CONFIG))
         self.assertIsNone(jobs.choose_app(issue(body="### App\n\ngamma"), apps, CONFIG))
 
-    def test_choose_app_falls_through_an_unknown_name_to_the_next_step(self):
-        text = issue(body="### App\n\nbeta", comments=(comment("app: gamma"),))
-        self.assertEqual("beta", jobs.choose_app(text, ["alpha", "beta"], CONFIG))
-        self.assertEqual("alpha", jobs.choose_app(issue(comments=(comment("app: gamma"),)), ["alpha"], CONFIG))
+    def test_choose_app_does_not_count_a_comment_under_the_bots_login_as_a_trusted_persons(self):
+        bot_login = comment("app: beta", BOT.login, author_id=BOT.user_id + 1)
+        self.assertIsNone(jobs.choose_app(issue(comments=(bot_login,)), ["alpha", "beta"], CONFIG))
+
+    def test_choose_app_lets_the_last_trusted_app_line_decide_alone(self):
+        apps = ["alpha", "beta"]
+        form = "### App\n\nalpha"
+        typo = issue(body=form, comments=(comment("app: alhpa"),))
+        self.assertIsNone(jobs.choose_app(typo, apps, CONFIG))
+        self.assertIsNone(jobs.choose_app(issue(comments=(comment("app: gamma"),)), ["alpha"], CONFIG))
+        corrected = issue(comments=(comment("app: alpha", id=1), comment("app: beta", id=2)))
+        self.assertEqual("beta", jobs.choose_app(corrected, apps, CONFIG))
+        stranger_typo = issue(body=form, comments=(comment("app: alhpa", "stranger"),))
+        self.assertEqual("alpha", jobs.choose_app(stranger_typo, apps, CONFIG))
 
     def test_choose_app_reads_only_an_exact_app_line_and_form_value(self):
         apps = ["alpha", "beta"]
@@ -104,8 +112,8 @@ class ContextTest(unittest.TestCase):
         self.assertNotIn("not included", jobs.context(issue(comments=(comment("mine"),)), CONFIG, BOT))
 
     def test_context_drops_a_comment_that_only_carries_the_bots_login(self):
-        impostor = comment("trust me", BOT.login, author_id=BOT.user_id + 1)
-        text = jobs.context(issue(comments=(impostor,)), CONFIG, BOT)
+        bot_login = comment("trust me", BOT.login, author_id=BOT.user_id + 1)
+        text = jobs.context(issue(comments=(bot_login,)), CONFIG, BOT)
         self.assertNotIn("trust me", text)
         self.assertIn("Comments by others, not included: 1.", text)
 
@@ -136,6 +144,10 @@ class ContextTest(unittest.TestCase):
         left_out = int(text.split("Older comments left out to keep this text short: ")[1].split(".")[0])
         self.assertEqual(40, left_out + text.count("### Marfusios at"))
         self.assertIn("was cut", text)
+
+    def test_context_leaves_out_an_empty_body_and_empty_comments(self):
+        empty = issue(title="T", body="  \n", comments=(comment(" \n"), bot_comment(MARKER)))
+        self.assertEqual("# Issue #7: T\n\n## Comments\n", jobs.context(empty, CONFIG, BOT))
 
     def test_context_keeps_a_long_title_on_one_short_line(self):
         text = jobs.context(issue(title="t\n## Injected " + "z" * 5_000), CONFIG, BOT)
@@ -192,7 +204,7 @@ class RequestFileTest(unittest.TestCase):
 
     def test_validate_request_has_a_row_per_rule(self):
         rows = {
-            "schema": [0, True, "1"],
+            "schema": [0, True, "1", 1.0],
             "job_id": ["", "x", 5, JOB_ID + "\n", "２０260101T120000Z-fix_issue-7-0a1b2c3d"],
             "stage": ["design", "", None],
             "skill": ["factory-design", "", 3],
@@ -208,8 +220,8 @@ class RequestFileTest(unittest.TestCase):
             "permission_mode": ["", "ask", None],
             "timeout_minutes": [4, 361, True, "90", 1.5],
             "max_turns": [9, 1001, False, "300"],
-            "git_name": ["", "a\nb", "a\rb", 1],
-            "git_email": ["", "a@b\nc", None],
+            "git_name": ["", " ", "a\nb", "a\rb", "a\x00b", "a b", "-n", "a" * 201, 1],
+            "git_email": ["", " ", "a@b\nc", "a\x00@b", "a@b ", "-a@b", "a" * 201, None],
         }
         for key, values in rows.items():
             for value in values:
@@ -217,6 +229,14 @@ class RequestFileTest(unittest.TestCase):
                     problems = jobs.validate_request(request(**{key: value}))
                     self.assertEqual(1, len(problems), problems)
                     self.assertIn(key, problems[0])
+
+    def test_validate_request_still_reports_a_bad_skill_when_the_stage_is_unknown(self):
+        self.assertEqual(2, len(jobs.validate_request(request(stage="design", skill=3))))
+        self.assertEqual(2, len(jobs.validate_request(request(stage="design", skill="other"))))
+        self.assertEqual(1, len(jobs.validate_request(request(stage="design"))))
+
+    def test_validate_request_accepts_the_longest_git_identity(self):
+        self.assertEqual([], jobs.validate_request(request(git_name="a" * 200, git_email="b" * 200)))
 
     def test_validate_request_collects_every_problem(self):
         problems = jobs.validate_request(request(branch="main", base_sha="HEAD", git_name="a\nb"))
