@@ -120,10 +120,11 @@ def _last_marker(issue: Issue, bot: Bot) -> Marker | None:
 
 
 # Rule 1 -----------------------------------------------------------------------------------------------------------
+# An open issue that could not be read this poll counts as live: a read that failed must not close its jobs.
 
 
 def _live_issue_numbers(snapshot: Snapshot, config: Config) -> set[int]:
-    return {i.number for i in snapshot.issues if i.open and _trusted(i.trigger_actor, config)}
+    return {i.number for i in snapshot.issues if i.open and (i.unreadable or _trusted(i.trigger_actor, config))}
 
 
 def _close_dead_jobs(jobs: Sequence[JobView], live: set[int]) -> list[Action]:
@@ -142,6 +143,15 @@ def _closed_issue(issue: Issue) -> list[Action]:
     """A closed issue shows `status:done` when its pull request is merged, else no status."""
     merged = issue.pull_request is not None and issue.pull_request.merged
     return _status(issue, DONE if merged else None)
+
+
+# Rule 3 -----------------------------------------------------------------------------------------------------------
+# An open issue whose label no trusted person applied gets nothing. Neither does an open issue that could not be read
+# this poll: it gets no actions, does not want to start and blocks nothing; rule 1 keeps its jobs.
+
+
+def _is_handled(issue: Issue, config: Config) -> bool:
+    return issue.open and not issue.unreadable and _trusted(issue.trigger_actor, config)
 
 
 # Rule 4: the situation table. A row that lets the issue start returns None ----------------------------------------
@@ -275,7 +285,7 @@ def decide(snapshot: Snapshot, jobs: Sequence[JobView], now: datetime, config: C
     pending: list[tuple[Issue, list[Action]]] = []  # trusted open issues, with their actions so far
     app_of: dict[int, str] = {}  # issues that want to start, in ascending number
     for issue in ordered:
-        if not issue.open or not _trusted(issue.trigger_actor, config):  # rule 3
+        if not _is_handled(issue, config):  # rule 3
             continue
         rows = _open_issue_rows(issue, jobs, now, config, bot)
         if rows is None:

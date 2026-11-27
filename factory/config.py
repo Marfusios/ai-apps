@@ -24,6 +24,7 @@ DISPATCHER_LIMITS = {
 }
 STAGE_LIMITS = {"timeout_minutes": (5, 360), "max_turns": (10, 1000)}
 STAGE_KEYS = {"model", *STAGE_LIMITS}
+REQUIRED_STAGE = "fix_issue"  # the stage the dispatcher starts runs in
 AGENT_KEYS = {"permission_mode", "claude_code_version", "base_image", "toolchains"}
 PERMISSION_MODES = ("auto", "bypassPermissions")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")  # explicit [0-9]: \d would accept other scripts' digits
@@ -159,7 +160,10 @@ def _stage(name: str, raw: object) -> StageSettings:
 def _stages(raw: object) -> dict[str, StageSettings]:
     if not isinstance(raw, dict) or not raw:
         raise ConfigError("stages must be a table with at least one stage")
-    return {name: _stage(name, table) for name, table in raw.items()}
+    stages = {name: _stage(name, table) for name, table in raw.items()}
+    if REQUIRED_STAGE not in stages:
+        raise ConfigError(f"stages.{REQUIRED_STAGE} is required")
+    return stages
 
 
 def _label(raw: object, index: int) -> Label:

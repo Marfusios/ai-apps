@@ -73,6 +73,7 @@ INVALID_SETTINGS = [
     ("toolchain empty string", 'node = ["24"]', 'node = [""]', "agent.toolchains.node"),
     ("no toolchains", '[agent.toolchains]\nnode = ["24"]\n', "", "agent.toolchains"),
     ("stage name", "[stages.fix_issue]", "[stages.bogus]", "stages.bogus"),
+    ("no fix_issue stage", "[stages.fix_issue]", "[stages.plan]", "stages.fix_issue"),
     ("model uppercase", 'model = "opus"', 'model = "Opus"', "stages.fix_issue.model"),
     ("model empty", 'model = "opus"', 'model = ""', "stages.fix_issue.model"),
     ("timeout low", "timeout_minutes = 90", "timeout_minutes = 4", "stages.fix_issue.timeout_minutes"),

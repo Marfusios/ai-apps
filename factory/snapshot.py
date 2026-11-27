@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from factory import markers
-from factory.github_api import GitHub
+from factory.github_api import GitHub, GitHubError, RateLimited
 
 FIX_LABEL = "factory:fix"
 HALT_LABEL = "factory:halt"
@@ -62,6 +62,8 @@ class Issue:
     trigger_actor: str | None
     comments: tuple[Comment, ...]
     pull_request: PullRequest | None
+    # GitHub would not give this open issue's events, comments or pull request in this poll, so it has none of them
+    unreadable: bool = False
 
     def markers(self, bot: Bot) -> tuple[Marker, ...]:
         """Markers in the bot's own comments, oldest first.
@@ -169,7 +171,7 @@ def _unfinished(entry: dict) -> bool:
 
 def _issue(
     entry: dict, is_open: bool, trigger_actor: str | None, comments: tuple[Comment, ...],
-    pull_request: PullRequest | None,
+    pull_request: PullRequest | None, *, unreadable: bool = False,
 ) -> Issue:
     return Issue(
         number=entry["number"],
@@ -181,6 +183,7 @@ def _issue(
         trigger_actor=trigger_actor,
         comments=comments,
         pull_request=pull_request,
+        unreadable=unreadable,
     )
 
 
@@ -193,12 +196,23 @@ def _pull_request_of(github: GitHub, number: int) -> PullRequest | None:
 
 
 def _open_issue(github: GitHub, entry: dict) -> Issue:
+    """An open issue with its history, or unreadable when GitHub refuses part of it.
+
+    Anyone can fill an issue until a read of it fails (a page too large, too many pages), and that must not stop
+    the poll for every other issue. A rate limit is GitHub's and not the issue's, so it still ends the poll.
+    """
     number = entry["number"]
-    events = github.get_all(f"{github.repo}/issues/{number}/events", {"per_page": "100"})
-    raw_comments = github.get_all(f"{github.repo}/issues/{number}/comments", {"per_page": "100"})
+    try:
+        events = github.get_all(f"{github.repo}/issues/{number}/events", {"per_page": "100"})
+        raw_comments = github.get_all(f"{github.repo}/issues/{number}/comments", {"per_page": "100"})
+        pull_request = _pull_request_of(github, number)
+    except RateLimited:
+        raise
+    except GitHubError:
+        return _issue(entry, True, None, (), None, unreadable=True)
     listed = (comment_from(raw) for raw in raw_comments)
     comments = tuple(sorted((comment for comment in listed if comment is not None), key=lambda comment: comment.id))
-    return _issue(entry, True, _trigger_actor(events), comments, _pull_request_of(github, number))
+    return _issue(entry, True, _trigger_actor(events), comments, pull_request)
 
 
 def _halted(github: GitHub) -> bool:
@@ -213,7 +227,11 @@ def _apps(github: GitHub) -> tuple[str, ...]:
 
 
 def fetch(github: GitHub) -> Snapshot:
-    """Read the issues, the halt switch and the apps; any GitHubError ends the poll without a snapshot."""
+    """Read the issues, the halt switch and the apps.
+
+    A GitHubError from a list, or a rate limit anywhere, ends the poll without a snapshot; any other GitHubError
+    while reading one open issue's history makes that issue unreadable instead.
+    """
     open_entries = _issue_entries(
         github.get_all(f"{github.repo}/issues", {"state": "open", "labels": FIX_LABEL, "per_page": "100"})
     )

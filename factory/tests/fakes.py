@@ -79,10 +79,11 @@ class FakeOpener:
 class FakeGitHub:
     """The public methods of `GitHub`, answering from `answers` and recording what is written.
 
-    `answers` maps `(path, sorted params)` to what `get` returns and `get_all` lists. `responses` maps
-    `(method, path)` to what a `post` or `patch` returns. A request whose path, or whose `(method, path)`, is in
-    `fail` raises GitHubError(502); one in `fail_once` raises it on the first such request only, before it has
-    any effect; and one in `missing` raises GitHubError(404).
+    `answers` maps `(path, sorted params)` to what `get` returns and `get_all` lists, and `raises` maps such a key
+    to the exception that reading it raises instead. `responses` maps `(method, path)` to what a `post` or `patch`
+    returns. A request whose path, or whose `(method, path)`, is in `fail` raises GitHubError(502); one in
+    `fail_once` raises it on the first such request only, before it has any effect; and one in `missing` raises
+    GitHubError(404).
 
     Like GitHub, it remembers what it creates. A pull request posted to `<repo>/pulls` or a comment posted to
     `<repo>/issues/<n>/comments`, unless `responses` scripts the answer, gets the next number from FIRST_NUMBER on and
@@ -93,6 +94,7 @@ class FakeGitHub:
         self._repository = repository
         self.user = dict(user or {"login": "fake-bot[bot]", "id": 1})
         self.answers: dict[tuple[str, tuple[tuple[str, str], ...]], object] = {}
+        self.raises: dict[tuple[str, tuple[tuple[str, str], ...]], Exception] = {}
         self.responses: dict[tuple[str, str], object] = {}
         self.calls: list[tuple[str, str, Mapping | None]] = []
         self.fail: set[str | tuple[str, str]] = set()
@@ -108,6 +110,8 @@ class FakeGitHub:
     def get(self, path: str, params: Mapping[str, str] | None = None) -> object:
         self._check("GET", path)
         key = (path, tuple(sorted((params or {}).items())))
+        if key in self.raises:
+            raise self.raises[key]
         created = [dict(item) for item in self._created.get(path, [])]
         if key not in self.answers and not created:
             raise AssertionError(f"unexpected GET {key}")

@@ -49,7 +49,7 @@ def app_jwt(app_id: str, key_file: Path, now: int) -> str:
 
 
 class InstallationToken:
-    """An installation access token that is minted on demand and reused until it nears expiry."""
+    """An installation access token for one repository, minted on demand and reused until it nears expiry."""
 
     def __init__(
         self,
@@ -57,12 +57,14 @@ class InstallationToken:
         installation_id: str,
         key_file: Path,
         *,
-        post: Callable[[str, str], dict],
+        repository: str,
+        post: Callable[[str, str, str], dict],
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._app_id = app_id
         self._path = f"/app/installations/{installation_id}/access_tokens"
         self._key_file = key_file
+        self._repository = repository
         self._post = post
         self._clock = clock
         self._token = ""
@@ -77,7 +79,7 @@ class InstallationToken:
     def refresh(self) -> str:
         """Mint a new token whatever the cache holds, for when GitHub rejected the cached one."""
         bearer = app_jwt(self._app_id, self._key_file, int(self._clock()))
-        answer = self._post(self._path, bearer)
+        answer = self._post(self._path, bearer, self._repository)
         token, expires_at = answer.get("token"), answer.get("expires_at")
         if not isinstance(token, str) or not token or not isinstance(expires_at, str):
             raise AuthError("GitHub's answer to the token request lacks a token or its expiry")

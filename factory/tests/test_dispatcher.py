@@ -357,6 +357,17 @@ class TickTest(DispatcherTestCase):
         self.assertIn(CloseJob(job, "the issue is closed or no longer labelled"), actions)
         self.assertEqual(self.spool.state(job), "closed")
 
+    def test_each_unreadable_issue_is_named_in_one_log_line_and_the_others_go_on(self):
+        issues = key(f"{self.github.repo}/issues", {"state": "open", "labels": "factory:fix", "per_page": "100"})
+        self.github.answers[issues].insert(0, {"number": 7, "title": "Big", "body": "", "user": {"login": "x"},
+                                               "labels": [{"name": "factory:fix"}]})
+        self.github.raises[key(f"{self.github.repo}/issues/7/events", {"per_page": "100"})] = GitHubError(0, "big")
+        with self.assertLogs("factory.dispatcher", "WARNING") as logged:
+            actions = self.dispatcher.tick()
+        self.assertEqual(logged.output, ["WARNING:factory.dispatcher:issue #7 could not be read in full this poll, "
+                                         "so it is left as it is"])
+        self.assertIn(StartJob(12, "demo"), actions)
+
     def test_a_notice_is_posted_for_an_issue_nobody_trusts(self):
         issues = key(f"{self.github.repo}/issues", {"state": "open", "labels": "factory:fix", "per_page": "100"})
         self.github.answers[issues][0]["user"] = {"login": "stranger"}
@@ -426,10 +437,90 @@ class OnceTest(DispatcherTestCase):
         self.assertEqual(self.run_main("--once"), 0)
         self.assertEqual(len(self.spool.job_ids()), 1)
 
-    def test_once_returns_one_when_the_tick_raised(self):
+    def test_once_returns_one_when_the_tick_raised_and_logs_what_github_said(self):
         self.github.fail.add(f"{self.github.repo}/issues")
-        with self.assertLogs("factory.dispatcher", "ERROR"):
+        with self.assertLogs("factory.dispatcher", "ERROR") as logged:
             self.assertEqual(self.run_main("--once"), 1)
+        self.assertEqual(logged.output, [f"ERROR:factory.dispatcher:the poll failed: GitHub 502: GET "
+                                         f"{self.github.repo}/issues failed"])
+
+    def test_a_configuration_that_does_not_load_is_one_line_and_exit_status_2(self):
+        problem = factory_config.ConfigError("stages.fix_issue is required")
+        with mock.patch.object(dispatcher_module, "load_config", side_effect=problem), \
+                self.assertLogs("factory.dispatcher", "ERROR") as logged:
+            self.assertEqual(self.run_main("--once"), 2)
+        self.assertEqual(logged.output, ["ERROR:factory.dispatcher:configuration: stages.fix_issue is required"])
+        self.assertIsNone(logged.records[0].exc_info)
+
+    def test_once_and_the_service_hold_the_lock_and_a_dry_run_takes_none(self):
+        taken = []
+
+        def take(state_dir):
+            taken.append(state_dir)
+            return None
+
+        with mock.patch.object(dispatcher_module, "acquire_lock", side_effect=take), \
+                mock.patch.object(Dispatcher, "run"), mock.patch.object(dispatcher_module.signal, "signal"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.run_main("--once"), 0)
+            self.assertEqual(self.run_main(), 0)
+            self.assertEqual(self.run_main("--dry-run"), 0)
+        self.assertEqual(taken, [self.settings.state_dir, self.settings.state_dir])
+
+    def test_a_second_dispatcher_exits_with_status_1_and_one_line(self):
+        with mock.patch.object(dispatcher_module, "acquire_lock", side_effect=dispatcher_module.AlreadyRunning), \
+                self.assertLogs("factory.dispatcher", "ERROR") as logged:
+            self.assertEqual(self.run_main("--once"), 1)
+        self.assertEqual(logged.output, ["ERROR:factory.dispatcher:another dispatcher holds the lock on the state "
+                                         "directory"])
+        self.assertEqual(self.spool.job_ids(), [])
+
+    def test_a_lock_that_cannot_be_taken_is_a_start_up_failure(self):
+        with mock.patch.object(dispatcher_module, "acquire_lock", side_effect=PermissionError("secret detail")), \
+                self.assertLogs("factory.dispatcher", "ERROR") as logged:
+            self.assertEqual(self.run_main("--once"), 1)
+        self.assertEqual(logged.output, ["ERROR:factory.dispatcher:start-up failed: PermissionError"])
+
+
+class LockTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = Path(tmp.name)
+
+    def fake_fcntl(self, error: type[BaseException] | None) -> mock.Mock:
+        module = mock.Mock(LOCK_EX=2, LOCK_NB=4)
+        module.flock.side_effect = error
+        return module
+
+    def test_a_held_lock_means_another_dispatcher(self):
+        with mock.patch.object(dispatcher_module, "fcntl", self.fake_fcntl(BlockingIOError)), \
+                self.assertRaises(dispatcher_module.AlreadyRunning):
+            dispatcher_module.acquire_lock(self.state)
+
+    def test_any_other_error_is_raised_as_it_is(self):
+        with mock.patch.object(dispatcher_module, "fcntl", self.fake_fcntl(PermissionError)), \
+                self.assertRaises(PermissionError):
+            dispatcher_module.acquire_lock(self.state)
+
+    def test_a_free_lock_is_taken_on_the_lock_file_without_blocking(self):
+        fcntl = self.fake_fcntl(None)
+        with mock.patch.object(dispatcher_module, "fcntl", fcntl):
+            handle = dispatcher_module.acquire_lock(self.state)
+        self.addCleanup(handle.close)
+        self.assertEqual(fcntl.flock.call_args.args[1], 2 | 4)
+        self.assertTrue((self.state / "dispatcher.lock").exists())
+
+    def test_without_fcntl_there_is_no_lock(self):
+        with mock.patch.object(dispatcher_module, "fcntl", None):
+            self.assertIsNone(dispatcher_module.acquire_lock(self.state))
+
+    @unittest.skipUnless(os.name == "posix", "flock exists only on POSIX")
+    def test_two_dispatchers_cannot_both_hold_the_lock(self):
+        first = dispatcher_module.acquire_lock(self.state)
+        self.addCleanup(first.close)
+        with self.assertRaises(dispatcher_module.AlreadyRunning):
+            dispatcher_module.acquire_lock(self.state)
 
 
 class PublishTest(DispatcherTestCase):
@@ -631,6 +722,18 @@ class LoopTest(DispatcherTestCase):
         slept = self.run_once_with(GitHubError(502, "down"))
         self.assertEqual(slept, [float(CONFIG.dispatcher.poll_seconds)])
 
+    def test_a_failed_poll_logs_what_github_said_and_only_the_class_of_anything_else(self):
+        for error, line in ((GitHubError(0, "GET /x answered more than 10000000 bytes"),
+                             "the poll failed: GitHub 0: GET /x answered more than 10000000 bytes"),
+                            (OSError("a host path"), "the poll failed: OSError")):
+            with self.subTest(line=line):
+                stop = threading.Event()
+                with mock.patch.object(self.dispatcher, "tick", side_effect=error), \
+                        mock.patch.object(dispatcher_module, "_sleep", lambda event, seconds: event.set()), \
+                        self.assertLogs("factory.dispatcher", "ERROR") as logged:
+                    self.dispatcher.run(stop)
+                self.assertIn(f"ERROR:factory.dispatcher:{line}", logged.output)
+
     def test_a_rate_limit_sleeps_until_it_lifts(self):
         slept = self.run_once_with(RateLimited(429, "limit", NOW.timestamp() + 120))
         self.assertEqual(slept, [120.0])
@@ -658,7 +761,17 @@ class HousekeepingTest(DispatcherTestCase):
     def collected(self) -> list[Path | None]:
         return [repo for repo, args in self.git.maintenance if args == ("gc", "--quiet")]
 
+    def make_repositories(self) -> None:
+        for repository in (self.settings.mirror, self.settings.workrepo):
+            repository.mkdir(parents=True)
+
+    def test_repositories_that_do_not_exist_yet_are_not_collected(self):
+        self.settings.mirror.mkdir()
+        self.dispatcher.housekeeping()
+        self.assertEqual(self.collected(), [self.settings.mirror])
+
     def test_git_is_collected_on_the_first_idle_housekeeping_and_then_daily(self):
+        self.make_repositories()
         self.dispatcher.housekeeping()
         self.assertEqual(self.collected(), [self.settings.mirror, self.settings.workrepo])
         self.now = NOW + timedelta(hours=23)
@@ -677,6 +790,7 @@ class HousekeepingTest(DispatcherTestCase):
         self.assertEqual(len(self.collected()), 2)
 
     def test_a_failed_collection_is_logged_and_ignored(self):
+        self.make_repositories()
         with mock.patch.object(self.git, "run_git", side_effect=gitops.GitError("gc", 1)), \
                 self.assertLogs("factory.dispatcher", "ERROR") as logged:
             self.dispatcher.housekeeping()

@@ -69,6 +69,15 @@ def _label(method: str, url: str) -> str:
     return f"{method} {urllib.parse.urlsplit(url).path}"
 
 
+def _page_size(url: str) -> int | None:
+    """The `per_page` a request asks for, or None when it names none that is a number."""
+    asked = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("per_page")
+    try:
+        return int(asked[-1]) if asked else None
+    except ValueError:
+        return None
+
+
 class GitHub:
     """Calls one repository's REST API as the token's owner."""
 
@@ -134,7 +143,11 @@ class GitHub:
         return self._decode(method, API_ROOT + path, data)
 
     def _get_page(self, url: str) -> tuple[object, str | None]:
-        """Fetch one page with the remembered ETag; returns its body and the next page's URL."""
+        """Fetch one page with the remembered ETag; returns its body and the next page's URL.
+
+        A page as full as the request asked for, without a next link, is not remembered: it is the last page only
+        until one more item arrives, and an ETag that covers the body alone would hide the next page that appears.
+        """
         remembered = self._remembered.get(url)
         status, headers, data = self._send("GET", url, None, remembered[0] if remembered else None)
         if status == 304:
@@ -145,8 +158,9 @@ class GitHub:
         match = NEXT_LINK.search(headers.get("link") or "")
         next_url = match.group(1) if match else None
         etag = headers.get("etag")
+        full = isinstance(body, list) and len(body) == _page_size(url)
         self._remembered.pop(url, None)  # an answer without an ETag must not leave a stale one behind
-        if etag:
+        if etag and not (full and next_url is None):
             self._remembered[url] = (etag, body, next_url)
             if len(self._remembered) > MAX_REMEMBERED:
                 del self._remembered[next(iter(self._remembered))]
@@ -169,7 +183,8 @@ class GitHub:
         if status == 401 and retry_on_401:
             status, headers, content = self._exchange(method, url, data, etag, self._refresh)
         label = _label(method, url)
-        if status in (403, 429) and ("retry-after" in headers or headers.get("x-ratelimit-remaining") == "0"):
+        limited = "retry-after" in headers or headers.get("x-ratelimit-remaining") == "0"
+        if status == 429 or (status == 403 and limited):  # a 429 says "too many requests" whatever its headers say
             raise RateLimited(status, f"{label} was rate limited", self._retry_at(headers))
         if status != 304 and not 200 <= status < 300:
             raise GitHubError(status, f"{label} failed")
@@ -214,10 +229,14 @@ class GitHub:
         return response.status, response.headers, content
 
 
-def post_as_app(path: str, bearer: str, *, opener: Callable = _default_opener) -> dict:
-    """POST as the App itself with its JWT; the `post` that InstallationToken needs."""
+def post_as_app(path: str, bearer: str, repository: str, *, opener: Callable = _default_opener) -> dict:
+    """POST as the App itself with its JWT for a token limited to `repository` (`owner/name`); InstallationToken's post.
+
+    An installation may cover other repositories of the owner: the token needs this one only.
+    """
+    body = {"repositories": [repository.partition("/")[2]]}
     # The bearer is a fixed JWT, so repeating a rejected request would only repeat the rejection.
-    answer = GitHub("", lambda: bearer, opener=opener)._write("POST", path, {}, retry_on_401=False)
+    answer = GitHub("", lambda: bearer, opener=opener)._write("POST", path, body, retry_on_401=False)
     if not isinstance(answer, dict):
         raise GitHubError(0, f"POST {path} did not answer with an object")
     return answer

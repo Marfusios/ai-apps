@@ -34,7 +34,7 @@ from factory import jobs, pod
 from factory.app_config import AppConfigError
 from factory.app_config import load as load_app_config
 from factory.bundle_check import MEGABYTE
-from factory.config import Config
+from factory.config import Config, ConfigError
 from factory.config import load as load_config
 from factory.image.build import harness_digest
 from factory.result import MAX_RESULT_BYTES
@@ -831,8 +831,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SettingsError as error:
         log.error("settings: %s", error)
         return 2
+    try:
+        config = load_config()
+    except ConfigError as error:  # its message names the file and the key, never a value of the environment
+        log.error("configuration: %s", error)
+        return 2
     spool = Spool(settings.spool_dir)
-    runner = Runner(settings, load_config(), spool, digest=lambda: harness_digest(REPOSITORY_ROOT))
+    runner = Runner(settings, config, spool, digest=lambda: harness_digest(REPOSITORY_ROOT))
     if args.check:
         healthy, lines = check(runner, spool)
         print("\n".join(lines))
@@ -849,7 +854,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         spool.prepare("runner")
         runner.prune_transcripts()
         recovered = runner.recover()
-    except (SpoolError, OSError) as error:
+    except SpoolError as error:  # the spool's messages name no host path, and say what to do
+        log.error("start-up failed: %s", error)
+        return 1
+    except OSError as error:
         log.error("start-up failed: %s", type(error).__name__)
         return 1
     if recovered:

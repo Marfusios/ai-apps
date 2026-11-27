@@ -1399,13 +1399,29 @@ class ProgramTests(RunnerCase):
         self.assertEqual(self.spool.run_record(stuck)["reason"], "internal")
         self.assertEqual(self.spool.state(queued), "finished")
 
-    def test_main_stops_when_the_spool_is_not_ready(self):
+    def test_main_stops_when_the_spool_is_not_ready_and_says_what_the_spool_says(self):
         env = {"FACTORY_SPOOL_DIR": str(self.root / "nowhere"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
                "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
                 mock.patch.object(runner, "acquire_lock", return_value=None), \
-                self.assertLogs("factory.runner", level="ERROR"):
+                self.assertLogs("factory.runner", level="ERROR") as logs:
             self.assertEqual(runner.main(["--once"]), 1)
+        self.assertEqual(logs.output, ["ERROR:factory.runner:start-up failed: runs/ is missing or not a directory: "
+                                       "start the dispatcher first"])
+
+    def test_main_reports_a_configuration_that_does_not_load_in_one_line_with_status_2(self):
+        env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
+               "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+        problem = factory_config.ConfigError("stages.fix_issue is required")
+        for argv in (["--once"], ["--check"]):
+            with self.subTest(argv=argv), mock.patch.dict(os.environ, env, clear=True), \
+                    mock.patch.object(logging, "basicConfig"), mock.patch.object(runner, "load_config",
+                                                                                 side_effect=problem), \
+                    mock.patch.object(runner, "acquire_lock", side_effect=AssertionError("locked")), \
+                    self.assertLogs("factory.runner", level="ERROR") as logs:
+                self.assertEqual(runner.main(argv), 2)
+            self.assertEqual(logs.output, ["ERROR:factory.runner:configuration: stages.fix_issue is required"])
+            self.assertIsNone(logs.records[0].exc_info)
 
 
 class RunProgramTests(unittest.TestCase):

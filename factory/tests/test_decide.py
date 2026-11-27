@@ -1,5 +1,6 @@
 """Tests for the decision function: one test per row of the situation table and per rule."""
 
+import dataclasses
 import unittest
 from datetime import datetime, timezone
 
@@ -294,6 +295,25 @@ class NoMarkerTest(unittest.TestCase):
             [PostNotice(12, "needs-app"), SetStatus(12, NEEDS_HUMAN, ()), PostNotice(13, "needs-app"),
              SetStatus(13, NEEDS_HUMAN, ())],
         )
+
+
+class UnreadableTest(unittest.TestCase):
+    """An open issue whose events, comments or pull request could not be read this poll."""
+
+    @staticmethod
+    def unreadable(number: int, **options) -> Issue:
+        return dataclasses.replace(issue(number, trigger=None, **options), unreadable=True)
+
+    def test_an_unreadable_issue_keeps_its_jobs_and_gets_no_actions(self):
+        for state in ("queued", "running", "finished"):
+            with self.subTest(state=state):
+                actions = run(self.unreadable(12), jobs=[JobView("j", 12, state)])
+                self.assertEqual(actions, [])
+
+    def test_an_unreadable_issue_neither_starts_nor_holds_back_another(self):
+        self.assertEqual(run(self.unreadable(12)), [])
+        self.assertEqual(run(self.unreadable(12, labels=("factory:fix", NEEDS_HUMAN)), issue(13)),
+                         [SetStatus(13, BUILDING, ()), StartJob(13, "demo")])
 
 
 class ClosedIssueTest(unittest.TestCase):

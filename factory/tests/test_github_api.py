@@ -150,6 +150,29 @@ class GetAllTest(unittest.TestCase):
         with self.assertRaises(GitHubError):
             github.get_all("/issues")
 
+    def test_a_full_page_without_a_next_link_is_fetched_fresh_so_a_new_page_is_seen(self):
+        github, opener = client([
+            ("GET", "/issues?per_page=2", 200, {"ETag": '"full"'}, [1, 2]),
+            ("GET", "/issues?per_page=2", 200, {**self.link(2), "ETag": '"full"'}, [1, 2]),
+            ("GET", "/issues?page=2", 200, {}, [3]),
+        ])
+        self.assertEqual(github.get_all("/issues", {"per_page": "2"}), [1, 2])
+        self.assertEqual(github.get_all("/issues", {"per_page": "2"}), [1, 2, 3])
+        self.assertNotIn("if-none-match", opener.requests[1].headers)
+
+    def test_a_page_that_is_not_full_or_has_a_next_link_is_remembered(self):
+        github, opener = client([
+            ("GET", "/issues?per_page=2", 200, {"ETag": '"short"'}, [1]),
+            ("GET", "/pulls?per_page=1", 200, {**self.link(2), "ETag": '"linked"'}, [1]),
+            ("GET", "/issues?per_page=2", 304, {}, b""),
+            ("GET", "/pulls?per_page=1", 304, {}, b""),
+        ])
+        for _ in range(2):
+            github.get("/issues", {"per_page": "2"})
+            github.get("/pulls", {"per_page": "1"})
+        self.assertEqual([request.headers.get("if-none-match") for request in opener.requests],
+                         [None, None, '"short"', '"linked"'])
+
     def test_pages_are_remembered_with_their_next_link(self):
         github, _ = client([
             ("GET", "/issues", 200, {**self.link(2), "ETag": '"1"'}, [1]),
@@ -182,12 +205,12 @@ class RealTokenRefreshTest(unittest.TestCase):
     def test_a_401_mints_exactly_one_new_token_and_the_retry_carries_it(self):
         posts = []
 
-        def post(path, bearer):
+        def post(path, bearer, repository):
             posts.append(path)
             return {"token": f"minted-{len(posts)}", "expires_at": "2099-01-01T00:00:00Z"}
 
         with mock.patch("factory.github_auth.app_jwt", return_value="jwt"):
-            tokens = InstallationToken("1", "2", Path("key.pem"), post=post)
+            tokens = InstallationToken("1", "2", Path("key.pem"), repository="o/n", post=post)
             opener = FakeOpener([("GET", "/x", 401, {}, {}), ("GET", "/x", 200, {}, {"ok": 1})])
             github = GitHub("o/n", tokens.get, opener=opener, refresh=tokens.refresh)
             self.assertEqual(github.get("/x"), {"ok": 1})
@@ -197,7 +220,7 @@ class RealTokenRefreshTest(unittest.TestCase):
     def test_a_401_from_post_as_app_is_one_request(self):
         opener = FakeOpener([("POST", "/x", 401, {}, {})])
         with self.assertRaises(GitHubError) as caught:
-            post_as_app("/x", "jwt", opener=opener)
+            post_as_app("/x", "jwt", "owner/name", opener=opener)
         self.assertEqual(caught.exception.status, 401)
         self.assertEqual(len(opener.requests), 1)
 
@@ -223,7 +246,7 @@ class SafetyTest(unittest.TestCase):
                 lambda: github.post(path, {}),
                 lambda: github.patch(path, {}),
                 lambda: github.delete(path),
-                lambda: post_as_app(path, "jwt", opener=opener),
+                lambda: post_as_app(path, "jwt", "owner/name", opener=opener),
             ):
                 with self.subTest(path=path), self.assertRaises(GitHubError) as caught:
                     call()
@@ -291,6 +314,13 @@ class ErrorTest(unittest.TestCase):
             github.get("/x")
         self.assertEqual(unknown.exception.retry_at, NOW + 60)
 
+    def test_every_429_is_a_rate_limit(self):
+        github, _ = client([("GET", "/x", 429, {}, {}), ("GET", "/x", 429, {"x-ratelimit-remaining": "42"}, {})])
+        for _ in range(2):
+            with self.assertRaises(RateLimited) as caught:
+                github.get("/x")
+            self.assertEqual((caught.exception.status, caught.exception.retry_at), (429, NOW + 60))
+
     def test_a_403_without_rate_limit_signs_is_a_plain_github_error(self):
         github, _ = client([("GET", "/x", 403, {"x-ratelimit-remaining": "42"}, {})])
         with self.assertRaises(GitHubError) as caught:
@@ -337,13 +367,19 @@ class ErrorTest(unittest.TestCase):
 class PostAsAppTest(unittest.TestCase):
     def test_it_posts_with_the_jwt_as_bearer_and_returns_the_object(self):
         opener = FakeOpener([("POST", "/app/installations/1/access_tokens", 201, {}, {"token": "t"})])
-        self.assertEqual(post_as_app("/app/installations/1/access_tokens", "the-jwt", opener=opener), {"token": "t"})
+        self.assertEqual(post_as_app("/app/installations/1/access_tokens", "the-jwt", "owner/name", opener=opener),
+                         {"token": "t"})
         self.assertEqual(opener.requests[0].headers["authorization"], "Bearer the-jwt")
+
+    def test_the_token_is_asked_for_this_repository_only(self):
+        opener = FakeOpener([("POST", "/app/installations/1/access_tokens", 201, {}, {"token": "t"})])
+        post_as_app("/app/installations/1/access_tokens", "the-jwt", "owner/name", opener=opener)
+        self.assertEqual(json.loads(opener.requests[0].body), {"repositories": ["name"]})
 
     def test_an_answer_that_is_not_an_object_is_an_error(self):
         opener = FakeOpener([("POST", "/x", 201, {}, [1])])
         with self.assertRaises(GitHubError):
-            post_as_app("/x", "the-jwt", opener=opener)
+            post_as_app("/x", "the-jwt", "owner/name", opener=opener)
 
 
 class FakeGitHubTest(unittest.TestCase):

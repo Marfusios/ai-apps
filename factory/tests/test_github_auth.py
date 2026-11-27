@@ -86,15 +86,16 @@ class InstallationTokenTest(unittest.TestCase):
         self.jwt = patcher.start()
         self.addCleanup(patcher.stop)
         self.now = at(10, 0)
-        self.posts: list[tuple[str, str]] = []
+        self.posts: list[tuple[str, str, str]] = []
         self.answers = [{"token": "t1", "expires_at": EXPIRY}, {"token": "t2", "expires_at": "2026-11-27T12:00:00Z"}]
 
-    def post(self, path: str, bearer: str) -> dict:
-        self.posts.append((path, bearer))
+    def post(self, path: str, bearer: str, repository: str) -> dict:
+        self.posts.append((path, bearer, repository))
         return self.answers[len(self.posts) - 1]
 
     def make(self) -> InstallationToken:
-        return InstallationToken("12345", "678", Path("key.pem"), post=self.post, clock=lambda: self.now)
+        return InstallationToken("12345", "678", Path("key.pem"), repository="owner/name", post=self.post,
+                                 clock=lambda: self.now)
 
     def test_token_is_cached_until_five_minutes_before_expiry(self):
         tokens = self.make()
@@ -107,9 +108,9 @@ class InstallationTokenTest(unittest.TestCase):
         self.assertEqual(tokens.get(), "t2")
         self.assertEqual(len(self.posts), 2)
 
-    def test_the_token_is_asked_for_with_the_jwt_at_the_installation_path(self):
+    def test_the_token_is_asked_for_with_the_jwt_at_the_installation_path_for_the_repository(self):
         self.make().get()
-        self.assertEqual(self.posts, [("/app/installations/678/access_tokens", "signed-jwt")])
+        self.assertEqual(self.posts, [("/app/installations/678/access_tokens", "signed-jwt", "owner/name")])
         self.jwt.assert_called_once_with("12345", Path("key.pem"), int(self.now))
 
     def test_an_answer_without_a_token_or_a_readable_expiry_raises_auth_error(self):

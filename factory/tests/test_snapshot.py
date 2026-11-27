@@ -3,7 +3,7 @@
 import unittest
 
 from factory import markers, snapshot
-from factory.github_api import GitHubError
+from factory.github_api import GitHubError, RateLimited
 from factory.snapshot import Bot
 from factory.tests.fakes import FakeGitHub
 
@@ -204,19 +204,43 @@ class FetchTest(unittest.TestCase):
 
         self.assertEqual(snapshot.fetch(github).apps, ())
 
-    def test_a_failing_request_ends_the_fetch(self) -> None:
-        github = github_with([issue_json(12)])
-        github.fail.add(f"{github.repo}/issues/12/comments")
+    def test_an_open_issue_that_cannot_be_read_is_unreadable_and_the_fetch_goes_on(self) -> None:
+        reads = {
+            "events": ("issues/12/events", {"per_page": "100"}),
+            "comments": ("issues/12/comments", {"per_page": "100"}),
+            "pull request": ("pulls", {"head": "owner:factory/fix-12", "state": "all", "per_page": "10"}),
+        }
+        for name, (path, params) in reads.items():
+            with self.subTest(name):
+                github = github_with([issue_json(12, labels=("factory:fix", "status:building")), issue_json(13)])
+                add_history(github, 12, events=[labeled("Marfusios")], comments=[comment_json(3, "Marfusios", 1)],
+                            pulls=[pull_json(30)])
+                add_history(github, 13, events=[labeled("Marfusios")])
+                github.raises[key(f"{github.repo}/{path}", params)] = GitHubError(0, "answered more than 10000000 bytes")
 
-        with self.assertRaises(GitHubError):
+                unreadable, readable = snapshot.fetch(github).issues
+
+                self.assertEqual((unreadable.number, unreadable.unreadable, unreadable.trigger_actor,
+                                  unreadable.comments, unreadable.pull_request), (12, True, None, (), None))
+                self.assertEqual((unreadable.labels, unreadable.open), (("factory:fix", "status:building"), True))
+                self.assertEqual((readable.number, readable.unreadable, readable.trigger_actor), (13, False, "Marfusios"))
+
+    def test_a_rate_limit_while_reading_one_issue_still_ends_the_fetch(self) -> None:
+        github = github_with([issue_json(12)])
+        github.raises[key(f"{github.repo}/issues/12/comments", {"per_page": "100"})] = RateLimited(429, "limit", 0.0)
+
+        with self.assertRaises(RateLimited):
             snapshot.fetch(github)
 
-    def test_a_failing_pull_request_lookup_ends_the_fetch(self) -> None:
-        github = github_with([issue_json(12)])
-        github.fail.add(f"{github.repo}/pulls")
+    def test_a_failing_list_request_ends_the_fetch(self) -> None:
+        for listing in (OPEN_LIST, CLOSED_LIST, HALT_LIST, None):
+            with self.subTest(listing=listing):
+                github = github_with([issue_json(12)])
+                path = f"{github.repo}/contents/apps" if listing is None else f"{github.repo}/issues"
+                github.raises[key(path, listing)] = GitHubError(502, "down")
 
-        with self.assertRaises(GitHubError):
-            snapshot.fetch(github)
+                with self.assertRaises(GitHubError):
+                    snapshot.fetch(github)
 
     def test_odd_json_does_not_crash(self) -> None:
         odd = {"number": 12, "title": None, "body": None, "user": None, "state": "open"}  # no labels at all

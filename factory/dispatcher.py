@@ -13,10 +13,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import BinaryIO, Protocol
+
+try:
+    import fcntl
+except ImportError:  # not on Windows: there the lock is skipped
+    fcntl = None
 
 from factory import compose, gitops, jobs, snapshot
-from factory.config import Config
+from factory.config import REQUIRED_STAGE, Config, ConfigError
 from factory.config import load as load_config
 from factory.decide import Action, CloseJob, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide
 from factory.github_api import GitHub, GitHubError, RateLimited, post_as_app
@@ -31,7 +36,7 @@ log = logging.getLogger("factory.dispatcher")
 REPOSITORY = re.compile(r"(?!\.+/)[A-Za-z0-9._-]+/(?!\.+$)[A-Za-z0-9._-]+")
 LOGIN = re.compile(r"[A-Za-z0-9-]+(?:\[bot\])?")
 DIGITS = re.compile(r"[0-9]+")  # explicit [0-9]: \d would accept other scripts' digits
-STAGE = "fix_issue"
+STAGE = REQUIRED_STAGE  # the one stage this version starts
 SETTLE_WINDOW = timedelta(minutes=10)  # how long a published job still holds its issue while GitHub's listing lags
 UNREADABLE_REQUEST = "unreadable request"
 FIRST_RETRY_SECONDS = 60
@@ -50,6 +55,10 @@ RECOVERABLE = (GitHubError, GitError, SpoolError, AuthError, OSError)
 
 class SettingsError(ValueError):
     """The environment lacks a setting or holds a malformed one; the message names variables, never their values."""
+
+
+class AlreadyRunning(Exception):
+    """Another dispatcher holds the lock on the state directory."""
 
 
 @dataclass(frozen=True)
@@ -209,6 +218,9 @@ class Dispatcher:
         """Fetch, decide and apply; return the actions decided. With `dry_run` nothing is written anywhere."""
         now = self._clock()
         current = snapshot.fetch(self._github)
+        for issue in current.issues:
+            if issue.unreadable:
+                log.warning("issue #%d could not be read in full this poll, so it is left as it is", issue.number)
         views = job_views(self._spool, now, close_unreadable=not dry_run)
         actions = decide(current, views, now, self._config, self._settings.bot)
         if dry_run:
@@ -245,7 +257,7 @@ class Dispatcher:
                 delay = float(min(max(wait, SHORTEST_RATE_LIMIT_SLEEP_SECONDS), LONGEST_SLEEP_SECONDS))
                 log.error("GitHub's rate limit is reached; waiting %d seconds", delay)
             except RECOVERABLE as error:
-                log.error("the poll failed: %s", type(error).__name__)
+                log.error("the poll failed: %s", _poll_failure(error))
             self.housekeeping()
             _sleep(stop, delay)
 
@@ -269,7 +281,10 @@ class Dispatcher:
                     self._collect_garbage()  # logs its own failures
 
     def _collect_garbage(self) -> None:
+        """Run `git gc` in each git repository that exists; before the first job starts neither does."""
         for repository in (self._settings.mirror, self._settings.workrepo):
+            if not repository.is_dir():
+                continue
             try:
                 self._git.run_git(repository, "gc", "--quiet")
             except (GitError, OSError) as error:
@@ -380,8 +395,34 @@ def _sleep(stop: threading.Event, seconds: float) -> None:
         stop.wait(min(SLEEP_SLICE_SECONDS, remaining))
 
 
+def _poll_failure(error: Exception) -> str:
+    """What a failed poll's log line says: GitHub's own message, which holds no token, query or body; else the class."""
+    return str(error) if isinstance(error, GitHubError) else type(error).__name__
+
+
+def acquire_lock(state_dir: Path) -> BinaryIO | None:
+    """Take the exclusive lock that keeps a second dispatcher from starting jobs too; None where there is no flock.
+
+    The lock lasts as long as the returned file stays open. Only contention means another dispatcher holds it: any
+    other OSError, from creating or locking the file, is raised as it is.
+    """
+    if fcntl is None:
+        return None
+    handle = open(state_dir / "dispatcher.lock", "ab")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        raise AlreadyRunning from None
+    except BaseException:
+        handle.close()
+        raise
+    return handle
+
+
 def build_dispatcher(settings: Settings, config: Config) -> Dispatcher:
-    tokens = InstallationToken(settings.app_id, settings.installation_id, settings.key_file, post=post_as_app)
+    tokens = InstallationToken(settings.app_id, settings.installation_id, settings.key_file,
+                               repository=settings.repository, post=post_as_app)
     github = GitHub(settings.repository, tokens.get, refresh=tokens.refresh)
     spool = Spool(settings.spool_dir)
     publisher = Publisher(
@@ -407,12 +448,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SettingsError as error:
         log.error("settings: %s", error)
         return 2
-    dispatcher = build_dispatcher(settings, load_config())
+    try:
+        config = load_config()
+    except ConfigError as error:  # its message names the file and the key, never a value of the environment
+        log.error("configuration: %s", error)
+        return 2
+    dispatcher = build_dispatcher(settings, config)
     if args.dry_run:
         return _one_tick(dispatcher, dry_run=True)
     _make_state_directories(settings)
+    try:
+        lock = acquire_lock(settings.state_dir)  # held until the process ends
+    except AlreadyRunning:
+        log.error("another dispatcher holds the lock on the state directory")
+        return 1
+    except OSError as error:
+        log.error("start-up failed: %s", type(error).__name__)
+        return 1
+    try:
+        return _serve(dispatcher, once=args.once)
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def _serve(dispatcher: Dispatcher, *, once: bool) -> int:
     dispatcher.prepare()
-    if args.once:
+    if once:
         return _one_tick(dispatcher, dry_run=False)
     stop = threading.Event()
     for name in ("SIGINT", "SIGTERM"):
@@ -426,7 +488,7 @@ def _one_tick(dispatcher: Dispatcher, *, dry_run: bool) -> int:
     try:
         actions = dispatcher.tick(dry_run=dry_run)
     except RECOVERABLE as error:
-        log.error("the poll failed: %s", type(error).__name__)
+        log.error("the poll failed: %s", _poll_failure(error))
         return 1
     if dry_run:
         for action in actions:
