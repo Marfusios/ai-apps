@@ -2,12 +2,17 @@
 
 import email.message
 import io
+import itertools
 import json
+import re
 import urllib.error
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from factory.github_api import GitHubError
+
+ISSUE_COMMENTS = re.compile(r"/issues/[0-9]+/comments")
+FIRST_NUMBER = 1000  # the number FakeGitHub gives the first pull request or comment it creates
 
 
 def _message(headers: Mapping[str, str]) -> email.message.Message:
@@ -75,15 +80,25 @@ class FakeGitHub:
     """The public methods of `GitHub`, answering from `answers` and recording what is written.
 
     `answers` maps `(path, sorted params)` to what `get` returns and `get_all` lists. `responses` maps
-    `(method, path)` to what a `post` or `patch` returns. Every path in `fail` raises GitHubError(502).
+    `(method, path)` to what a `post` or `patch` returns. Every path in `fail` raises GitHubError(502), a path in
+    `fail_once` raises it on its next request only, and every path in `missing` raises GitHubError(404).
+
+    Like GitHub, it remembers what it creates. A pull request posted to `<repo>/pulls` or a comment posted to
+    `<repo>/issues/<n>/comments`, unless `responses` scripts the answer, gets the next number from FIRST_NUMBER on and
+    joins every later listing of that path, whatever its params. Its comments are written by `user`.
     """
 
-    def __init__(self, repository: str = "owner/name") -> None:
+    def __init__(self, repository: str = "owner/name", user: Mapping[str, object] | None = None) -> None:
         self._repository = repository
+        self.user = dict(user or {"login": "fake-bot[bot]", "id": 1})
         self.answers: dict[tuple[str, tuple[tuple[str, str], ...]], object] = {}
         self.responses: dict[tuple[str, str], object] = {}
         self.calls: list[tuple[str, str, Mapping | None]] = []
         self.fail: set[str] = set()
+        self.fail_once: set[str] = set()
+        self.missing: set[str] = set()
+        self._created: dict[str, list[dict]] = {}
+        self._numbers = itertools.count(FIRST_NUMBER)
 
     @property
     def repo(self) -> str:
@@ -92,9 +107,11 @@ class FakeGitHub:
     def get(self, path: str, params: Mapping[str, str] | None = None) -> object:
         self._check(path)
         key = (path, tuple(sorted((params or {}).items())))
-        if key not in self.answers:
+        created = [dict(item) for item in self._created.get(path, [])]
+        if key not in self.answers and not created:
             raise AssertionError(f"unexpected GET {key}")
-        return self.answers[key]
+        answer = self.answers.get(key, [])
+        return [*answer, *created] if created else answer
 
     def get_all(self, path: str, params: Mapping[str, str] | None = None, *, max_pages: int = 10) -> list:
         answer = self.get(path, params)
@@ -122,8 +139,30 @@ class FakeGitHub:
     def _write(self, method: str, path: str, body: Mapping) -> object:
         self._check(path)
         self.calls.append((method, path, body))
-        return self.responses.get((method, path), {})
+        if (method, path) in self.responses:
+            return self.responses[(method, path)]
+        if method == "POST" and path == f"{self.repo}/pulls":
+            number = next(self._numbers)
+            return self._create(path, {
+                "number": number, "html_url": f"https://github.com/{self._repository}/pull/{number}", "state": "open",
+                "draft": body.get("draft", False), "title": body.get("title"), "body": body.get("body"),
+            })
+        if method == "POST" and path.startswith(self.repo) and ISSUE_COMMENTS.fullmatch(path[len(self.repo):]):
+            return self._create(path, {
+                "id": next(self._numbers), "user": dict(self.user), "created_at": "2026-01-01T00:00:00Z",
+                "body": body.get("body"),
+            })
+        return {}
+
+    def _create(self, path: str, item: dict) -> dict:
+        self._created.setdefault(path, []).append(item)
+        return dict(item)
 
     def _check(self, path: str) -> None:
+        if path in self.fail_once:
+            self.fail_once.discard(path)
+            raise GitHubError(502, f"{path} failed")
         if path in self.fail:
             raise GitHubError(502, f"{path} failed")
+        if path in self.missing:
+            raise GitHubError(404, f"{path} was not found")
