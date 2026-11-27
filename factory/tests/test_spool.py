@@ -59,7 +59,7 @@ class SpoolLifecycleTest(SpoolTestCase):
         self.assertEqual(spool.state(job), "running")
         spool.finish(job, run_record(job), {"result.json": self.file(b"{}")})
         self.assertEqual(spool.state(job), "finished")
-        self.assertEqual(spool.run_file(job, "result.json").read_bytes(), b"{}")
+        self.assertEqual(spool.read_run_file(job, "result.json", 10), b"{}")
         self.assertEqual(spool.run_record(job)["status"], "completed")
         spool.close(job, "published", NOW)
         self.assertEqual(spool.state(job), "closed")
@@ -112,7 +112,7 @@ class SpoolLifecycleTest(SpoolTestCase):
         spool, bad = Spool(self.root), "../x"
         calls = (
             lambda: spool.submit(bad, {}), lambda: spool.request(bad),
-            lambda: spool.job_file(bad, "a"), lambda: spool.run_file(bad, "a"),
+            lambda: spool.job_file(bad, "a"), lambda: spool.read_run_file(bad, "a", 1),
             lambda: spool.close(bad, "r", NOW), lambda: spool.claim(bad, NOW),
             lambda: spool.finish(bad, {}, {}), lambda: spool.run_record(bad),
         )
@@ -128,7 +128,7 @@ class SpoolLifecycleTest(SpoolTestCase):
             with self.assertRaises(SpoolError):
                 spool.job_file(job, bad)
             with self.assertRaises(SpoolError):
-                spool.run_file(job, bad)
+                spool.read_run_file(job, bad, 10)
 
     def test_finish_writes_run_json_last_and_leaves_no_temporary_file(self):
         spool = self.ready()
@@ -136,8 +136,9 @@ class SpoolLifecycleTest(SpoolTestCase):
         spool.submit(job, {"request.json": b"{}"})
         spool.claim(job, NOW)
         missing = self.tmp / "absent.bundle"
-        with self.assertRaises(OSError):
+        with self.assertRaises(SpoolError) as caught:
             spool.finish(job, run_record(job), {"commits.bundle": missing})
+        self.assertNotIn(str(self.tmp), str(caught.exception))
         self.assertEqual(spool.state(job), "running")
         spool.finish(job, run_record(job), {"commits.bundle": self.file(b"B")})
         self.assertEqual(sorted(p.name for p in (self.root / "runs" / job).iterdir()),
@@ -147,11 +148,65 @@ class SpoolLifecycleTest(SpoolTestCase):
         with self.assertRaises(SpoolError):
             Spool(self.root).prepare("someone")
 
+    def test_the_dispatcher_creates_both_directories_and_the_runner_creates_none(self):
+        spool = Spool(self.root)
+        with self.assertRaises(SpoolError):
+            spool.prepare("runner")
+        self.assertFalse(self.root.exists())
+        spool.prepare("dispatcher")
+        spool.prepare("runner")
+        self.assertTrue((self.root / "jobs").is_dir() and (self.root / "runs").is_dir())
+
+    def test_submit_and_claim_do_not_create_missing_parents(self):
+        spool = Spool(self.root)
+        job = new_job_id("fix_issue", 1, NOW)
+        with self.assertRaises(SpoolError):
+            spool.submit(job, {"request.json": b"{}"})
+        with self.assertRaises(SpoolError):
+            spool.claim(job, NOW)
+        self.assertFalse(self.root.exists())
+
+    def test_operating_system_failures_become_spool_errors_without_host_paths(self):
+        spool = self.ready()
+        job = new_job_id("fix_issue", 1, NOW)
+        for call in (lambda: spool.close(job, "published", NOW),
+                     lambda: spool.finish(job, run_record(job), {})):
+            with self.assertRaises(SpoolError) as caught:
+                call()
+            self.assertNotIn(str(self.tmp), str(caught.exception))
+
+    def test_close_leaves_no_temporary_file(self):
+        spool = self.ready()
+        job = new_job_id("fix_issue", 1, NOW)
+        spool.submit(job, {"request.json": b"{}"})
+        spool.close(job, "published", NOW)
+        self.assertEqual(sorted(p.name for p in (self.root / "jobs" / job).iterdir()),
+                         ["closed.json", "request.json"])
+
+    def test_finish_checks_every_name_before_copying(self):
+        spool = self.ready()
+        job = new_job_id("fix_issue", 1, NOW)
+        spool.claim(job, NOW)
+        with self.assertRaises(SpoolError):
+            spool.finish(job, run_record(job), {"good.json": self.file(b"x"), "../bad": self.file(b"y", "y.bin")})
+        self.assertEqual([p.name for p in (self.root / "runs" / job).iterdir()], ["claimed.json"])
+
+    def test_naive_datetimes_are_refused_everywhere(self):
+        spool = self.ready()
+        naive = datetime(2026, 11, 27, 10, 15, 0)
+        job = new_job_id("fix_issue", 1, NOW)
+        spool.submit(job, {"request.json": b"{}"})
+        for call in (lambda: new_job_id("fix_issue", 1, naive), lambda: spool.close(job, "r", naive),
+                     lambda: spool.claim(job, naive), lambda: spool.prune("dispatcher", naive),
+                     lambda: spool.prune("runner", naive)):
+            with self.assertRaises(ValueError):
+                call()
+
     @unittest.skipUnless(os.name == "posix", "directory modes only have an effect on POSIX")
     def test_prepare_applies_the_group_readable_setgid_mode(self):
         self.ready()
         self.assertEqual(os.stat(self.root / "jobs").st_mode & 0o7777, 0o2750)
-        self.assertEqual(os.stat(self.root / "runs").st_mode & 0o7777, 0o2750)
+        self.assertEqual(os.stat(self.root / "runs").st_mode & 0o7777, 0o2770)
 
 
 class ReadBoundedTest(SpoolTestCase):
@@ -197,25 +252,39 @@ class ReadBoundedTest(SpoolTestCase):
 
 
 class RunRecordTest(SpoolTestCase):
-    def finished(self, record: object) -> tuple[Spool, str]:
+    def finished(self, raw: object = None, **change: object) -> tuple[Spool, str]:
+        """A claimed job whose run.json holds a valid record with `change` applied, or `raw` if given."""
         spool = self.ready()
         job = new_job_id("fix_issue", 1, NOW)
         spool.submit(job, {"request.json": b"{}"})
         spool.claim(job, NOW)
+        record = {**run_record(job), **change} if raw is None else raw
         (self.root / "runs" / job / "run.json").write_text(json.dumps(record))
         return spool, job
 
     def test_run_record_rejects_an_unknown_status_and_an_unknown_key(self):
-        job = new_job_id("fix_issue", 1, NOW)
         for change in ({"status": "exploded"}, {"extra": 1}):
-            spool, job = self.finished({**run_record(job), **change})
+            spool, job = self.finished(**change)
             with self.assertRaises(SpoolError):
                 spool.run_record(job)
 
     def test_run_record_rejects_an_oversized_file(self):
-        spool, job = self.finished({**run_record(new_job_id("fix_issue", 1, NOW)), "model": "x" * MAX_RECORD_BYTES})
-        with self.assertRaises(SpoolError):
+        spool, job = self.finished()
+        path = self.root / "runs" / job / "run.json"
+        path.write_text(path.read_text() + " " * MAX_RECORD_BYTES)
+        with self.assertRaises(SpoolError) as caught:
             spool.run_record(job)
+        self.assertIn("too large", str(caught.exception))
+
+    def test_run_record_rejects_a_record_that_names_another_job(self):
+        spool, job = self.finished(job_id=new_job_id("fix_issue", 2, NOW))
+        with self.assertRaises(SpoolError) as caught:
+            spool.run_record(job)
+        self.assertIn("another job", str(caught.exception))
+
+    def test_run_record_returns_a_valid_record(self):
+        spool, job = self.finished()
+        self.assertEqual(spool.run_record(job)["job_id"], job)
 
     def test_run_record_rejects_text_that_is_not_json_or_not_an_object(self):
         spool, job = self.finished([1, 2])
@@ -224,6 +293,43 @@ class RunRecordTest(SpoolTestCase):
         (self.root / "runs" / job / "run.json").write_bytes(b"\xff\xfe not json")
         with self.assertRaises(SpoolError):
             spool.run_record(job)
+
+    @unittest.skipUnless(CAN_SYMLINK, "this platform has no symbolic links")
+    def test_a_run_directory_that_is_a_link_is_finished_but_unreadable(self):
+        spool = self.ready()
+        job = new_job_id("fix_issue", 1, NOW)
+        spool.submit(job, {"request.json": b"{}"})
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (outside / "run.json").write_text(json.dumps(run_record(job)))
+        (outside / "result.json").write_text("{}")
+        try:
+            os.symlink(outside, self.root / "runs" / job, target_is_directory=True)
+        except OSError:
+            self.skipTest("creating symbolic links is not permitted here")
+        self.assertEqual(spool.state(job), "finished")
+        for call in (lambda: spool.run_record(job), lambda: spool.read_run_file(job, "result.json", 10)):
+            with self.assertRaises(SpoolError):
+                call()
+
+    def test_read_run_file_reads_and_bounds_a_regular_file(self):
+        spool, job = self.finished()
+        (self.root / "runs" / job / "result.json").write_bytes(b"12345")
+        self.assertEqual(spool.read_run_file(job, "result.json", 5), b"12345")
+        with self.assertRaises(SpoolError):
+            spool.read_run_file(job, "result.json", 4)
+        with self.assertRaises(SpoolError):
+            spool.read_run_file(job, "absent.json", 4)
+
+    @unittest.skipUnless(CAN_SYMLINK, "this platform has no symbolic links")
+    def test_read_run_file_refuses_a_file_that_is_a_link(self):
+        spool, job = self.finished()
+        try:
+            os.symlink(self.file(b"secret"), self.root / "runs" / job / "result.json")
+        except OSError:
+            self.skipTest("creating symbolic links is not permitted here")
+        with self.assertRaises(SpoolError):
+            spool.read_run_file(job, "result.json", 100)
 
     def test_validate_run_accepts_a_valid_record(self):
         self.assertEqual(validate_run(run_record(new_job_id("fix_issue", 1, NOW))), [])
@@ -234,13 +340,16 @@ class RunRecordTest(SpoolTestCase):
             ("schema", 2), ("schema", True), ("job_id", "nope"), ("job_id", None),
             ("status", "bad"), ("status", 1),
             ("reason", "bad"), ("reason", 3),
+            ("started_at", "2026-1-5T1:2:3Z"), ("started_at", "2026-11- 5T10:15:00Z"),
+            ("started_at", "\u0662\u0660\u0662\u0666-11-27T10:15:00Z"), ("started_at", "2026-11-27T10:15:00Z\n"),
             ("started_at", "2026-11-27 10:15:00"), ("started_at", "2026-13-40T10:15:00Z"), ("started_at", 5),
             ("finished_at", "yesterday"),
             ("duration_seconds", -1), ("duration_seconds", 1_000_001), ("duration_seconds", True),
             ("duration_seconds", 1.5), ("duration_seconds", None),
-            ("model", "x" * 101), ("model", 7),
+            ("model", "x" * 101), ("model", 7), ("model", "bad\x00name"), ("model", "lone\ud800"),
+            ("model", "has space"),
             ("turns", -1), ("turns", 100_001), ("turns", False), ("turns", "3"),
-            ("resets_at", "soon"), ("resets_at", 1.5), ("resets_at", True),
+            ("resets_at", 4_102_444_801), ("resets_at", -1), ("resets_at", "soon"), ("resets_at", 1.5), ("resets_at", True),
         )
         for key, value in rows:
             with self.subTest(key=key, value=value):
@@ -250,8 +359,8 @@ class RunRecordTest(SpoolTestCase):
 
     def test_validate_run_accepts_the_boundary_values(self):
         job = new_job_id("fix_issue", 1, NOW)
-        record = {**run_record(job), "duration_seconds": 1_000_000, "turns": 100_000, "resets_at": 1_800_000_000,
-                  "model": "x" * 100}
+        record = {**run_record(job), "duration_seconds": 1_000_000, "turns": 100_000, "resets_at": 4_102_444_800,
+                  "model": "claude-x.1:2[3]_" + "x" * 84}
         self.assertEqual(validate_run(record), [])
 
     def test_validate_run_requires_a_reason_for_refused_and_crashed(self):
@@ -303,6 +412,27 @@ class PruneTest(SpoolTestCase):
         (self.root / "runs" / "notes").mkdir()
         self.assertEqual(spool.prune("runner", NOW), [gone])
         self.assertEqual(sorted(p.name for p in (self.root / "runs").iterdir()), sorted([kept, "notes"]))
+
+    def test_dispatcher_prune_removes_only_stale_incoming_directories(self):
+        spool = self.ready()
+        jobs = self.root / "jobs"
+        stale = jobs / f".incoming-{new_job_id('fix_issue', 1, NOW)}"
+        fresh = jobs / f".incoming-{new_job_id('fix_issue', 2, NOW)}"
+        stale.mkdir()
+        fresh.mkdir()
+        old = NOW.timestamp() - 2 * 86400
+        os.utime(stale, (old, old))
+        os.utime(fresh, (NOW.timestamp(), NOW.timestamp()))
+        self.assertEqual(spool.prune("dispatcher", NOW), [])
+        self.assertEqual((stale.exists(), fresh.exists()), (False, True))
+
+    def test_runner_prune_does_nothing_without_a_jobs_directory(self):
+        spool = Spool(self.root)
+        (self.root / "runs").mkdir(parents=True)
+        job = new_job_id("fix_issue", 1, NOW)
+        (self.root / "runs" / job).mkdir()
+        self.assertEqual(spool.prune("runner", NOW), [])
+        self.assertTrue((self.root / "runs" / job).exists())
 
     def test_prune_refuses_an_unknown_side(self):
         with self.assertRaises(SpoolError):
