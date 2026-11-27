@@ -1,0 +1,26 @@
+# The factory's runner: takes one job at a time and runs the agent in a rootless Podman container.
+# A systemd user unit, installed by the runner's user in ~/.config/systemd/user/.
+# docs/factory/HOST_SETUP.md says how to install it and which lines to change for another layout.
+
+[Unit]
+Description=Software factory runner
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/factory/app
+EnvironmentFile=%h/.config/factory/runner.env
+EnvironmentFile=%h/.config/factory/claude.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m factory.runner
+UMask=0027
+# No NoNewPrivileges here: rootless Podman needs its setuid helpers, newuidmap and newgidmap.
+# On a stop the runner kills the agent's container itself and records the job, so only the runner
+# gets the signal at first, and the rest is killed after the timeout.
+KillMode=mixed
+TimeoutStopSec=60
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

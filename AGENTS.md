@@ -31,8 +31,8 @@ What you know but leave unwritten there is lost when your session ends.
 - The merged design is the input to the plan, and `PLAN.md` on `main` is the authority for every
   step: step issues only mirror it, and it changes only when a person merges a change to it.
 - Never start building an epic until its design and its plan are both merged into `main`.
-- A small issue (labelled `factory:fix`) goes straight to one pull request: reproduce the problem,
-  write a failing test, fix it. If it needs a design decision, say that it is an epic instead.
+- A small change (`factory:fix`) is one pull request: a bug fix or small feature, test first, or a
+  chore (tooling, dependencies, docs) that `check` verifies. A design decision makes it an epic.
 - In a factory run (`FACTORY_RUN=1`), read [factory/AGENT_CONTRACT.md](factory/AGENT_CONTRACT.md)
   first: it says what the run is given and what it must return.
 

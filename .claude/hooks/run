@@ -23,14 +23,29 @@ if [ "$hook" = finish_check ] && [ "${FACTORY_RUN-}" != 1 ]; then
 fi
 check='import sys; sys.exit(sys.version_info < (3, 11))'
 python=
-for candidate in python3 python; do
-    if "$candidate" -c "$check" </dev/null >/dev/null 2>&1; then
-        python=$candidate
-        break
+# A factory run names its interpreter, so that nothing earlier on PATH can stand in for it: if that one is
+# unusable no other is tried. It starts with -E and -s, so that neither a PYTHON variable nor the user site
+# directory, both of which the agent can set, reaches the hook; not with -I, which would also take the hook's own
+# directory, where hooklib lies, off the import path.
+if [ -n "${FACTORY_HOOK_PYTHON-}" ]; then
+    if "$FACTORY_HOOK_PYTHON" -E -s -c "$check" </dev/null >/dev/null 2>&1; then
+        python=$FACTORY_HOOK_PYTHON
+    else
+        printf '%s\n' "hook launcher: FACTORY_HOOK_PYTHON is no Python 3.11 or newer, the $hook hook cannot run" >&2
+        exit 2
     fi
-done
+else
+    for candidate in python3 python; do
+        if "$candidate" -c "$check" </dev/null >/dev/null 2>&1; then
+            python=$candidate
+            break
+        fi
+    done
+fi
 # Not exec: a hook that dies exits with 1, which Claude Code reports without blocking the call.
-if [ -n "$python" ]; then
+if [ -n "${FACTORY_HOOK_PYTHON-}" ]; then
+    "$python" -E -s "$dir/$hook.py" "$@"
+elif [ -n "$python" ]; then
     "$python" "$dir/$hook.py" "$@"
 elif py -3 -c "$check" </dev/null >/dev/null 2>&1; then
     # The Windows launcher takes the version as a second word, so it is tried on its own.

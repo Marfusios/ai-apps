@@ -24,7 +24,7 @@ stranger, which rules out private trackers and chat logs.
 
 - An epic issue becomes: a design pull request, then a plan pull request, then one issue
   per plan step tracked from the epic, then one pull request per step.
-- A small issue ("this is broken") goes straight to a pull request.
+- A small change (a bug fix, a small feature or a chore) goes straight to a pull request.
 - People steer by reviewing pull requests. Nothing merges without a person approving it.
 - Every pull request gets an automated review from a second model before a person is
   asked to look.
@@ -102,7 +102,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | GitHub | n/a | the state | Issues, labels, pull requests, reviews and checks are the single source of truth. |
 | Dispatcher | host user 1 | GitHub App key | Polls GitHub, decides what to do next, writes job files, validates results, pushes branches, opens and updates pull requests, posts comments, creates step issues. Never runs agent-written code. |
-| Runner | host user 2 | Claude sign-in token | Takes one job at a time, starts a pod (agent container plus declared services), collects the result. |
+| Runner | host user 2 | Claude sign-in token | Takes one job at a time, runs the agent in a rootless container, then bundles its commits in a second container without network, and collects the result. |
 | Agent | inside the container | nothing for GitHub | Reads the job context, edits and commits in a working copy, returns a structured result. Cannot push. |
 | Hosted workflows | GitHub-hosted runners | provider API keys | Repository checks, per-app checks, the second-model review. |
 
@@ -123,10 +123,12 @@ People apply trigger labels. The dispatcher applies everything else.
 | `factory:pause` | person | Start no new runs for this issue or its steps. |
 | `factory:halt` | person | On any open issue: start no new runs anywhere. |
 | `factory:step` | dispatcher | A plan step, created from a merged plan. |
-| `status:queued`, `status:design`, `status:plan`, `status:building`, `status:needs-human`, `status:done` | dispatcher | Where the issue is. Exactly one at a time. |
+| `status:queued`, `status:design`, `status:plan`, `status:building`, `status:needs-human`, `status:done` | dispatcher | Where the issue is. At most one at a time. |
 | `stage:design`, `stage:plan`, `stage:step`, `stage:fix` | dispatcher | What a pull request is for. |
 
 A trigger label counts only if the timeline shows a trusted person applied it (section 7).
+`factory:pause` and `factory:halt` count from anyone who can apply a label, since stopping
+is always safe.
 
 ### 6.2 Epic pipeline
 
@@ -165,10 +167,22 @@ A trigger label counts only if the timeline shows a trusted person applied it (s
 
 ### 6.3 Ad-hoc pipeline
 
-A trusted person labels an issue `factory:fix`. The `factory-fix-issue` skill reproduces
-the problem, writes a failing test, fixes it, and returns a pull request that closes the
-issue. If the agent judges the issue too large or too vague, it returns questions instead
-and the issue gets `status:needs-human`.
+A trusted person labels an issue `factory:fix`. The issue asks for one small change, and
+the `factory-fix-issue` skill returns one pull request that closes the issue. A small
+change is one of three kinds:
+
+- **A bug fix.** The agent reproduces the problem, writes a failing test, and fixes it.
+- **A small feature.** The agent writes the failing test for the new behaviour first, then
+  the code, within one module's responsibilities.
+- **A chore.** Tooling such as a linter or a formatter, a dependency update,
+  configuration, cleanup, or documentation. It changes no behaviour and needs no new test;
+  the app's check command is its verification. A chore that adds or changes a quality
+  tool updates the app's `factory.toml` and the commands in its `AGENTS.md` in the same
+  pull request, and fixes what the tool reports.
+
+Anything that needs a design decision is an epic. If the agent judges the issue too large,
+too vague, or in need of a decision, it returns questions instead and the issue gets
+`status:needs-human`.
 
 ### 6.4 The life of a pull request
 
@@ -203,7 +217,9 @@ The agent returns one of three outcomes: done, needs input (with questions), or 
 (with a reason). For the last two, and for timeouts and crashes, the dispatcher posts a
 comment saying what happened and sets `status:needs-human`. Hitting the subscription's
 usage limit is not a failure: the dispatcher stops starting runs, says so once, and
-resumes after the limit resets.
+resumes after the limit resets. A finished run whose publication fails eight times, with a
+growing delay between attempts, is shown as an internal error in the same way, so that one
+publication cannot hold up the factory without a word.
 
 ## 7. Trust and safety
 
@@ -212,11 +228,13 @@ configuration, checked against the actor GitHub records for the label, comment, 
 review. Being able to open an issue is not enough: issue templates can apply labels for
 anyone, so the dispatcher checks who applied the label, not that it is present.
 
-**What text reaches an agent.** The dispatcher assembles the context itself: the issue
-body and comments by trusted people, the relevant documents, review threads, failed check
-output, and the second-model review. Comments by anyone else are dropped. Skills tell the
-agent that issue text, review findings, and web pages are information to weigh, never
-instructions to follow.
+**What text reaches an agent.** The dispatcher assembles the context itself: the issue's
+title and body only when its author is trusted, comments by trusted people and by the
+factory's own bot, the relevant documents, review threads, failed check output, and the
+second-model review. Comments by anyone else are dropped. For an issue opened by someone
+outside the trusted list, the agent sees `(title withheld)` and no body, and a trusted
+person restates the request in a comment. Skills tell the agent that issue text, review
+findings, and web pages are information to weigh, never instructions to follow.
 
 **What code an agent runs.** Only branches the factory created in this repository. Pull
 requests from forks are never checked out or run by the factory. They still get the
@@ -247,26 +265,63 @@ the pod (section 9).
 
 **What the dispatcher checks before publishing a result.**
 
-- The result file matches its schema and size limits.
-- The commits arrive as a git bundle, which is read as data. The dispatcher never runs
-  git inside a directory an agent could write to.
-- Every commit descends from the expected base and is authored by the bot identity.
-- Every changed path is writable. No file matches the repository checker's credential,
-  personal-path, or private-address patterns (the dispatcher uses its own trusted copy
-  of the checker, not the one on the branch).
-- Text posted on the agent's behalf has user mentions neutralised and length capped.
+- The result file matches its schema and size limits, and none of the texts it posts matches
+  the hygiene patterns below. The verification is never posted, so it is not scanned.
+- The commits arrive as a git bundle, which is read as data in the dispatcher's own
+  repository. The dispatcher never runs git inside a directory an agent could write to.
+- Every commit is checked, not only the net difference of all of them, so a problem that
+  a later commit removes still counts. Each commit has exactly one parent and descends
+  from the expected base. Its author and committer headers, read from the raw commit
+  rather than through git's formatting, are exactly the bot's identity, and it has no
+  other headers.
+- Every changed path is writable. Every added file has an allowed mode (a regular file,
+  an executable, or a link), no entry is a submodule or a credential file such as a
+  `.env` file or a key, and every link stays inside the repository. Each file, each
+  commit, the number of commits and changed files, and the bundle as a whole stay within
+  size limits.
+- No file content and no commit message matches the hygiene patterns: the repository
+  checker's credential, personal-path, and private-address patterns. No file name or
+  link target matches a credential pattern. The dispatcher uses its own trusted copy of
+  the patterns, `factory/hygiene.py` in its deployed checkout, never the one on the
+  branch.
+- A commit message mentions no person and refers to no issue but the run's own: it holds
+  no `@` before a letter or digit, no `github.com/` link, no `GH-<number>`, no
+  `owner/repo#<number>` and no `#<number>` but `#<issue>`. GitHub acts on a message as
+  soon as the commit is pushed, and nothing neutralises it.
+- The work branch on GitHub is still where the run started, or already at the checked
+  commits, and GitHub accepts their push. A branch someone moved, or a push GitHub
+  refuses, makes the run rejected: it is reported in a comment, not retried.
+
+**What the bot posts.** Text written by an agent (a summary, questions, a failure reason,
+follow-ups, a pull request's title and body) is neutralised once before it is posted:
+mentions, issue references, closing keywords, GitHub links, images, HTML, task boxes, and
+diagrams are broken, so they notify, close, link, or fetch nothing, and each text is
+capped in length. Each text is then placed in a container it cannot leave, a block quote
+or a list item, under a fixed lead-in such as "The agent reports:", so it can neither
+imitate the bot's own lines nor the hidden marker that ends every bot comment. The
+dispatcher writes `Closes #<issue>` itself as the first line of a pull request body; no
+other reference in the text can act.
 
 **Confinement on the host.**
 
 - Each run is a rootless container under an unprivileged user that is in no privileged
-  groups. The container sees its own filesystem, process list, and loopback.
+  groups. The container sees its own filesystem, process list, and loopback. Inside it
+  the agent runs as an unprivileged user, with every capability dropped and no way to
+  gain new privileges.
 - A host firewall rule for that user rejects connections to the host's own addresses
-  and to private address ranges, leaving only the public internet reachable.
-- A resource cap on that user's processes protects the other services on the host.
+  and to private address ranges, leaving only the public internet reachable, and DNS to
+  the host's resolvers.
+- A resource cap on that user's processes, for memory, processor time, tasks and disk,
+  protects the other services on the host. The disk is bounded by a file system of a fixed
+  size or a quota for the runner's work directory and container storage, and the runner
+  keeps only the first part of an output that grows without end. The runner keeps itself
+  and its containers to as many CPUs as `cpus` in `factory/config.toml` names, which agrees
+  with the processor cap, so that tools that start a worker per CPU do not start too many.
 - Temporary databases are service containers in the same pod, declared by the app.
-- The runner fails closed: before each job it probes the host's loopback from outside
-  the container, and refuses to start if the connection succeeds, because that means
-  the firewall rule is not loaded.
+- The runner fails closed: before each job it opens a listener on the host's loopback
+  address and connects to it from its own process, outside any container. The firewall
+  rule for the runner user refuses that connection; if it succeeds, the rule is not
+  loaded, and the job is refused before an agent starts.
 
 **Residual risk, accepted.** An agent has open internet access and holds its own Claude
 token while it runs. A poisoned dependency or web page could talk it into leaking that
@@ -302,8 +357,8 @@ all external contributors. Third-party actions pinned to commit SHAs (already th
 practice). No `pull_request_target` workflows, which run regardless of that approval.
 
 **Repository settings.** Delete head branches after merge. Secret scanning on, and push
-protection switched on by hand, since it is off by default. Issue forms for an epic and
-for a fix; a pull request template.
+protection switched on by hand, since it is off by default. Issue forms for an epic, a
+fix and a small change; a pull request template.
 
 **Before the repository becomes public.** Review the full history for credentials and
 private details, check that past workflow logs and pull request text contain nothing
@@ -381,7 +436,7 @@ join the gate once service containers are built.
 | `factory-implement` | One plan step as a red, green, refactor loop: failing test, code, tidy, verification, self-review, commits. |
 | `factory-fix` | Failed checks or review findings. Verify each finding before acting on it. |
 | `factory-revise` | A person's review. One reply per thread, saying what changed or why not. |
-| `factory-fix-issue` | An ad-hoc issue: reproduce, failing test, fix. Escalate if it is really an epic. |
+| `factory-fix-issue` | An ad-hoc issue: one small change (a bug fix, a small feature or a chore) as one pull request. Escalate if it is really an epic. |
 | `new-app` | Scaffold an app and fill in its template files. |
 
 **Subagents** (`.claude/agents/`)
@@ -398,9 +453,9 @@ shell launcher that finds the interpreter, so they run on Windows and Linux)
 | Hook | When | Blocks |
 | --- | --- | --- |
 | `guard_git` | before a shell command | force pushes in their common spellings, pushes to `main`, deleting remote branches or tags, skipping hooks. Merging pull requests and changing repository rules or settings are refused in factory runs and need the person's confirmation in an interactive session |
-| `guard_paths` | before a file write | git's own files; credential files; in factory runs, anything outside the writable paths |
+| `guard_paths` | before a file write | git's own files; credential files; in factory runs, anything outside the writable paths and the session's own settings in the home |
 | `guard_quality` | before a file write | new inline suppressions of the linter, type checker, or a test (a skipped or focused test) that carry no reason |
-| `finish_check` | when the agent tries to stop (factory runs only) | finishing with failing repository checks, a failing quick command in a touched app, uncommitted work, or an invalid result file |
+| `finish_check` | when the agent tries to stop (factory runs only) | finishing with failing repository checks, a failing quick command in a touched app, uncommitted work, an invalid result file, or a posted text or a commit message that the dispatcher would refuse |
 
 The hooks are a guard against mistakes and casual attempts, not a security boundary; the limits
 are listed in `factory/AGENT_CONTRACT.md`.
@@ -408,7 +463,15 @@ are listed in `factory/AGENT_CONTRACT.md`.
 The same denials are repeated as permission rules, since each mechanism covers gaps in
 the other: rules on shell arguments are easy to sidestep, and a hook sees the whole
 command. Inside the agent container they are additionally installed as system-level
-settings that a repository file cannot override.
+managed settings that a repository file cannot override. The image starts the guards with
+a named interpreter and `-E -s`, which ignore the environment's `PYTHON` variables and the
+user site directory, both of which the agent can write, and the managed settings fix
+`FACTORY_RUN`, `FACTORY_JOB_DIR` and `FACTORY_RESULT_PATH`, so that a settings file cannot
+change those variables or the interpreter's start. The guards still see only what they see: a
+settings file written from the shell can change other variables, and the dispatcher's checks
+before publishing remain the boundary. The finish check takes the stage and the base commit
+from the read-only `job.json`, and `guard_paths` refuses writes to the session's own
+settings in the home.
 
 Headless runs must name a permission mode, because the CLI's default denies anything
 that would have asked. The factory starts with the classifier-based automatic mode, which
@@ -478,25 +541,31 @@ and the person decides which become issues. This gives an honest agent somewhere
 - **Shape:** the core is a pure function from a snapshot of GitHub state to a list of
   actions. Polling, publishing, and running agents are thin shells around it. That keeps
   the state machine testable offline and makes a dry-run mode trivial.
-- **State:** GitHub is the source of truth. A local SQLite file only remembers which
-  jobs were started and what was already processed, so a restart or a lost file is
-  recovered by re-reading GitHub. Bot comments carry a hidden marker to make reposting
-  idempotent.
+- **State:** GitHub is the source of truth. There is no database: the spool's job
+  directories are the dispatcher's only local memory, and everything else is read again
+  from GitHub on every poll. Each bot comment ends with a hidden marker that names its
+  job and the outcome, so a restart sees what was already reported and posts nothing
+  twice. The settled outcome of a run is stored in the job's directory before the first
+  write to GitHub, so a repeat after an interruption makes the same writes, and nothing
+  the runner changes in its files afterwards can steer it.
 - **Polling:** every 30 to 60 seconds, with conditional requests so unchanged responses
   cost nothing against the rate limit.
 - **Jobs:** one at a time in this version. Each job is a fresh agent run with written
   context; nothing depends on an agent remembering an earlier run. Each stage has a time
   limit and a turn limit.
 - **Running an agent:** the runner clones from a read-only mirror the dispatcher keeps,
-  starts the pod, and runs the CLI headlessly with the stage's skill. The agent's final
-  answer is a structured result: outcome, summary, questions, pull request title and
+  runs the CLI headlessly with the stage's skill in a rootless container, and then makes a
+  bundle of the agent's commits in a second container that has no network and no token. The
+  agent's final answer is a structured result: outcome, summary, questions, pull request title and
   body, replies to review threads, the verification it ran, and follow-ups it noticed.
 - **Configuration:** `factory/config.toml` in the repository holds the trusted logins,
   labels, limits, models per stage, and writable paths. The dispatcher reads it from
   its own deployed checkout of `main`, never from a branch. Host-specific values (App
   identifiers, key location, spool location) come from the environment.
 - **Deployment:** the host runs a checkout of `main` that a person updates. Two
-  long-running services, one per user.
+  long-running services, one per user, and one runner per host: the runner holds an
+  exclusive lock in its work directory. [HOST_SETUP.md](HOST_SETUP.md) is the generic
+  guide.
 - **Visibility:** every run leaves one comment on its issue or pull request: stage,
   outcome, duration, model. Full transcripts stay on the host.
 
@@ -518,8 +587,8 @@ an outage at the provider never blocks a person from merging.
 
 A Linux machine with outbound internet access, Python 3.11, git, OpenSSL, rootless
 Podman, nftables, systemd, and cgroup v2. Two unprivileged users. No inbound ports.
-Setup commands for a particular machine are kept outside this repository; a generic
-guide belongs in `docs/factory/`.
+Setup commands for a particular machine are kept outside this repository; the generic
+guide is [HOST_SETUP.md](HOST_SETUP.md).
 
 Three rules hold for any host that is shared with other software:
 
@@ -545,6 +614,8 @@ Three rules hold for any host that is shared with other software:
 - One end-to-end rehearsal per pipeline on a throwaway issue before real use.
 
 ## 14. Build order
+
+Steps 0 to 2 are built. Steps 3 to 5 are next, in this order.
 
 0. **Public-readiness review**, then the owner makes the repository public (section 8).
 1. **Harness.** `AGENTS.md`, per-app files, skills, subagents, hooks, issue forms, pull
@@ -599,10 +670,23 @@ Three rules hold for any host that is shared with other software:
 - Agents report debt they notice as follow-ups; a person decides what becomes an issue.
 - The full standards live in `docs/engineering.md`; `AGENTS.md` carries a short summary
   so it stays cheap to load in every session.
+- No SQLite file: the spool's job directories are the dispatcher's only local memory, and
+  each bot comment carries a marker naming its job and outcome (section 10).
+- An issue's title and body reach an agent only when its author is trusted; for anyone
+  else a trusted person restates the request in a comment (section 7).
+- `factory:pause` and `factory:halt` count from anyone who can apply a label, since
+  stopping is always safe; only the label that starts work needs a trusted actor.
+- The checked commits of a run that asks a question are pushed to the work branch without
+  a pull request, so the next run starts from them and nothing depends on the host's disk.
+- The firewall probe is self-contained: the runner connects to its own listener on the
+  host's loopback address (section 7).
+- Inside the container the agent runs as an unprivileged user with every capability
+  dropped.
+- One runner per host, kept so by a lock in its work directory.
 
 **Left to the builder**
 
-- Module layout inside `factory/`, the job and result file formats, the SQLite schema.
+- Module layout inside `factory/`, the job and result file formats, the spool's layout.
 - How toolchains from `factory.toml` are installed in CI and in the agent image.
 - Exact hook patterns and permission rules, and the wording of skills.
 - Timeouts and turn limits per stage.

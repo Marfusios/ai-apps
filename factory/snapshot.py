@@ -1,0 +1,257 @@
+"""One poll of GitHub turned into the frozen records the dispatcher's decision function reads."""
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+
+from factory import markers
+from factory.github_api import GitHub, GitHubError, RateLimited
+
+FIX_LABEL = "factory:fix"
+HALT_LABEL = "factory:halt"
+DONE_STATUS = "status:done"
+CLOSED_ISSUES_SEEN = 30
+
+
+@dataclass(frozen=True)
+class Bot:
+    login: str
+    user_id: int
+
+    @property
+    def email(self) -> str:
+        return f"{self.user_id}+{self.login}@users.noreply.github.com"
+
+
+@dataclass(frozen=True)
+class Comment:
+    id: int
+    author: str
+    author_id: int
+    created_at: str
+    body: str
+
+
+@dataclass(frozen=True)
+class Marker:
+    comment_id: int
+    created_at: str
+    data: Mapping[str, object]
+
+    @property
+    def outcome(self) -> str:
+        outcome = self.data.get("outcome")
+        return outcome if isinstance(outcome, str) else ""
+
+
+@dataclass(frozen=True)
+class PullRequest:
+    number: int
+    open: bool
+    merged: bool
+    url: str
+
+
+@dataclass(frozen=True)
+class Issue:
+    number: int
+    title: str
+    body: str
+    author: str
+    open: bool
+    labels: tuple[str, ...]
+    trigger_actor: str | None
+    comments: tuple[Comment, ...]
+    pull_request: PullRequest | None
+    # GitHub would not give this open issue's events, comments or pull request in this poll, so it has none of them
+    unreadable: bool = False
+
+    def markers(self, bot: Bot) -> tuple[Marker, ...]:
+        """Markers in the bot's own comments, oldest first.
+
+        The login alone is not enough: the numeric id is what GitHub guarantees to be unique, so a
+        comment by another account that shows the bot's name does not count.
+        """
+        found = []
+        for comment in self.comments:
+            if comment.author != bot.login or comment.author_id != bot.user_id:
+                continue
+            if not bot.login or bot.user_id <= 0:
+                continue  # a missing user reads as ("", 0) and must never match a bot
+            data = markers.parse(comment.body)
+            if data is not None:
+                found.append(Marker(comment.id, comment.created_at, data))
+        return tuple(found)
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    issues: tuple[Issue, ...]
+    halted: bool
+    apps: tuple[str, ...]
+
+
+def branch_for(issue_number: int) -> str:
+    return f"factory/fix-{issue_number}"
+
+
+def _objects(items: object) -> list[dict]:
+    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+
+def _text(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _integer(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _login(user: object) -> str:
+    return _text(user.get("login")) if isinstance(user, dict) else ""
+
+
+def _labels(raw: dict) -> tuple[str, ...]:
+    return tuple(_text(label.get("name")) for label in _objects(raw.get("labels")))
+
+
+def comment_from(entry: object) -> Comment | None:
+    """A comment as GitHub lists it, or None for an entry that is not an object.
+
+    A missing or odd field reads as empty or 0, and a comment without a user then matches no bot.
+    """
+    if not isinstance(entry, dict):
+        return None
+    user = entry.get("user")
+    author_id = _integer(user.get("id")) if isinstance(user, dict) else 0
+    return Comment(_integer(entry.get("id")), _login(user), author_id, _text(entry.get("created_at")),
+                   _text(entry.get("body")))
+
+
+def _trigger_actor(events: list) -> str | None:
+    """Who applied the label last: removing and re-applying it makes the later person the trigger."""
+    actor = None
+    for event in _objects(events):
+        label = event.get("label")
+        if event.get("event") == "labeled" and isinstance(label, dict) and label.get("name") == FIX_LABEL:
+            actor = _login(event.get("actor")) or None
+    return actor
+
+
+def _pull_request(candidates: object) -> PullRequest | None:
+    pulls = [pull for pull in _objects(candidates) if _integer(pull.get("number")) > 0]
+    if not pulls:
+        return None
+    latest = max(pulls, key=lambda pull: pull["number"])
+    return PullRequest(
+        latest["number"], latest.get("state") == "open", latest.get("merged_at") is not None, _text(latest.get("html_url"))
+    )
+
+
+def _issue_entries(items: object) -> list[dict]:
+    """Issue entries with a plain positive number; the issues list also holds pull requests."""
+    return [
+        entry for entry in _objects(items)
+        if "pull_request" not in entry and _integer(entry.get("number")) > 0
+    ]
+
+
+def _first_of_each(entries: list[dict], seen: set[int]) -> list[dict]:
+    """Entries whose number is not in `seen` yet, the first occurrence of each; `seen` grows."""
+    fresh = []
+    for entry in entries:
+        if entry["number"] not in seen:
+            seen.add(entry["number"])
+            fresh.append(entry)
+    return fresh
+
+
+def _unfinished(entry: dict) -> bool:
+    return any(name.startswith("status:") and name != DONE_STATUS for name in _labels(entry))
+
+
+def _issue(
+    entry: dict, is_open: bool, trigger_actor: str | None, comments: tuple[Comment, ...],
+    pull_request: PullRequest | None, *, unreadable: bool = False,
+) -> Issue:
+    return Issue(
+        number=entry["number"],
+        title=_text(entry.get("title")),
+        body=_text(entry.get("body")),
+        author=_login(entry.get("user")),
+        open=is_open,
+        labels=_labels(entry),
+        trigger_actor=trigger_actor,
+        comments=comments,
+        pull_request=pull_request,
+        unreadable=unreadable,
+    )
+
+
+def _pull_request_of(github: GitHub, number: int) -> PullRequest | None:
+    owner = github.repo.removeprefix("/repos/").split("/")[0]
+    pulls = github.get(
+        f"{github.repo}/pulls", {"head": f"{owner}:{branch_for(number)}", "state": "all", "per_page": "10"}
+    )
+    return _pull_request(pulls)
+
+
+def _open_issue(github: GitHub, entry: dict) -> Issue:
+    """An open issue with its history, or unreadable when GitHub refuses part of it.
+
+    Anyone can fill an issue until a read of it fails (a page too large, too many pages), and that must not stop
+    the poll for every other issue. A rate limit is GitHub's and not the issue's, so it still ends the poll.
+    """
+    number = entry["number"]
+    try:
+        events = github.get_all(f"{github.repo}/issues/{number}/events", {"per_page": "100"})
+        raw_comments = github.get_all(f"{github.repo}/issues/{number}/comments", {"per_page": "100"})
+        pull_request = _pull_request_of(github, number)
+    except RateLimited:
+        raise
+    except GitHubError:
+        return _issue(entry, True, None, (), None, unreadable=True)
+    listed = (comment_from(raw) for raw in raw_comments)
+    comments = tuple(sorted((comment for comment in listed if comment is not None), key=lambda comment: comment.id))
+    return _issue(entry, True, _trigger_actor(events), comments, pull_request)
+
+
+def _halted(github: GitHub) -> bool:
+    """True when a halt issue is open; an answer that is not an empty list halts: stopping is the safe reading."""
+    answer = github.get(f"{github.repo}/issues", {"state": "open", "labels": HALT_LABEL, "per_page": "1"})
+    return not (isinstance(answer, list) and not answer)
+
+
+def _apps(github: GitHub) -> tuple[str, ...]:
+    entries = github.get(f"{github.repo}/contents/apps")
+    return tuple(sorted(_text(e.get("name")) for e in _objects(entries) if e.get("type") == "dir" and _text(e.get("name"))))
+
+
+def fetch(github: GitHub) -> Snapshot:
+    """Read the issues, the halt switch and the apps.
+
+    A GitHubError from a list, or a rate limit anywhere, ends the poll without a snapshot; any other GitHubError
+    while reading one open issue's history makes that issue unreadable instead.
+    """
+    open_entries = _issue_entries(
+        github.get_all(f"{github.repo}/issues", {"state": "open", "labels": FIX_LABEL, "per_page": "100"})
+    )
+    closed_entries = _issue_entries(
+        github.get(
+            f"{github.repo}/issues",
+            {
+                "state": "closed", "labels": FIX_LABEL, "sort": "updated", "direction": "desc",
+                "per_page": str(CLOSED_ISSUES_SEEN),
+            },
+        )
+    )
+    # Pagination can repeat an issue and one can reopen between the two lists: the open list wins.
+    seen: set[int] = set()
+    open_entries = _first_of_each(open_entries, seen)
+    closed_entries = _first_of_each(closed_entries, seen)
+    issues = [_open_issue(github, entry) for entry in open_entries]
+    issues += [
+        _issue(entry, False, None, (), _pull_request_of(github, entry["number"]))
+        for entry in closed_entries
+        if _unfinished(entry)
+    ]
+    return Snapshot(tuple(issues), _halted(github), _apps(github))

@@ -1,6 +1,7 @@
 """Tests for the finish check hook: when a factory run may end its turn."""
 
 import contextlib
+import gc
 import io
 import json
 import os
@@ -10,10 +11,12 @@ import subprocess
 import sys
 import time
 import unittest
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from unittest import mock
 
+from factory import hygiene
 from factory.tests.hookload import load_hook
 
 finish_check = load_hook("finish_check")
@@ -32,6 +35,9 @@ tests = "pytest"
 """
 QUICK_LINE = 'quick = "make quick"'
 DIFF_ARGV = ("git", "-c", "core.quotePath=false", "diff", "--no-renames", "--name-only", f"{BASE}...HEAD")
+LOG_ARGV = ("git", "log", "-z", "--format=%h%x00%B", f"{BASE}..HEAD")
+KEY = "sk-" + "a" * 24  # built at run time: the repository checker refuses a literal that looks like a key
+HOME_PATH = "/" + "home/someone/project"
 
 
 class Clock:
@@ -49,11 +55,12 @@ class FakeRun:
 
     def __init__(self, status: str = "", count: str = "1", diff: str = "apps/x/a.ts\n",
                  checker: tuple[int, str] = (0, ""), quick: tuple[int, str] = (0, ""),
-                 ancestor: tuple[int, str] = (0, "")):
+                 ancestor: tuple[int, str] = (0, ""), log: str = ""):
         self.answers = {
             ("git", "status", "--porcelain"): (0, status),
             ("git", "merge-base", "--is-ancestor", BASE, "HEAD"): ancestor,
             ("git", "rev-list", "--count", f"{BASE}..HEAD"): (0, count),
+            LOG_ARGV: (0, log),
             DIFF_ARGV: (0, diff),
             ("checker",): checker,
             ("sh", "-c", "make quick"): quick,
@@ -96,7 +103,7 @@ class EvaluateTests(unittest.TestCase):
         app.mkdir(parents=True, exist_ok=True)
         (app / "factory.toml").write_text(FACTORY_TOML.format(quick=QUICK_LINE if quick else ""), encoding="utf-8")
 
-    def write_result(self, outcome: str = "done", stage: str = "step") -> None:
+    def write_result(self, outcome: str = "done", stage: str = "step", **fields: object) -> None:
         data: dict = {"schema": 1, "outcome": outcome, "summary": "Did the work."}
         if outcome == "done":
             data["verification"] = [{"command": "make quick", "exit_code": 0, "summary": "passed"}]
@@ -106,7 +113,15 @@ class EvaluateTests(unittest.TestCase):
             data["questions"] = ["Which one?"]
         else:
             data["failure_reason"] = "Could not build it."
-        self.result_path.write_text(json.dumps(data), encoding="utf-8")
+        self.result_path.write_text(json.dumps({**data, **fields}), encoding="utf-8")
+
+    def write_job(self, issue: int) -> Path:
+        """The read-only job directory of the run, with its job.json for the issue."""
+        job_dir = self.root / "job"
+        job_dir.mkdir(exist_ok=True)
+        (job_dir / "job.json").write_text(json.dumps({"schema": 1, "stage": "fix_issue", "issue": {
+            "number": issue, "title": "T"}, "base_sha": BASE}), encoding="utf-8")
+        return job_dir
 
     def env(self, stage: str = "step", **extra: str) -> dict[str, str]:
         env = {"FACTORY_RUN": "1", "FACTORY_STAGE": stage, "FACTORY_RESULT_PATH": str(self.result_path),
@@ -162,6 +177,100 @@ class EvaluateTests(unittest.TestCase):
                 run = FakeRun(status=" M apps/x/a.ts\n")
                 self.assertEqual(self.evaluate(run), [])
                 self.assertEqual(run.calls, [])
+
+    def test_a_posted_text_the_dispatcher_would_refuse_blocks_whatever_the_outcome(self) -> None:
+        cases = {
+            "done": ({"summary": f"Used {KEY}."}, "summary"),
+            "needs_input": ({"questions": ["Which one?", f"Is {HOME_PATH} right?"]}, "questions[1]"),
+            "failed": ({"failure_reason": f"The key {KEY} was refused."}, "failure_reason"),
+        }
+        for outcome, (fields, field) in cases.items():
+            with self.subTest(outcome=outcome):
+                self.write_result(outcome, **fields)
+                self.write_app()
+                run = FakeRun()
+                problems = self.evaluate(run)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(f"The result's {field} contains", problems[0])
+                self.assertNotIn(KEY, problems[0])
+                self.assertNotIn(HOME_PATH, problems[0])
+                if outcome != "done":
+                    self.assertEqual(run.calls, [])
+
+    def test_every_posted_field_of_the_result_is_checked_and_the_verification_is_not(self) -> None:
+        self.write_app()
+        self.write_result(pull_request={"title": "Add x", "body": f"Built in {HOME_PATH}."},
+                          follow_ups=[{"title": f"Rotate {KEY}", "reason": "It leaked."}],
+                          verification=[{"command": f"cat {HOME_PATH}/a", "exit_code": 0, "summary": "ok"}])
+        problems = self.evaluate(FakeRun())
+        self.assertEqual([problem.split(" contains ")[0] for problem in problems],
+                         ["The result's pull_request.body", "The result's follow_ups[0].title"])
+
+    def test_a_commit_message_the_dispatcher_would_refuse_blocks_and_names_the_commit(self) -> None:
+        self.write_result()
+        self.write_app()
+        log = f"abc1234\0Fix it\n\nwith {KEY}\n\0def5678\0Thanks @someone, see #4\n\0"
+        problems = self.evaluate(FakeRun(log=log), FACTORY_JOB_DIR=str(self.write_job(12)))
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("commit abc1234", problems[0])
+        self.assertIn("possible provider key", problems[0])
+        self.assertIn("commit def5678", problems[1])
+        mention, _, other_issue = hygiene.MESSAGE_LABELS
+        self.assertIn(f"{mention} and {other_issue}", problems[1])
+        self.assertNotIn(KEY, "\n".join(problems))
+        self.assertNotIn("someone", "\n".join(problems))
+
+    def test_a_commit_message_may_close_the_issue_the_job_file_names(self) -> None:
+        self.write_result()
+        self.write_app()
+        log = "abc1234\0Fix the greeting\n\nCloses #12\n\0"
+        self.assertEqual(self.evaluate(FakeRun(log=log), FACTORY_JOB_DIR=str(self.write_job(12))), [])
+        problems = self.evaluate(FakeRun(log=log), FACTORY_JOB_DIR=str(self.write_job(13)))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("commit abc1234", problems[0])
+        self.assertEqual(len(self.evaluate(FakeRun(log=log))), 1)  # without a job file no issue is its own
+
+    def test_the_job_file_names_the_stage_and_the_base_whatever_the_environment_says(self) -> None:
+        self.write_result(stage="revise")
+        self.write_app()
+        job_dir = self.write_job(12)
+        job = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
+        (job_dir / "job.json").write_text(json.dumps({**job, "stage": "revise"}), encoding="utf-8")
+        cases = {"decoys": {"FACTORY_STAGE": "step", "FACTORY_BASE_SHA": "decoy"},
+                 "nothing": {"FACTORY_STAGE": "", "FACTORY_BASE_SHA": ""}}
+        for name, variables in cases.items():
+            with self.subTest(name):
+                run = FakeRun(count="0")  # a FakeRun knows only BASE: a command with the decoy fails the test
+                problems = finish_check.evaluate({**self.env(**variables), "FACTORY_JOB_DIR": str(job_dir)},
+                                                 self.repo, run)
+                self.assertEqual(problems, [])
+                self.assertNotIn(("git", "rev-list", "--count", f"{BASE}..HEAD"), run.commands())  # revise
+
+    def test_without_a_usable_job_file_the_environment_names_the_stage_and_the_base(self) -> None:
+        self.write_result()
+        self.write_app()
+        job_dir = self.root / "job"
+        job_dir.mkdir()
+        for content in (None, "not json", json.dumps({"stage": 5, "base_sha": BASE}), json.dumps(["x"])):
+            with self.subTest(content=content):
+                if content is not None:
+                    (job_dir / "job.json").write_text(content, encoding="utf-8")
+                run = FakeRun(count="0")
+                problems = finish_check.evaluate({**self.env(), "FACTORY_JOB_DIR": str(job_dir)}, self.repo, run)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("no commits", problems[0])  # the stage is the environment's step
+
+    def test_a_check_started_with_the_environment_ignored_starts_the_repository_checker_so_too(self) -> None:
+        self.write_result()
+        self.write_app()
+        for ignored, flags in ((1, ("-E", "-s")), (0, ())):
+            with self.subTest(ignored=ignored):
+                run = FakeRun()
+                started = mock.Mock(executable=sys.executable, flags=mock.Mock(ignore_environment=ignored))
+                with mock.patch.object(finish_check, "sys", started):
+                    self.assertEqual(self.evaluate(run), [])
+                (checker,) = [argv for argv in run.commands() if argv[-1].endswith("check_repo.py")]
+                self.assertEqual(checker, (sys.executable, *flags, "scripts/check_repo.py"))
 
     def test_done_and_clean_is_allowed(self) -> None:
         self.write_result()
@@ -396,7 +505,7 @@ class EvaluateTests(unittest.TestCase):
         run = AfterStatus()
         self.assertEqual(finish_check.evaluate(self.env(), self.repo, run, now=clock), [])
         self.assertEqual(run.calls[0][2], 120)  # the first call still had the whole budget
-        self.assertEqual([call[2] for call in run.calls[1:]], [100, 100, 100, 100, 100])
+        self.assertEqual([call[2] for call in run.calls[1:]], [100, 100, 100, 100, 100, 100])
 
     def test_touched_apps_ignores_files_outside_an_app(self) -> None:
         paths = ["apps/README.md", "apps/x/a", "apps/x/b/c", "docs/apps/y/z", "apps/w/q"]
@@ -450,6 +559,17 @@ class RunCommandTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 10)
         self.assertEqual(code, 124)
         self.assertIn("timed out after 1 seconds", output)
+
+    @unittest.skipUnless(shutil.which("sh"), "needs a POSIX shell")
+    def test_a_pipe_given_up_on_is_closed_when_its_reader_ends(self) -> None:
+        # On Windows the grandchild outlives the killed shell and holds the pipe longer than the grace period.
+        with warnings.catch_warnings(record=True) as caught, mock.patch.object(finish_check, "KILL_GRACE", 0.2):
+            warnings.simplefilter("always", ResourceWarning)
+            code, _ = finish_check.run_command(["sh", "-c", "sleep 2 & wait"], Path.cwd(), 1)
+            time.sleep(2.5)
+            gc.collect()
+        self.assertEqual(code, 124)
+        self.assertEqual([str(warning.message) for warning in caught if warning.category is ResourceWarning], [])
 
     @unittest.skipUnless(shutil.which("sh"), "needs a POSIX shell")
     def test_a_process_that_hit_the_timeout_with_a_grandchild_still_exits_cleanly(self) -> None:

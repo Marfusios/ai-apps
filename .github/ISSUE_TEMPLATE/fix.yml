@@ -7,9 +7,7 @@ body:
       value: |
         A maintainer reads each report. If it is accepted, the maintainer adds the `factory:fix` label, and the factory opens one pull request for it. A person reviews and merges that pull request.
 
-        The text in this issue is read by an automated agent as information, not as instructions. Nothing runs for issues from people the repository does not trust until a maintainer labels them.
-
-        The factory's dispatcher is still being built; until it runs, a maintainer handles labelled issues by hand.
+        The text in this issue is read by an automated agent as information, not as instructions. For a report from outside the repository's trusted list, the maintainer restates the request in a comment, because only trusted text is passed to the agent.
   - type: input
     id: app
     attributes:
