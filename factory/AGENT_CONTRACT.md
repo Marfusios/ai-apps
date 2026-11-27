@@ -6,14 +6,14 @@ the conversation, with no result file.
 
 ## What you are given
 
-The runner starts you in a container whose working directory is a checkout of the work branch, at
-the commit in `FACTORY_BASE_SHA`. These environment variables are set:
+The runner starts you in a container whose working directory, `/workspace`, is a checkout of the
+work branch at the commit in `FACTORY_BASE_SHA`. These environment variables are set:
 
 | Variable | Meaning |
 | --- | --- |
 | `FACTORY_RUN` | `1`. The hooks switch to their factory behaviour (below) and the finish check runs before you may stop. |
 | `FACTORY_STAGE` | The stage: `design`, `plan`, `step`, `fix`, `revise` or `fix_issue`. You are run with the matching skill: `factory-design`, `factory-plan`, `factory-implement`, `factory-fix`, `factory-revise` or `factory-fix-issue`. |
-| `FACTORY_JOB_DIR` | The directory that holds `job.json` and `context.md`. |
+| `FACTORY_JOB_DIR` | The read-only directory that holds `job.json` and `context.md`. |
 | `FACTORY_RESULT_PATH` | Where you write the result file. |
 | `FACTORY_BASE_SHA` | The commit your work starts from. Your commits go on top of it. |
 | `FACTORY_QUICK_TIMEOUT` | Optional. Seconds the finish check gives each touched app's quick command; 600 when unset, and values above 600 count as 600. |
@@ -32,11 +32,15 @@ the commit in `FACTORY_BASE_SHA`. These environment variables are set:
 | `base_sha` | The same commit as `FACTORY_BASE_SHA`. |
 | `round` | For `fix` and `revise`, which round of that stage this is on the pull request, counting from 1; otherwise 0. Automated fix rounds stop after three, and then a person is asked. |
 
-`$FACTORY_JOB_DIR/context.md` holds the text the dispatcher assembled for this run: the issue body
-and the comments of trusted people; for a step, the step's text from `PLAN.md` on `main` as it was
-when the run started; for `fix`, the failed check output and the automated review's findings; for
-`revise`, every review thread with its thread id. Comments by anyone outside the trusted list are
-dropped before it is written.
+`$FACTORY_JOB_DIR/context.md` holds the text the dispatcher assembled for this run: the issue's
+title and body, the comments of trusted people, and the factory's own earlier comments; for a
+step, the step's text from `PLAN.md` on `main` as it was when the run started; for `fix`, the
+failed check output and the automated review's findings; for `revise`, every review thread with
+its thread id. Comments by anyone outside the trusted list are dropped before it is written, and
+a line says how many were. When the issue's author is outside the trusted list, its title reads
+`(title withheld)`, here and in `job.json`, and a sentence stands in for its body: the request is
+in a trusted person's comment. A very long text is cut, and the oldest comments are left out when
+the whole would be too long, each time with a note that says so.
 
 ## What you may do
 
@@ -254,15 +258,27 @@ pages.
 
 ## For the runner and the dispatcher
 
-This section is for whoever builds the code that starts a run and publishes its work.
+This section is for whoever builds the code that starts a run and publishes its work. It says
+what the runner and the dispatcher do now.
 
-- `FACTORY_JOB_DIR` and `FACTORY_RESULT_PATH` must lie outside the checkout. Inside it, the path
-  guard would refuse the result file and the finish check would see an untracked file.
+- The checkout is `/workspace`, the container's working directory. The job directory is mounted
+  read-only at `/factory/job` (`FACTORY_JOB_DIR`), and the result goes to
+  `/factory/out/result.json` (`FACTORY_RESULT_PATH`). Both lie outside the checkout: inside it,
+  the path guard would refuse the result file and the finish check would see an untracked file.
+- The hooks run from the image's own copy of the harness under `/opt/factory/harness`, installed
+  as system-level settings that allow only those hooks, so no file in the checkout can replace
+  them. Each ask rule of `.claude/settings.json` is a deny rule there: nobody can answer in a run.
+- The agent runs as an unprivileged user in a rootless container, with every capability dropped
+  and no way to gain new privileges. It holds the Claude token and no GitHub credentials.
+- A run for an issue whose author is outside the trusted list sees `(title withheld)` as the
+  issue's title, in `job.json` and in `context.md`, and no body: a trusted person's comment
+  carries the request.
 - The step reviewer reads a diff file in a temporary directory outside the checkout, so the run
   must be able to read and write there.
-- The dispatcher adds the line that closes the issue to the pull request body. No skill does.
-- Commits from a run that ends with `needs_input` must be kept as the starting point of the next
-  run on that issue.
+- The dispatcher writes `Closes #<issue>` as the first line of the pull request body. No skill
+  does.
+- The commits of a run that ends with `needs_input` are checked and pushed to the work branch,
+  without a pull request, and the next run on that issue starts from them.
 - The finish check has 840 seconds in total, so one run should touch one app.
 - In the `fix` and `revise` stages `FACTORY_BASE_SHA` is the pull request's head when the run
   starts.
