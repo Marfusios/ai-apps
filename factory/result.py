@@ -9,6 +9,8 @@ MAX_RESULT_BYTES = 200_000
 KEYS = {"schema", "outcome", "summary", "questions", "failure_reason", "pull_request",
         "thread_replies", "verification", "follow_ups"}
 MAX_FOLLOW_UPS = 10
+MAX_QUESTIONS = 20
+MAX_VERIFICATIONS = 30
 
 
 class ResultError(ValueError):
@@ -60,11 +62,18 @@ def validate(data: object, stage: str) -> list[str]:
         problems.append("questions: required when outcome is needs_input")
     elif outcome != "needs_input" and questions:
         problems.append("questions: allowed only when outcome is needs_input")
+    elif isinstance(questions, list):
+        if len(questions) > MAX_QUESTIONS:
+            problems.append(f"questions: at most {MAX_QUESTIONS} entries")
+        for index, question in enumerate(questions):
+            _text(question, f"questions[{index}]", 1, 2000, problems)
 
     reason = data.get("failure_reason")
     if outcome == "failed":
         if not isinstance(reason, str) or not reason.strip():
             problems.append("failure_reason: required when outcome is failed")
+        else:
+            _text(reason, "failure_reason", 1, 4000, problems)
     elif reason is not None:
         problems.append("failure_reason: allowed only when outcome is failed")
 
@@ -90,14 +99,14 @@ def validate(data: object, stage: str) -> list[str]:
 
     verification = data.get("verification")
     if verification is not None:
+        if isinstance(verification, list) and len(verification) > MAX_VERIFICATIONS:
+            problems.append(f"verification: at most {MAX_VERIFICATIONS} entries")
         for index, entry in _objects(verification, "verification", {"command", "exit_code", "summary"}, problems):
             path = f"verification[{index}]"
-            if not isinstance(entry["command"], str):
-                problems.append(f"{path}.command: must be a string")
+            _text(entry["command"], f"{path}.command", 1, 500, problems)
             if not isinstance(entry["exit_code"], int) or isinstance(entry["exit_code"], bool):
                 problems.append(f"{path}.exit_code: must be an integer")
-            if not isinstance(entry["summary"], str):
-                problems.append(f"{path}.summary: must be a string")
+            _text(entry["summary"], f"{path}.summary", 0, 2000, problems)
     if outcome == "done" and not (isinstance(verification, list) and verification):
         problems.append("verification: required and non-empty when outcome is done")
 

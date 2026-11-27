@@ -87,6 +87,25 @@ class ResultTest(unittest.TestCase):
         self.mentions(done(pull_request={"title": "x" * 121, "body": "b"}), "step", "pull_request.title")
         self.mentions(done(follow_ups=[{"title": "t", "reason": "r"}] * 11), "step", "follow_ups")
 
+    def test_failure_reason_and_questions_are_bounded(self):
+        failed = {"schema": 1, "outcome": "failed", "summary": "Broke."}
+        self.assertEqual(validate({**failed, "failure_reason": "x" * 4000}, "step"), [])
+        self.mentions({**failed, "failure_reason": "x" * 4001}, "step", "failure_reason")
+        asking = {"schema": 1, "outcome": "needs_input", "summary": "Stuck."}
+        self.assertEqual(validate({**asking, "questions": ["q" * 2000] * 20}, "step"), [])
+        self.mentions({**asking, "questions": ["q"] * 21}, "step", "questions: at most 20")
+        self.mentions({**asking, "questions": ["q" * 2001]}, "step", "questions[0]")
+        self.mentions({**asking, "questions": [""]}, "step", "questions")
+
+    def test_verification_is_bounded(self):
+        entry = {"command": "c" * 500, "exit_code": 0, "summary": "s" * 2000}
+        self.assertEqual(validate(done(verification=[entry] * 30), "step"), [])
+        self.mentions(done(verification=[entry] * 31), "step", "verification: at most 30")
+        self.mentions(done(verification=[{**entry, "command": "c" * 501}]), "step", "verification[0].command")
+        self.mentions(done(verification=[{**entry, "command": ""}]), "step", "verification[0].command")
+        self.mentions(done(verification=[{**entry, "summary": "s" * 2001}]), "step", "verification[0].summary")
+        self.assertEqual(validate(done(verification=[{**entry, "summary": ""}]), "step"), [])
+
     def test_oversized_file_rejected_before_parsing(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "result.json"
