@@ -123,8 +123,8 @@ the sections a task cites before starting it.
 
 Before any task step that changes how real NTSB data is extracted, stored,
 chunked, embedded, indexed or retrieved, the orchestrator sends the relevant
-design and code to **GPT-6-Astra** and applies its findings first. GPT-6-Astra
-is the Codex session in tmux session `ai2`. Gates:
+design and code to **GPT-6-Astra**, the Codex model that reviews the data steps,
+and applies its findings first. Gates:
 
 | Gate | Before |
 | --- | --- |
