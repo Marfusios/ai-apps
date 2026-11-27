@@ -36,7 +36,7 @@ from factory.app_config import load as load_app_config
 from factory.bundle_check import MEGABYTE
 from factory.config import Config, ConfigError
 from factory.config import load as load_config
-from factory.image.build import harness_digest
+from factory.image.build import IMAGE_NAME, harness_digest
 from factory.result import MAX_RESULT_BYTES
 from factory.spool import (JOB_ID, MAX_UNIX_SECONDS, MODEL_NAME, TIME_FORMAT, Spool, SpoolError, read_bounded,
                            validate_run)
@@ -44,7 +44,6 @@ from factory.spool import (JOB_ID, MAX_UNIX_SECONDS, MODEL_NAME, TIME_FORMAT, Sp
 log = logging.getLogger("factory.runner")
 
 IMAGE_LABEL = "factory.harness"
-IMAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]*")  # never starts with "-", so it is not a Podman option
 CONFINEMENT_TIMEOUT_SECONDS = 3
 IDLE_SECONDS = 5.0
 SLEEP_SLICE_SECONDS = 1.0

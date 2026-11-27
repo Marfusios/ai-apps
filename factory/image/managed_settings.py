@@ -3,6 +3,8 @@
 import copy
 from collections.abc import Mapping
 
+from factory import pod
+
 HARNESS_ROOT = "/opt/factory/harness"
 PROJECT_PREFIX = 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/run" '
 # The interpreter is named so that a hook never depends on what the run's PATH offers; /bin/sh likewise.
@@ -45,14 +47,17 @@ def _hooks(project_settings: Mapping) -> dict:
 
 
 def build(project_settings: Mapping) -> dict:
-    """The managed settings: the hooks of the image, and every ask rule turned into a deny rule.
+    """The managed settings: the hooks of the image, every ask rule turned into a deny rule, and the fixed variables.
 
-    Nobody can answer a question in a factory run, so a rule that asks would be a rule that fails.
+    Nobody can answer a question in a factory run, so a rule that asks would be a rule that fails. The factory's own
+    variables are set here as the runner passes them, because managed settings win over every settings file the
+    agent can write: a changed `env` there would otherwise reach the running session and its hooks.
     """
     permissions = project_settings.get("permissions", {})
     rules = [*permissions.get("deny", []), *permissions.get("ask", [])]
     return {
         "allowManagedHooksOnly": True,
+        "env": dict(pod.FACTORY_ENV),
         "hooks": _hooks(project_settings),
         "permissions": {"deny": list(dict.fromkeys(rules))},
     }

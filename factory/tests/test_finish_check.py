@@ -230,6 +230,48 @@ class EvaluateTests(unittest.TestCase):
         self.assertIn("commit abc1234", problems[0])
         self.assertEqual(len(self.evaluate(FakeRun(log=log))), 1)  # without a job file no issue is its own
 
+    def test_the_job_file_names_the_stage_and_the_base_whatever_the_environment_says(self) -> None:
+        self.write_result(stage="revise")
+        self.write_app()
+        job_dir = self.write_job(12)
+        job = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
+        (job_dir / "job.json").write_text(json.dumps({**job, "stage": "revise"}), encoding="utf-8")
+        cases = {"decoys": {"FACTORY_STAGE": "step", "FACTORY_BASE_SHA": "decoy"},
+                 "nothing": {"FACTORY_STAGE": "", "FACTORY_BASE_SHA": ""}}
+        for name, variables in cases.items():
+            with self.subTest(name):
+                run = FakeRun(count="0")  # a FakeRun knows only BASE: a command with the decoy fails the test
+                problems = finish_check.evaluate({**self.env(**variables), "FACTORY_JOB_DIR": str(job_dir)},
+                                                 self.repo, run)
+                self.assertEqual(problems, [])
+                self.assertNotIn(("git", "rev-list", "--count", f"{BASE}..HEAD"), run.commands())  # revise
+
+    def test_without_a_usable_job_file_the_environment_names_the_stage_and_the_base(self) -> None:
+        self.write_result()
+        self.write_app()
+        job_dir = self.root / "job"
+        job_dir.mkdir()
+        for content in (None, "not json", json.dumps({"stage": 5, "base_sha": BASE}), json.dumps(["x"])):
+            with self.subTest(content=content):
+                if content is not None:
+                    (job_dir / "job.json").write_text(content, encoding="utf-8")
+                run = FakeRun(count="0")
+                problems = finish_check.evaluate({**self.env(), "FACTORY_JOB_DIR": str(job_dir)}, self.repo, run)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("no commits", problems[0])  # the stage is the environment's step
+
+    def test_a_check_started_with_the_environment_ignored_starts_the_repository_checker_so_too(self) -> None:
+        self.write_result()
+        self.write_app()
+        for ignored, flags in ((1, ("-E", "-s")), (0, ())):
+            with self.subTest(ignored=ignored):
+                run = FakeRun()
+                started = mock.Mock(executable=sys.executable, flags=mock.Mock(ignore_environment=ignored))
+                with mock.patch.object(finish_check, "sys", started):
+                    self.assertEqual(self.evaluate(run), [])
+                (checker,) = [argv for argv in run.commands() if argv[-1].endswith("check_repo.py")]
+                self.assertEqual(checker, (sys.executable, *flags, "scripts/check_repo.py"))
+
     def test_done_and_clean_is_allowed(self) -> None:
         self.write_result()
         self.write_app()

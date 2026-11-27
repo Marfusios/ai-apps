@@ -155,14 +155,19 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run, *,
     """Return what keeps this run from ending; an empty list means it may stop."""
     if not hooklib.is_factory_run(env):
         return []
-    missing = [name for name in REQUIRED_VARIABLES if not env.get(name)]
+    job = job_file(env)
+    # The job file is mounted read-only, while a variable is the agent's to change: the file wins where it can.
+    from_job = job is not None and isinstance(job.get("stage"), str) and isinstance(job.get("base_sha"), str)
+    required = ("FACTORY_RESULT_PATH",) if from_job else REQUIRED_VARIABLES
+    missing = [name for name in required if not env.get(name)]
     if missing:
         return [f"The factory run is missing the environment variable {name}; the finish check cannot run without it."
                 for name in missing]
     from factory import config as factory_config
     from factory import result
 
-    stage, result_path, base = env["FACTORY_STAGE"], Path(env["FACTORY_RESULT_PATH"]), env["FACTORY_BASE_SHA"]
+    stage, base = (job["stage"], job["base_sha"]) if from_job else (env["FACTORY_STAGE"], env["FACTORY_BASE_SHA"])
+    result_path = Path(env["FACTORY_RESULT_PATH"])
     try:
         result_path.open("rb").close()
     except FileNotFoundError:
@@ -201,7 +206,7 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run, *,
         if problem:
             problems.append(problem)
     else:
-        problems.extend(commit_message_problems(log, own_issue(job_file(env))))
+        problems.extend(commit_message_problems(log, own_issue(job)))
     # core.quotePath=false keeps non-ASCII names readable instead of octal-escaped and quoted; --no-renames
     # lists the old path of a move too, so a protected file cannot be moved out of its place unseen
     diff, problem = git(budget, repo, "git diff, with the path and touched-app checks that depend on it",
@@ -222,7 +227,9 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run, *,
         for path in changed:
             if not factory_config.is_writable(path, settings):
                 problems.append(f"{path} is in a path that factory runs may not write; move the change out of it.")
-    checked = budget("scripts/check_repo.py", [sys.executable, "scripts/check_repo.py"], repo, GIT_TIMEOUT)
+    # Started with the environment ignored, as the image starts the hooks, the check starts its child the same way.
+    isolated = ("-E", "-s") if sys.flags.ignore_environment else ()
+    checked = budget("scripts/check_repo.py", [sys.executable, *isolated, "scripts/check_repo.py"], repo, GIT_TIMEOUT)
     if checked is not None and checked[0] != 0:
         problems.append("The repository checks (scripts/check_repo.py) fail; fix what they report:\n"
                         + tail(checked[1]))

@@ -8,11 +8,10 @@ from pathlib import Path
 TOKEN_VARIABLE = "CLAUDE_CODE_OAUTH_TOKEN"
 CONTAINER_UID = "uid=1000,gid=1000"
 BUNDLE_PATH = "/factory/out/commits.bundle"
+JOB_DIR = "/factory/job"
 RESULT_PATH = "/factory/out/result.json"
-CONTAINER_ENV = (
-    "FACTORY_RUN", "FACTORY_STAGE", "FACTORY_JOB_DIR", "FACTORY_RESULT_PATH", "FACTORY_BASE_SHA",
-    "DISABLE_AUTOUPDATER", TOKEN_VARIABLE,
-)
+# The factory variables that are the same in every run; the image's managed settings fix them too.
+FACTORY_ENV = {"FACTORY_RUN": "1", "FACTORY_JOB_DIR": JOB_DIR, "FACTORY_RESULT_PATH": RESULT_PATH}
 
 
 @dataclass(frozen=True)
@@ -51,12 +50,12 @@ def _confined_run(name: str, network: str) -> list[str]:
 def agent_argv(request: Mapping, mounts: Mounts, image: str, name: str) -> list[str]:
     """The agent container. The token is named, not given: Podman copies its value from the runner's environment."""
     values = (
-        ("FACTORY_RUN", "1"), ("FACTORY_STAGE", request["stage"]), ("FACTORY_JOB_DIR", "/factory/job"),
-        ("FACTORY_RESULT_PATH", RESULT_PATH), ("FACTORY_BASE_SHA", request["base_sha"]),
-        ("DISABLE_AUTOUPDATER", "1"),
+        ("FACTORY_RUN", FACTORY_ENV["FACTORY_RUN"]), ("FACTORY_STAGE", request["stage"]),
+        ("FACTORY_JOB_DIR", FACTORY_ENV["FACTORY_JOB_DIR"]), ("FACTORY_RESULT_PATH", FACTORY_ENV["FACTORY_RESULT_PATH"]),
+        ("FACTORY_BASE_SHA", request["base_sha"]), ("DISABLE_AUTOUPDATER", "1"),
     )
     argv = _confined_run(name, "slirp4netns") + [
-        "-v", f"{mounts.checkout}:/workspace:rw", "-v", f"{mounts.job}:/factory/job:ro",
+        "-v", f"{mounts.checkout}:/workspace:rw", "-v", f"{mounts.job}:{JOB_DIR}:ro",
         "-v", f"{mounts.out}:/factory/out:rw", "-w", "/workspace",
     ]
     for variable, value in values:

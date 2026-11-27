@@ -48,12 +48,6 @@ class ArgvTests(unittest.TestCase):
             IMAGE, *pod.claude_argv(REQUEST),
         ])
 
-    def test_container_env_names_the_variables_the_agent_receives(self):
-        self.assertEqual(pod.CONTAINER_ENV, (
-            "FACTORY_RUN", "FACTORY_STAGE", "FACTORY_JOB_DIR", "FACTORY_RESULT_PATH", "FACTORY_BASE_SHA",
-            "DISABLE_AUTOUPDATER", "CLAUDE_CODE_OAUTH_TOKEN",
-        ))
-
     def test_bundle_argv_is_exactly_the_documented_command_with_no_network_and_no_token(self):
         self.assertEqual(pod.bundle_argv(REQUEST, MOUNTS, IMAGE, "factory-x-bundle"), [
             "podman", "run", "--rm", "--pull=never", "--name", "factory-x-bundle", "--log-driver=none",

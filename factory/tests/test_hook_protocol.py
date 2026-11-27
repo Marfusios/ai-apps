@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = ".claude/hooks/run"
 WRITE = {"tool_name": "Write", "tool_input": {"file_path": "notes.txt", "content": "x"}, "cwd": "."}
+DENIED = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git push --force"}, "cwd": "."})
 HARMLESS = {
     "guard_git": {"tool_name": "Bash", "tool_input": {"command": "git status"}, "cwd": "."},
     "guard_paths": WRITE,
@@ -62,6 +63,32 @@ class HookProtocolTests(unittest.TestCase):
         result = self.run_hook("guard_git", payload, FACTORY_HOOK_PYTHON=sys.executable)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_the_named_interpreter_ignores_the_python_variables_of_the_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as planted:
+            # imported at start-up from PYTHONPATH, it would end every hook with status 0: an "allow" with no output
+            Path(planted, "sitecustomize.py").write_text("import os\nos._exit(0)\n", encoding="utf-8")
+            result = self.run_hook("guard_git", DENIED, FACTORY_HOOK_PYTHON=sys.executable, PYTHONPATH=planted)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout or "{}").get("hookSpecificOutput", {}).get("permissionDecision"),
+                         "deny")
+
+    def test_the_named_interpreter_ignores_the_user_site_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            homes = {"HOME": home, "APPDATA": home, "USERPROFILE": home}
+            env = {**{k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}, **homes}
+            found = subprocess.run([sys.executable, "-c", "import site; print(site.ENABLE_USER_SITE); "
+                                    "print(site.getusersitepackages())"], capture_output=True, text=True, env=env,
+                                   timeout=60)
+            enabled, site_packages = found.stdout.splitlines()
+            if enabled != "True" or not site_packages.startswith(home):
+                self.skipTest("this interpreter reads no user site directory in a home a test can choose")
+            Path(site_packages).mkdir(parents=True)
+            Path(site_packages, "zz_planted.pth").write_text("import os; os._exit(0)\n", encoding="utf-8")
+            result = self.run_hook("guard_git", DENIED, FACTORY_HOOK_PYTHON=sys.executable, PYTHONUSERBASE="", **homes)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout or "{}").get("hookSpecificOutput", {}).get("permissionDecision"),
+                         "deny")
 
     def test_a_named_interpreter_that_is_missing_exits_2_although_python3_is_on_the_path(self) -> None:
         with tempfile.TemporaryDirectory() as empty:

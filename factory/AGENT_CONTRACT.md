@@ -181,7 +181,9 @@ A person's review, addressed:
 
 Before a factory run may end, the `finish_check` hook checks, in this order:
 
-1. `FACTORY_STAGE`, `FACTORY_RESULT_PATH` and `FACTORY_BASE_SHA` are set.
+1. `FACTORY_RESULT_PATH` is set. The stage and the base commit come from `job.json`, and from
+   `FACTORY_STAGE` and `FACTORY_BASE_SHA`, which must then be set, only when that file cannot be
+   read.
 2. The result file exists, is at most 200,000 bytes, parses as JSON, and is valid for the stage.
    When it is not, the hook reports only these problems.
 3. No text of the result that the dispatcher posts holds a hygiene finding (below, What the
@@ -306,6 +308,9 @@ what the runner and the dispatcher do now.
 - The hooks run from the image's own copy of the harness under `/opt/factory/harness`, installed
   as system-level settings that allow only those hooks, so no file in the checkout can replace
   them. Each ask rule of `.claude/settings.json` is a deny rule there: nobody can answer in a run.
+  The same settings fix `FACTORY_RUN`, `FACTORY_JOB_DIR` and `FACTORY_RESULT_PATH`, the hooks'
+  interpreter starts with `-E -s`, so no `PYTHON` variable and no user site directory reaches
+  them, and `guard_paths` refuses writes to the session's own settings in the home.
 - The agent runs as an unprivileged user in a rootless container, with every capability dropped
   and no way to gain new privileges. It holds the Claude token and no GitHub credentials.
 - A run for an issue whose author is outside the trusted list sees `(title withheld)` as the

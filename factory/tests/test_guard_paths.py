@@ -89,6 +89,28 @@ class DecideTests(unittest.TestCase):
             self.check({hook: "deny", str(self.holder / "project-other" / ".git" / "config"): "deny"},
                        factory_run=factory_run)
 
+    def test_a_factory_run_may_not_change_the_sessions_own_settings_in_the_home(self):
+        home = self.holder / "home"
+        (home / ".claude").mkdir(parents=True)
+        cases = {str(home / ".claude" / "settings.json"): "deny", str(home / ".claude" / "a" / "b.md"): "deny",
+                 str(home / ".claude"): "deny", str(home / ".claude.json"): "deny", str(home / "notes.txt"): "allow",
+                 str(home / ".claude-other" / "x"): "allow"}
+        for path, action in cases.items():
+            with self.subTest(path=path):
+                decision = guard_paths.decide(path, project=self.project, cwd=self.project, factory_run=True,
+                                              config=CONFIG, home=home)
+                self.assertEqual(decision.action, action)
+                if action == "deny":
+                    self.assertIn("settings", decision.reason)
+                interactive = guard_paths.decide(path, project=self.project, cwd=self.project, factory_run=False,
+                                                 config=CONFIG, home=home)
+                self.assertEqual(interactive.action, "allow")
+
+    def test_the_home_is_the_users_own_unless_given(self):
+        decision = guard_paths.decide(str(Path.home() / ".claude" / "settings.json"), project=self.project,
+                                      cwd=self.project, factory_run=True, config=CONFIG)
+        self.assertEqual(decision.action, "deny")
+
     def test_sibling_sharing_a_name_prefix_is_outside_the_project(self):
         self.check({str(self.holder / "project2" / "AGENTS.md"): "allow"}, factory_run=True)
 

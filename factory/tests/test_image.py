@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from factory import runner
+from factory import pod, runner
 from factory.config import ConfigError, load
 from factory.image import build, managed_settings
 
@@ -57,13 +57,23 @@ class ManagedSettingsTests(unittest.TestCase):
         self.assertIs(managed["allowManagedHooksOnly"], True)
         self.assertTrue(set(project["permissions"]["ask"]) <= set(managed["permissions"]["deny"]))
 
-    def test_only_the_three_keys_remain_and_the_rules_keep_their_order_without_duplicates(self):
+    def test_only_the_managed_keys_remain_and_the_rules_keep_their_order_without_duplicates(self):
         project = project_settings()
         project["permissions"]["ask"] = [project["permissions"]["deny"][0], "Bash(gh pr merge *)"]
         managed = managed_settings.build(project)
-        self.assertEqual(set(managed), {"allowManagedHooksOnly", "hooks", "permissions"})
+        self.assertEqual(set(managed), {"allowManagedHooksOnly", "env", "hooks", "permissions"})
         self.assertEqual(set(managed["permissions"]), {"deny"})
         self.assertEqual(managed["permissions"]["deny"], project["permissions"]["deny"] + ["Bash(gh pr merge *)"])
+
+    def test_the_factory_variables_are_fixed_as_the_runner_passes_them_so_no_settings_file_can_change_them(self):
+        managed = managed_settings.build({**project_settings(), "env": {"FACTORY_RUN": "0"}})
+        self.assertEqual(managed["env"], {"FACTORY_RUN": "1", "FACTORY_JOB_DIR": "/factory/job",
+                                          "FACTORY_RESULT_PATH": "/factory/out/result.json"})
+        request = {"stage": "fix_issue", "skill": "factory-fix-issue", "base_sha": "a" * 40, "model": "opus",
+                   "permission_mode": "auto", "max_turns": 300}
+        argv = pod.agent_argv(request, pod.Mounts(Path("c"), Path("j"), Path("o")), "localhost/agent:1", "x")
+        passed = dict(value.split("=", 1) for flag, value in zip(argv, argv[1:]) if flag == "--env" and "=" in value)
+        self.assertEqual({name: passed[name] for name in managed["env"]}, managed["env"])
 
     def test_the_other_keys_of_each_hook_entry_are_kept_and_the_input_is_left_alone(self):
         project = project_settings()
@@ -285,8 +295,27 @@ class ContainerfileTests(unittest.TestCase):
         self.assertIn("corepack enable", installs)
         self.assertIn("claude-code", installs)
 
-    def test_the_image_label_is_the_one_the_runner_checks(self):
+    def test_tini_is_process_1_and_python_can_make_virtual_environments(self):
+        lines = (ROOT / "factory" / "image" / "Containerfile").read_text(encoding="utf-8").splitlines()
+        install = next(line for line in lines if "apt-get install" in line).split()
+        for package in ("git", "python3", "ca-certificates", "tini", "python3-venv", "python3-pip"):
+            with self.subTest(package=package):
+                self.assertIn(package, install)
+        # tini reaps the processes the agent's tools leave behind, which the CLI as process 1 would not
+        entrypoint = 'ENTRYPOINT ["/usr/bin/tini", "--"]'
+        self.assertIn(entrypoint, lines)
+        self.assertLess(lines.index(entrypoint), lines.index("USER node"))
+
+    def test_the_comment_on_the_path_claims_only_what_the_lines_below_it_do(self):
+        lines = (ROOT / "factory" / "image" / "Containerfile").read_text(encoding="utf-8").splitlines()
+        comment = lines[lines.index("ARG AGENT_HOME=/home/node") - 1]
+        self.assertTrue(comment.startswith("# "), comment)
+        self.assertNotIn("nothing it can write", comment)
+        self.assertIn("PATH", comment)
+
+    def test_the_image_label_and_name_are_the_ones_the_runner_checks(self):
         self.assertEqual(build.IMAGE_LABEL, runner.IMAGE_LABEL)
+        self.assertIs(runner.IMAGE_NAME, build.IMAGE_NAME)
 
 
 class MainTests(TemporaryDirectoryTestCase):

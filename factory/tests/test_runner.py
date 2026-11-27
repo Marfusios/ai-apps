@@ -943,6 +943,12 @@ class SettingsTests(unittest.TestCase):
         self.assertNotIn("relative-secret", message)
         self.assertNotIn("bad image", message)
 
+    def test_an_image_name_the_build_would_not_give_an_image_is_malformed(self):
+        for image in ("localhost/Factory-Agent:1", "factory-agent@sha256:abc", "-x"):
+            with self.subTest(image=image), self.assertRaises(runner.SettingsError) as raised:
+                runner.settings_from_env(self.env(FACTORY_IMAGE=image))
+            self.assertIn("FACTORY_IMAGE is malformed", str(raised.exception))
+
     def test_a_directory_that_podman_would_read_as_a_separator_is_rejected(self):
         for name in ("FACTORY_WORK_DIR", "FACTORY_SPOOL_DIR", "FACTORY_MIRROR_DIR"):
             for bad in ("a:b", "a,b"):

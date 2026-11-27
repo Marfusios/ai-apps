@@ -21,6 +21,20 @@ CREDENTIAL_PARTS = {"secrets", "credentials"}
 ON_WINDOWS = os.name == "nt"
 GIT_REFUSAL = ("Writing inside .git is refused: it holds the repository's own files, hooks included. "
                "Use git commands, and ask the person if a hook needs to change.")
+SESSION_SETTINGS_REFUSAL = ("Writing the session's own settings in the home, ~/.claude/ and ~/.claude.json, is refused "
+                            "in a factory run: they are not the agent's to change. Report the need as a follow-up or "
+                            "a question.")
+
+
+def is_session_settings(real: Path, home: Path) -> bool:
+    """Whether a resolved path is the session's own settings: `.claude` in the home, what it holds, or `.claude.json`.
+
+    The CLI reloads a changed settings file into the running session, so such a write could switch a guard off.
+    """
+    base = os.path.normcase(os.path.realpath(home))
+    path = os.path.normcase(str(real))
+    directory = os.path.join(base, ".claude")
+    return path in (directory, os.path.join(base, ".claude.json")) or path.startswith(directory + os.sep)
 
 
 def fallback_config() -> Config:
@@ -41,12 +55,15 @@ def is_credential(parts: list[str]) -> bool:
             or any(part.lower() in CREDENTIAL_PARTS for part in parts))
 
 
-def decide(file_path: str, *, project: Path, cwd: Path, factory_run: bool, config: Config) -> Decision:
-    """Allow, ask about or deny a write to file_path, which may be relative to cwd."""
+def decide(file_path: str, *, project: Path, cwd: Path, factory_run: bool, config: Config,
+           home: Path | None = None) -> Decision:
+    """Allow, ask about or deny a write to file_path, which may be relative to cwd; `home` is the user's by default."""
     real = Path(os.path.realpath(Path(cwd) / file_path))
     # before the outside-the-project allow: in a linked worktree the real git directory lies outside the project
     if any(part.lower() == ".git" if ON_WINDOWS else part == ".git" for part in real.parts):
         return Decision("deny", GIT_REFUSAL)
+    if factory_run and is_session_settings(real, home or Path.home()):  # outside the project, so before its allow
+        return Decision("deny", SESSION_SETTINGS_REFUSAL)
     try:
         relative = real.relative_to(os.path.realpath(project))
     except ValueError:
