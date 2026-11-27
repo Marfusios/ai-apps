@@ -1,4 +1,4 @@
-"""Keep the deployment files, the host guide and the issue forms in line with what the code reads and reports."""
+"""Keep the deployment files, the host guide, the design and the issue forms in line with what the code does."""
 
 import importlib.util
 import re
@@ -11,6 +11,7 @@ from factory import compose, dispatcher, hygiene, jobs, pod, runner, spool
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "factory" / "deploy"
 GUIDE = ROOT / "docs" / "factory" / "HOST_SETUP.md"
+DESIGN = ROOT / "docs" / "factory" / "DESIGN.md"
 FORMS = ROOT / ".github" / "ISSUE_TEMPLATE"
 EXAMPLES = ("dispatcher.env.example", "runner.env.example")
 COMMANDS = ("factory.dispatcher", "factory.runner", "factory.image.build")
@@ -149,6 +150,70 @@ class HostGuideTests(unittest.TestCase):
     def test_the_guide_runs_the_three_commands(self):
         for module in COMMANDS:
             self.assertIn(f"python3 -m {module}", self.text)
+
+    def section(self, number: int) -> str:
+        return self.text.partition(f"\n## {number}. ")[2].partition("\n## ")[0]
+
+    def assert_says(self, text: str, *words: str) -> None:
+        flowing = " ".join(text.split())  # a line break inside a phrase is a space
+        for word in words:
+            with self.subTest(words=word):
+                self.assertIn(word, flowing)
+
+    def test_section_1_counts_tini_as_part_of_the_image(self):
+        self.assert_says(self.section(1), "`tini`", "the agent image brings")
+
+    def test_section_4_bounds_the_disk_the_runner_can_fill(self):
+        self.assert_says(self.section(4), "file system of a fixed size", "disk quota", "`FACTORY_WORK_DIR`",
+                         "container storage", f"{runner.TRANSCRIPT_CAP // 1_000_000} MB")
+
+    def test_section_5_says_where_the_downloaded_key_may_wait_and_deletes_it(self):
+        self.assert_says(self.section(5), "only its owner can read", "rm <downloaded-key-file>")
+
+    def test_section_8_sets_the_umask_before_the_pull_and_stops_the_dispatcher_before_once(self):
+        step = self.section(8).partition("\n3. ")[2].partition("\n4. ")[0]
+        self.assertLess(step.index("umask 0027"), step.index("pull --ff-only"))
+        self.assert_says(step, "`--once`", "stop the dispatcher's service")
+
+    def test_the_guide_says_what_to_do_when_nothing_seems_to_happen(self):
+        part = self.text.partition("### When nothing seems to happen\n")[2].partition("\n### ")[0]
+        self.assert_says(part, "`status:building`", "eight", "Removing `factory:fix`", "Restart the runner",
+                         "merged", "re-applies", "status label", "could not be read in full")
+
+    def test_the_image_paragraph_claims_only_what_keeps_the_guards_on(self):
+        step = self.section(7).partition("\n5. ")[2].partition("\n6. ")[0]
+        self.assert_says(step, "`-E -s`", "`FACTORY_RUN`", "`tini`")
+        self.assertNotIn("nothing the agent can write comes before", " ".join(self.text.split()))
+
+    def test_a_rejected_run_and_an_internal_error_name_what_publishing_can_meet(self):
+        self.assert_says(self.text, "the work branch changed on GitHub", "GitHub refused the push",
+                         "eight times", "`attempts.json`")
+
+
+class DesignTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.text = read(DESIGN)
+
+    def test_an_issue_carries_at_most_one_status_label(self):
+        self.assertIn("At most one at a time.", self.text)
+        self.assertNotIn("Exactly one at a time", self.text)
+
+    def test_the_checks_before_publishing_name_the_commit_message_rule(self):
+        checks = self.text.partition("**What the dispatcher checks before publishing a result.**")[2]
+        checks = checks.partition("**What the bot posts.**")[0]
+        for words in ("commit message mentions no person", "`#<issue>`"):
+            with self.subTest(words=words):
+                self.assertIn(words, checks)
+
+    def test_the_resource_cap_names_the_disk(self):
+        (line,) = [line for line in self.text.splitlines() if "resource cap" in line]
+        self.assertIn("disk", line)
+
+    def test_the_hooks_paragraph_says_how_the_image_starts_them_and_what_it_fixes(self):
+        hooks = self.text.partition("**Hooks** (`.claude/hooks/`")[2].partition("### 9.1")[0]
+        for words in ("`-E -s`", "user site directory", "`FACTORY_RUN`", "managed settings"):
+            with self.subTest(words=words):
+                self.assertIn(words, hooks)
 
 
 class IssueFormTests(unittest.TestCase):

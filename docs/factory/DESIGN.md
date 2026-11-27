@@ -123,7 +123,7 @@ People apply trigger labels. The dispatcher applies everything else.
 | `factory:pause` | person | Start no new runs for this issue or its steps. |
 | `factory:halt` | person | On any open issue: start no new runs anywhere. |
 | `factory:step` | dispatcher | A plan step, created from a merged plan. |
-| `status:queued`, `status:design`, `status:plan`, `status:building`, `status:needs-human`, `status:done` | dispatcher | Where the issue is. Exactly one at a time. |
+| `status:queued`, `status:design`, `status:plan`, `status:building`, `status:needs-human`, `status:done` | dispatcher | Where the issue is. At most one at a time. |
 | `stage:design`, `stage:plan`, `stage:step`, `stage:fix` | dispatcher | What a pull request is for. |
 
 A trigger label counts only if the timeline shows a trusted person applied it (section 7).
@@ -284,6 +284,10 @@ the pod (section 9).
   link target matches a credential pattern. The dispatcher uses its own trusted copy of
   the patterns, `factory/hygiene.py` in its deployed checkout, never the one on the
   branch.
+- A commit message mentions no person and refers to no issue but the run's own: it holds
+  no `@` before a letter or digit, no `github.com/` link, no `GH-<number>`, no
+  `owner/repo#<number>` and no `#<number>` but `#<issue>`. GitHub acts on a message as
+  soon as the commit is pushed, and nothing neutralises it.
 - The work branch on GitHub is still where the run started, or already at the checked
   commits, and GitHub accepts their push. A branch someone moved, or a push GitHub
   refuses, makes the run rejected: it is reported in a comment, not retried.
@@ -307,7 +311,10 @@ other reference in the text can act.
 - A host firewall rule for that user rejects connections to the host's own addresses
   and to private address ranges, leaving only the public internet reachable, and DNS to
   the host's resolvers.
-- A resource cap on that user's processes protects the other services on the host.
+- A resource cap on that user's processes, for memory, processor time, tasks and disk,
+  protects the other services on the host. The disk is bounded by a file system of a fixed
+  size or a quota for the runner's work directory and container storage, and the runner
+  keeps only the first part of an output that grows without end.
 - Temporary databases are service containers in the same pod, declared by the app.
 - The runner fails closed: before each job it opens a listener on the host's loopback
   address and connects to it from its own process, outside any container. The firewall
@@ -444,9 +451,9 @@ shell launcher that finds the interpreter, so they run on Windows and Linux)
 | Hook | When | Blocks |
 | --- | --- | --- |
 | `guard_git` | before a shell command | force pushes in their common spellings, pushes to `main`, deleting remote branches or tags, skipping hooks. Merging pull requests and changing repository rules or settings are refused in factory runs and need the person's confirmation in an interactive session |
-| `guard_paths` | before a file write | git's own files; credential files; in factory runs, anything outside the writable paths |
+| `guard_paths` | before a file write | git's own files; credential files; in factory runs, anything outside the writable paths and the session's own settings in the home |
 | `guard_quality` | before a file write | new inline suppressions of the linter, type checker, or a test (a skipped or focused test) that carry no reason |
-| `finish_check` | when the agent tries to stop (factory runs only) | finishing with failing repository checks, a failing quick command in a touched app, uncommitted work, or an invalid result file |
+| `finish_check` | when the agent tries to stop (factory runs only) | finishing with failing repository checks, a failing quick command in a touched app, uncommitted work, an invalid result file, or a posted text or a commit message that the dispatcher would refuse |
 
 The hooks are a guard against mistakes and casual attempts, not a security boundary; the limits
 are listed in `factory/AGENT_CONTRACT.md`.
@@ -454,7 +461,13 @@ are listed in `factory/AGENT_CONTRACT.md`.
 The same denials are repeated as permission rules, since each mechanism covers gaps in
 the other: rules on shell arguments are easy to sidestep, and a hook sees the whole
 command. Inside the agent container they are additionally installed as system-level
-settings that a repository file cannot override.
+managed settings that a repository file cannot override. The image starts the guards with
+a named interpreter and `-E -s`, which ignore the environment's `PYTHON` variables and the
+user site directory, both of which the agent can write, and the managed settings fix
+`FACTORY_RUN`, `FACTORY_JOB_DIR` and `FACTORY_RESULT_PATH`, so that no settings file the
+agent writes can switch a guard off. The finish check takes the stage and the base commit
+from the read-only `job.json`, and `guard_paths` refuses writes to the session's own
+settings in the home.
 
 Headless runs must name a permission mode, because the CLI's default denies anything
 that would have asked. The factory starts with the classifier-based automatic mode, which

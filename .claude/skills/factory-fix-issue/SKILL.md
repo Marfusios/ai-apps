@@ -66,7 +66,13 @@ Stop before you change any code (last section) when:
 ## Do a chore
 
 A chore changes no behaviour, so it needs no new test: the app's `check` command is its
-verification. Run `check` before you change anything, so that you know what already fails.
+verification. Before you change anything, run the app's `setup` command if the dependencies are
+missing, then `check`, so that you know what already fails and do not mistake a missing
+dependency for a failure.
+
+A quality tool is never configured to ignore the app's own code as a whole, such as its source
+directory or every file of a kind, and every suppression, in the configuration or in the code,
+carries its reason (Linted, formatted, typed, in `docs/engineering.md`).
 
 - A dependency update: change the manifest and the lockfile together, through the package
   manager, and say in the pull request why the new version is needed.
@@ -86,6 +92,11 @@ verification. Run `check` before you change anything, so that you know what alre
 Tidy what you touched, and update the README or `apps/<app>/AGENTS.md` where they describe the old
 behaviour or the old commands. Run the app's `check` command and `python3 scripts/check_repo.py`,
 then commit with a one-sentence message ("Change discipline" in `AGENTS.md`).
+
+A commit message mentions no person and refers to no issue but its own, as `#<issue>`, and the
+texts of the result that are posted hold no host path and no private address, nor anything like a
+key: the dispatcher publishes nothing of a run that breaks these, and the finish check tells you
+first ("What the dispatcher refuses" in `factory/AGENT_CONTRACT.md`).
 
 ## Review and verify
 

@@ -75,7 +75,7 @@ REJECTED = [  # (name, commits, fragment one problem must contain, options for t
      {"mode": {"apps/demo/hook": LINK}}, {}),
     ("link into .git in another spelling", [{"apps/demo/hook": "../../.GIT./hooks/pre-commit"}], "a link into .git",
      {"mode": {"apps/demo/hook": LINK}}, {}),
-    ("link into .git through a zero-width joiner", [{"apps/demo/hook": "../../.g‌it/hooks/pre-commit"}],
+    ("link into .git through a zero-width non-joiner", [{"apps/demo/hook": "../../.g‌it/hooks/pre-commit"}],
      "apps/demo/hook: a link that leaves the repository", {"mode": {"apps/demo/hook": LINK}}, {}),
     ("link into .git through a byte order mark", [{"apps/demo/hook": "../../.git﻿/hooks/pre-commit"}],
      "apps/demo/hook: a link that leaves the repository", {"mode": {"apps/demo/hook": LINK}}, {}),
@@ -134,7 +134,7 @@ FORGED = [  # (name, header lines, message, fragment): commit objects written by
 # then refuses a link into .git, a date that is not a number, is zero-padded or overflows, and a commit without an
 # author.
 GIT_MAY_REFUSE = {"link into .git", "link into .git in another spelling",
-                  "link into .git through a zero-width joiner", "link into .git through a byte order mark",
+                  "link into .git through a zero-width non-joiner", "link into .git through a byte order mark",
                   "an ident with a third bracket", "no author line", "a zero-padded date", "a date longer than git reads"}
 
 

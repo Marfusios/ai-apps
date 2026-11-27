@@ -123,6 +123,22 @@ class SkillTests(unittest.TestCase):
             self.assertIn(heading, text)
         self.assertIn("When `FACTORY_RUN` is not set", text)
 
+    def test_a_chore_sets_up_and_checks_first_and_keeps_every_suppression_reasoned(self) -> None:
+        text = (CLAUDE / "skills" / "factory-fix-issue" / "SKILL.md").read_text(encoding="utf-8")
+        chore = " ".join(text.partition("## Do a chore")[2].partition("\n## ")[0].split())
+        first = chore.partition("Before you change anything")[2]
+        self.assertLess(first.index("`setup`"), first.index("`check`"))
+        for words in ("ignore the app's own code", "suppression", "its reason", "docs/engineering.md"):
+            with self.subTest(words=words):
+                self.assertIn(words, chore)
+
+    def test_every_kind_keeps_its_commit_messages_and_posted_texts_to_what_the_dispatcher_publishes(self) -> None:
+        text = (CLAUDE / "skills" / "factory-fix-issue" / "SKILL.md").read_text(encoding="utf-8")
+        every = " ".join(text.partition("## Then, for every kind")[2].partition("\n## ")[0].split())
+        for words in ("commit message", "no person", "its own", "host path", "private address", "finish check"):
+            with self.subTest(words=words):
+                self.assertIn(words, every)
+
     def test_a_chore_that_changes_a_quality_tool_updates_the_apps_commands_with_it(self) -> None:
         text = (CLAUDE / "skills" / "factory-fix-issue" / "SKILL.md").read_text(encoding="utf-8")
         chore = text.partition("## Do a chore")[2].partition("\n## ")[0]

@@ -48,7 +48,8 @@ design are not built yet:
   package on Debian and Ubuntu).
 - Memory and processor time to spare: agent runs build and test real apps (section 4).
 
-The host needs neither Node.js nor Claude Code: the agent image brings both.
+The host needs neither Node.js nor Claude Code: the agent image brings both, and also `tini`,
+which runs as the first process of each container. None of the three is installed on the host.
 
 ## 2. Users, group and directories
 
@@ -243,6 +244,15 @@ of them, and nothing outside the slice. `CPUQuota` takes a share of one core, su
 three cores. `TasksMax` takes a number of processes and threads, such as `2048`. `CPUWeight` and
 `IOWeight` give the runner a smaller share than other users' processes when the host is busy.
 
+The slice caps no disk. A run writes its checkout, its dependencies and its container's files
+on the runner's disk: the checkout in the work directory (`FACTORY_WORK_DIR`), the rest in the
+runner's container storage, `~/.local/share/containers`. Put both on a file system of a fixed
+size, such as a partition or a mounted image file of their own, or put the runner user under a
+disk quota, so that a run that fills its disk stops the factory's runs and nothing else on the
+host. The runner keeps at most 200 MB of a run's transcript and 10 MB of its error output, and
+reads the rest without keeping it. A runner that starts on a full disk first removes what earlier
+runs left, and then records them.
+
 ## 5. The GitHub App
 
 The App gives the factory its own identity: its pull requests, comments and commits show as
@@ -266,11 +276,14 @@ The App gives the factory its own identity: its pull requests, comments and comm
 4. Under "Where can this GitHub App be installed?", choose "Only on this account", and create it.
 5. The App's page shows its App ID: that is `FACTORY_APP_ID`.
 6. Under Private keys, generate a private key. The browser downloads a `.pem` file. Copy it to the
-   host, then, as root, install it where only the dispatcher can read it, and delete the copy:
+   host into a directory that only its owner can read, such as one made with `mkdir -m 0700`, and
+   never into a shared one such as `/tmp`. Then, as root, install it where only the dispatcher can
+   read it, and delete the copy, on the host and where it was downloaded:
 
    ```sh
    install -d -o factory-dispatcher -m 0700 ~factory-dispatcher/.config ~factory-dispatcher/.config/factory
    install -o factory-dispatcher -m 0600 <downloaded-key-file> ~factory-dispatcher/.config/factory/app.pem
+   rm <downloaded-key-file>
    ```
 
    Its absolute path is `FACTORY_APP_KEY_FILE`.
@@ -405,10 +418,14 @@ was made; then make a new one, replace the file, and restart the runner.
    It builds `factory/image/Containerfile` with the base image and the Claude Code version that
    `factory/config.toml` names, and labels the image with a digest of the harness: the hooks, the
    Claude Code settings, the factory's modules and configuration, and the image's own files. The
-   image installs the hooks as system-level settings that a file in a checkout cannot override.
-   The harness copy and the Claude Code CLI are owned by root, and what the agent installs globally
-   goes to its own home directory, last on its `PATH`, so nothing the agent can write comes before
-   the system's programs.
+   image installs the hooks as system-level settings that a file in a checkout cannot override,
+   and the same settings fix `FACTORY_RUN`, `FACTORY_JOB_DIR` and `FACTORY_RESULT_PATH`, so no
+   settings file the agent writes can change them. The hooks' commands name their interpreter and
+   start it with `-E -s`, so that no `PYTHON` variable and no user site directory in the agent's
+   home reaches a hook. The harness copy and the Claude Code CLI are owned by root. What the agent
+   installs globally with npm goes to its own home directory, last on its `PATH`, so it shadows
+   none of the system's commands. `tini` runs as the first process of each container and reaps
+   the processes the agent's tools leave behind.
    `python3 -m factory.image.build --print-digest` prints the digest of the checkout, and before
    every job the runner compares the two. The build downloads from public registries, so it is
    also the first proof that the runner's containers resolve names and reach the internet under
@@ -445,9 +462,11 @@ was made; then make a new one, replace the file, and restart the runner.
    Then remove `factory:halt`, if you added it.
 
 The runner holds an exclusive lock in its work directory, so one runner runs per host; a second
-one exits with "another runner holds the lock on the work directory". For another layout, change
-`WorkingDirectory=` in both copied unit files and the directories in the environment files; to
-use another Python, change `ExecStart=`.
+one exits with "another runner holds the lock on the work directory". The dispatcher holds one in
+its state directory in the same way, also for `--once`, and a second one exits with "another
+dispatcher holds the lock on the state directory"; `--dry-run` takes no lock. For another layout,
+change `WorkingDirectory=` in both copied unit files and the directories in the environment files;
+to use another Python, change `ExecStart=`.
 
 ## 8. Updating
 
@@ -455,10 +474,14 @@ use another Python, change `ExecStart=`.
 2. Wait until no run is going on: as the runner, `podman ps --format '{{.Names}}'` lists no name
    that starts with `factory-`. A run that is still going when the runner stops ends as **ended
    without a result** with the reason `internal`, and `/factory retry` runs it again.
-3. As the dispatcher, `git -C /srv/factory/app pull --ff-only`. Then
+3. As the dispatcher, `umask 0027`, as in section 7, so that new files stay readable for the
+   group and closed to everyone else, then `git -C /srv/factory/app pull --ff-only`. Then
    `git -C /srv/factory/app diff --stat ORIG_HEAD HEAD -- factory/deploy` shows whether a unit or
    an example file changed: copy a changed unit again (repeating any change made for another
-   layout), and add any new variable to the environment file.
+   layout), and add any new variable to the environment file. To try the new version with one
+   poll of `--once` (section 9), stop the dispatcher's service first with
+   `systemctl --user stop factory-dispatcher.service`: the service holds the lock, and a second
+   dispatcher exits.
 4. As the runner, rebuild the image (section 7, step 5) and run the check (step 6). The runner
    refuses to work with an image that does not match the deployed harness: until the image is
    rebuilt, every job is refused with the reason `image`.
@@ -525,7 +548,7 @@ lead-ins, and a hidden marker at the end names the job and the outcome.
 | **timed out** | `timeout` | The run reached the stage's `timeout_minutes` in `factory/config.toml`, and its container was stopped. | `/factory retry` |
 | **ended without a result** | `crashed` | The run ended with nothing to publish; a reason says why (below). | `/factory retry` |
 | **not started** | `refused` | The runner refused the job before the agent started; a reason says why (below). | `/factory retry` |
-| **work not published** | `rejected` | The result's text or its commits failed the dispatcher's checks. The comment lists the problems, without quoting a secret or a host path, and nothing was pushed. | `/factory retry` |
+| **work not published** | `rejected` | The result's text or its commits failed the dispatcher's checks, the work branch changed on GitHub while the run was going, or GitHub refused the push of the checked commits. The comment lists the problems, without quoting a secret or a host path, and the run's commits are not on the branch. | `/factory retry` |
 | **waiting for the usage limit** | `usage_limit` | The subscription's usage limit stopped the run. | Time: the run starts again by itself (below). |
 
 ### Reasons
@@ -543,7 +566,7 @@ run ended because ...".
 | `clone` | ended without a result | the repository could not be prepared for the agent | The runner could not clone the mirror or check out the work branch in time. Check that the runner can read `/srv/factory/mirror` (section 2) and that its work directory has disk space, then retry. |
 | `max_turns` | ended without a result | the run used all its turns | The agent used the stage's `max_turns`. The issue is probably more than one small change: split it, or make it an epic, or retry. |
 | `agent_error` | ended without a result | the agent stopped with an error | The agent ended without a valid result file. Read the transcript (below); a retry often succeeds after a passing error of the service. |
-| `internal` | ended without a result | the factory hit an internal error | The runner failed in an unexpected way, Podman could not start the container, the runner was stopped during the run (a restart or an update ends a run this way), or the dispatcher could not read the run's record. Read both logs, then retry. |
+| `internal` | ended without a result | the factory hit an internal error | The runner failed in an unexpected way, Podman could not start the container, the runner was stopped during the run (a restart or an update ends a run this way), the dispatcher could not read the run's record, or publishing the run failed eight times. Read both logs, then retry. |
 
 ### The usage limit
 
@@ -556,19 +579,43 @@ by itself, in its turn. A second limit in a row edits that comment instead of ad
 When GitHub's own rate limit runs out, the dispatcher logs it and waits until the limit resets: at
 least a minute, at most an hour.
 
+### When nothing seems to happen
+
+- **`status:building` and no new run comment for a long time, with no run going on.** Publishing
+  a finished run fails again and again; the dispatcher's log names the job and the error of each
+  attempt, with a growing delay between attempts. After eight failed attempts the factory posts
+  an internal-error comment by itself and sets `status:needs-human`. Removing `factory:fix` drops
+  the job at once.
+- **`status:building`, and the runner's log shows nothing new.** The runner is gone, and its job
+  stays running. Restart the runner (`systemctl --user restart factory-runner.service`, as the
+  runner): it records the job as **ended without a result** with the reason `internal`, and
+  `/factory retry` runs it again.
+- **A merged pull request on an issue that is still open.** The issue shows `status:done` and the
+  factory starts nothing more for it. Close the issue, or open a new issue for more work.
+- **A label applied by someone outside `trusted_logins`.** Nothing happens. A trusted person
+  removes `factory:fix` and re-applies it.
+- **An issue that lost `factory:fix` keeps its status label.** The factory no longer looks at the
+  issue, so it does not remove the label: remove it by hand.
+- **An issue the dispatcher does not act on, and a log line that it could not be read in full.**
+  GitHub refused part of the issue's history, most often because it holds more or longer comments
+  than the dispatcher reads. The other issues go on; this one, and a job it has, waits. When it
+  stays so, move the request to a new issue.
+
 ### Logs, transcripts and job files
 
 - The dispatcher's log, as the dispatcher: `journalctl --user -u factory-dispatcher`, with `-f` to
   follow it. The runner's, as the runner: `journalctl --user -u factory-runner`. A line names the
-  action or the job and the kind of error, never a secret. Where a user's journal is not kept
-  apart, root reads the same lines with `journalctl --user-unit factory-runner.service`.
+  action or the job and the kind of error, or for a poll that failed GitHub's own message, never a
+  secret. Where a user's journal is not kept apart, root reads the same lines with
+  `journalctl --user-unit factory-runner.service`.
 - The transcripts, as the runner: `~/.local/state/factory/transcripts/<job-id>.jsonl`, the Claude
   CLI's stream of JSON events, and `<job-id>.err`, its error output, in `FACTORY_WORK_DIR`. Only
   the runner can read them, and they are deleted after 14 days. They can hold anything the agent
   read, so they stay on the host.
 - The job files: `/srv/factory/spool/jobs/<job-id>/` holds what the dispatcher wrote:
   `request.json`, `job.json`, `context.md`, and later `settled.json`, the outcome it settled on,
-  and `closed.json`, when and why it closed the job. `/srv/factory/spool/runs/<job-id>/` holds what
+  `attempts.json`, how many publications failed and when the first did, and `closed.json`, when
+  and why it closed the job. `/srv/factory/spool/runs/<job-id>/` holds what
   the runner wrote: `claimed.json`, `run.json` (status, reason, duration, model and turns),
   `result.json` and `commits.bundle`. A closed job is deleted after 14 days, its run with it.
 - A job id reads `<start-time>-fix_issue-<issue>-<random>`, such as
@@ -580,7 +627,8 @@ least a minute, at most an hour.
 - `python3 -m factory.dispatcher --dry-run` prints what one poll would do and writes nothing.
 - `python3 -m factory.runner --check` checks confinement, the image and the spool; it writes
   nothing but the work directory and a temporary file in it.
-- `python3 -m factory.dispatcher --once` makes one real poll and exits.
+- `python3 -m factory.dispatcher --once` makes one real poll and exits; stop the dispatcher's
+  service first, since it holds the lock.
 - `python3 -m factory.runner --once` handles at most one job and exits; stop the runner's service
   first, since it holds the lock.
 
