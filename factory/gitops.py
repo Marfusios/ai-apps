@@ -1,15 +1,22 @@
-"""The dispatcher's own git: a mirror of GitHub, a work repository that borrows its objects, and pushes."""
+"""The dispatcher's own git: a mirror of GitHub, a work repository that borrows its objects, and pushes.
+
+Every git command runs isolated from inherited settings, under a timeout, with its standard error discarded, and
+with its output read as it comes so that a caller can cap it.
+"""
 
 import base64
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
+from typing import BinaryIO
 
 WORK_BRANCH = re.compile(r"factory/[a-z0-9][a-z0-9-]{0,60}")
 SHA = re.compile(r"[0-9a-f]{40}")
 TIMEOUT_SECONDS = 300
 ANSWERED_NO = 1  # the exit status of a yes-or-no git command, such as `merge-base --is-ancestor`, for "no"
+CHUNK = 65536
 
 
 class GitError(Exception):
@@ -24,6 +31,13 @@ class GitError(Exception):
         self.status = status
         ending = f"exit status {status}" if isinstance(status, int) else status
         super().__init__(f"git {subcommand} failed: {ending}")
+
+
+class GitOutputTooLarge(GitError):
+    """A git command printed more than its caller allowed, and was stopped there."""
+
+    def __init__(self, subcommand: str, limit: int) -> None:
+        super().__init__(subcommand, f"more than {limit} bytes of output")
 
 
 def _subcommand(args: tuple[str, ...]) -> str:
@@ -49,25 +63,81 @@ def _environment(token: str | None) -> dict[str, str]:
     return env
 
 
+def _read(stream: BinaryIO, limit: int | None) -> bytes | None:
+    """Everything the stream holds, or None as soon as it has given more than `limit` bytes."""
+    chunks, size = [], 0
+    while chunk := stream.read(CHUNK):
+        size += len(chunk)
+        if limit is not None and size > limit:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _feed(pipe: BinaryIO, data: bytes) -> None:
+    """Write git's input from a thread of its own, so a git that prints while it reads never waits on us."""
+    try:
+        with pipe:
+            pipe.write(data)
+    except OSError:
+        pass  # git stopped reading: it finished early, failed or was stopped, and its exit status says which
+
+
+def _stop(process: subprocess.Popen, expired: threading.Event) -> None:
+    expired.set()
+    process.kill()
+
+
+def _run(argv: list[str], env: dict[str, str], input: bytes | None, timeout: int,
+         limit: int | None) -> tuple[int, bytes | None]:
+    """Run git and return its exit status and output; the output is None when git printed more than `limit`."""
+    expired = threading.Event()
+    with subprocess.Popen(argv, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env) as process:
+        timer = threading.Timer(timeout, _stop, (process, expired))
+        feeder = None if input is None else threading.Thread(target=_feed, args=(process.stdin, input))
+        timer.start()
+        try:
+            if feeder is not None:
+                feeder.start()
+            output = _read(process.stdout, limit)
+            if output is None:
+                process.kill()
+            process.wait()
+        finally:
+            timer.cancel()
+            if process.poll() is None:  # reading failed: stop git so that the feeder cannot block on it
+                process.kill()
+            if feeder is not None:
+                feeder.join()
+    if expired.is_set():
+        raise subprocess.TimeoutExpired(argv, timeout)
+    return process.returncode, output
+
+
 def run_git(
     repo: Path | None, *args: str, token: str | None = None, input: bytes | None = None,
-    timeout: int = TIMEOUT_SECONDS,
+    timeout: int = TIMEOUT_SECONDS, max_output: int | None = None,
 ) -> bytes:
-    """Run git on `repo` (passed as --git-dir, so git never looks for a repository) and return its output."""
+    """Run git on `repo` and return its standard output.
+
+    `repo` is passed as --git-dir, so git never looks for a repository. Standard error is discarded, since nothing
+    of it may reach an error message. With `max_output`, git is stopped as soon as it prints more than that many
+    bytes, and GitOutputTooLarge is raised, so a caller can bound what a hostile repository makes it hold.
+    """
     argv = ["git", *([f"--git-dir={repo}"] if repo is not None else []), *args]
     subcommand = _subcommand(args)
     try:
-        done = subprocess.run(
-            argv, input=input, stdin=subprocess.DEVNULL if input is None else None, capture_output=True,
-            env=_environment(token), timeout=timeout, check=False,
-        )
+        status, output = _run(argv, _environment(token), input, timeout, max_output)
     except subprocess.TimeoutExpired:
         raise GitError(subcommand, "timeout") from None
     except OSError as error:
         raise GitError(subcommand, type(error).__name__) from None
-    if done.returncode != 0:
-        raise GitError(subcommand, done.returncode)
-    return done.stdout
+    if output is None:
+        raise GitOutputTooLarge(subcommand, max_output)
+    if status != 0:
+        raise GitError(subcommand, status)
+    return output
 
 
 def _ensure_bare(repo: Path) -> None:

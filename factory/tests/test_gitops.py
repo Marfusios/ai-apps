@@ -4,17 +4,52 @@ import base64
 import os
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from factory import gitops
-from factory.gitops import GitError
+from factory.gitops import GitError, GitOutputTooLarge
 from factory.tests.gitrepo import Repo, git
 
 BRANCH = "factory/fix-12"
 TOKEN = "token-" + "x" * 20
 URL = "https://example.com/owner/repo.git"
+MEGABYTE = 1024 * 1024
+
+
+class FakeProcess:
+    """Stands in for `subprocess.Popen`: a git that prints nothing and succeeds, or one that hangs until stopped."""
+
+    def __init__(self, *, hangs: bool = False) -> None:
+        self.stdin = None
+        self.stdout = self
+        self.returncode: int | None = None
+        self.killed = threading.Event()
+        self._hangs = hangs
+
+    def read(self, size: int = -1) -> bytes:
+        if self._hangs:
+            self.killed.wait()
+        return b""
+
+    def kill(self) -> None:
+        self.killed.set()
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.returncode = -9 if self.killed.is_set() else 0
+        return self.returncode
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def __enter__(self) -> "FakeProcess":
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        return None
 
 
 class GitopsTestCase(unittest.TestCase):
@@ -96,12 +131,12 @@ class GitopsTestCase(unittest.TestCase):
             "+factory/fix-12", "-f", "factory/-fix", "Factory/fix-12", "factory/Fix-12", "factory/fix 12",
             "factory/fix-12\n", "factory/a/b", "factory/" + "x" * 62, None,
         )] + [(bad, BRANCH) for bad in ("HEAD", "+" + sha, sha.upper(), sha[:39], "-" + sha[1:], sha + "\n", None)]
-        with mock.patch("factory.gitops.subprocess.run") as run:
+        with mock.patch("factory.gitops.subprocess.Popen") as popen:
             for bad_sha, branch in refused:
                 with self.subTest(sha=bad_sha, branch=branch), self.assertRaises(GitError) as raised:
                     gitops.push(workrepo, str(remote), TOKEN, bad_sha, branch)
                 self.assertEqual(raised.exception.subcommand, "push")
-            run.assert_not_called()
+            popen.assert_not_called()
 
         self.upstream.switch(BRANCH)
         pushed = self.upstream.commit({"apps/demo/a.txt": "pushed"})
@@ -111,13 +146,13 @@ class GitopsTestCase(unittest.TestCase):
         self.take(workrepo, "two")
 
         calls = []
-        real_run = subprocess.run
+        real_popen = subprocess.Popen
 
         def recording(argv, **options):
             calls.append(argv)
-            return real_run(argv, **options)
+            return real_popen(argv, **options)
 
-        with mock.patch("factory.gitops.subprocess.run", side_effect=recording):
+        with mock.patch("factory.gitops.subprocess.Popen", side_effect=recording):
             gitops.push(workrepo, str(remote), TOKEN, pushed, BRANCH)
             with self.assertRaises(GitError):
                 gitops.push(workrepo, str(remote), TOKEN, sibling, BRANCH)
@@ -133,10 +168,10 @@ class GitopsTestCase(unittest.TestCase):
 
         def answer(argv, **options):
             calls.append((argv, options))
-            return subprocess.CompletedProcess(argv, 0, b"", b"")
+            return FakeProcess()
 
         inherited = {"GIT_DIR": str(self.tmp / "elsewhere"), "GIT_SSH_COMMAND": "ssh -o x", "git_trace": "1"}
-        with mock.patch.dict(os.environ, inherited), mock.patch("factory.gitops.subprocess.run", side_effect=answer):
+        with mock.patch.dict(os.environ, inherited), mock.patch("factory.gitops.subprocess.Popen", side_effect=answer):
             gitops.ensure_mirror(self.tmp / "mirror.git", URL, TOKEN)
             gitops.push(self.tmp / "workrepo.git", URL, TOKEN, self.main, BRANCH)
         header = "Authorization: Basic " + base64.b64encode(f"x-access-token:{TOKEN}".encode()).decode()
@@ -147,7 +182,7 @@ class GitopsTestCase(unittest.TestCase):
             self.assertFalse({"GIT_DIR", "GIT_SSH_COMMAND", "GIT_TRACE"} & {name.upper() for name in env})
             self.assertEqual((env["GIT_TERMINAL_PROMPT"], env["GIT_CONFIG_NOSYSTEM"], env["GIT_CONFIG_GLOBAL"]),
                              ("0", "1", os.devnull))
-            self.assertIsInstance(options["timeout"], int)
+            self.assertEqual((options["stdin"], options["stderr"]), (subprocess.DEVNULL, subprocess.DEVNULL))
             if {"fetch", "push"} & set(argv):
                 self.assertEqual((env["GIT_CONFIG_COUNT"], env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]),
                                  ("1", "http.extraHeader", header))
@@ -163,12 +198,33 @@ class GitopsTestCase(unittest.TestCase):
         self.assertEqual(str(error), "git fetch failed: exit status 128")
         self.assertIsNone(error.__context__)
 
-        timeout = subprocess.TimeoutExpired(["git", "push", URL], 1, output=b"secret output")
-        with mock.patch("factory.gitops.subprocess.run", side_effect=timeout), self.assertRaises(GitError) as raised:
-            gitops.run_git(missing, "push", "--", URL, token=TOKEN, timeout=1)
+    def test_a_git_that_hangs_is_stopped_at_its_timeout(self):
+        hanging = FakeProcess(hangs=True)
+        started = time.monotonic()
+        with (mock.patch("factory.gitops.subprocess.Popen", return_value=hanging),
+              self.assertRaises(GitError) as raised):
+            gitops.run_git(self.tmp / "repo.git", "push", "--", URL, token=TOKEN, timeout=1)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertTrue(hanging.killed.is_set())
         self.assertEqual(str(raised.exception), "git push failed: timeout")
         self.assertIsNone(raised.exception.__cause__)
         self.assertTrue(raised.exception.__suppress_context__)
+
+    def test_output_past_the_limit_stops_git_promptly(self):
+        gitdir = self.upstream.path / ".git"
+        blob = self.upstream.blob(b"x" * MEGABYTE)
+        requests = f"{blob}\n".encode() * 10_000  # ten gigabytes of answers if nothing stopped git
+        started = time.monotonic()
+        with self.assertRaises(GitOutputTooLarge) as raised:
+            gitops.run_git(gitdir, "cat-file", "--batch", input=requests, max_output=100_000)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertIsInstance(raised.exception, GitError)
+        self.assertEqual(str(raised.exception), "git cat-file failed: more than 100000 bytes of output")
+
+    def test_output_within_the_limit_is_returned_whole(self):
+        gitdir = self.upstream.path / ".git"
+        output = gitops.run_git(gitdir, "hash-object", "--stdin", input=b"some content", max_output=41)
+        self.assertEqual(output, f"{self.upstream.blob(b'some content')}\n".encode())
 
 
 if __name__ == "__main__":

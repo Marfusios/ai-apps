@@ -3,6 +3,7 @@
 import os
 import subprocess
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 NAME = "Test Person"
@@ -10,7 +11,15 @@ EMAIL = "person@example.com"
 SUBMODULE_MODE = "160000"
 REMOVED = "0 " + "0" * 40  # what `update-index --index-info` reads as "remove this path"
 
-Layout = Mapping[str, "str | bytes | Layout"]
+
+@dataclass(frozen=True)
+class Tree:
+    """A tree already written, placed in a layout by its sha so that many directories can share it."""
+
+    sha: str
+
+
+Layout = Mapping[str, "str | bytes | Tree | Layout"]
 
 
 def environment(**extra: str) -> dict[str, str]:
@@ -48,6 +57,7 @@ class Repo:
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        self._blobs: dict[bytes, str] = {}  # content to sha: a blob, once written, stays
         git("init", "-q", "-b", "main", str(self.path))
 
     def git(self, *args: str, input: bytes | None = None, **extra: str) -> str:
@@ -59,7 +69,9 @@ class Repo:
 
     def blob(self, content: str | bytes) -> str:
         data = content.encode("utf-8") if isinstance(content, str) else content
-        return self.git("hash-object", "-w", "--stdin", input=data)
+        if data not in self._blobs:
+            self._blobs[data] = self.git("hash-object", "-w", "--stdin", input=data)
+        return self._blobs[data]
 
     def commit(
         self,
@@ -73,20 +85,18 @@ class Repo:
     ) -> str:
         """Commit on the current branch. `None` deletes a file; a `160000` entry's content is the commit it names."""
         modes = mode or {}
-        blobs: dict[str | bytes, str] = {}
         lines = []
         for path, content in files.items():
             if content is None:
                 lines.append(f"{REMOVED}\t{path}")
                 continue
             entry_mode = modes.get(path, "100644")
-            if entry_mode != SUBMODULE_MODE and content not in blobs:
-                blobs[content] = self.blob(content)
-            lines.append(f"{entry_mode} {content if entry_mode == SUBMODULE_MODE else blobs[content]}\t{path}")
+            sha = str(content) if entry_mode == SUBMODULE_MODE else self.blob(content)
+            lines.append(f"{entry_mode} {sha}\t{path}")
         staged = _run(["-C", str(self.path), "update-index", "-z", "--index-info"], _records(lines), {})
         if staged.returncode or staged.stderr:  # a refused path is only a warning, so a test would build less
             raise AssertionError(f"the index refused a path: {staged.stderr.decode('utf-8', 'replace')}")
-        born =_run(["-C", str(self.path), "rev-parse", "--verify", "--quiet", "HEAD"], None, {}).returncode == 0
+        born = _run(["-C", str(self.path), "rev-parse", "--verify", "--quiet", "HEAD"], None, {}).returncode == 0
         return self.commit_tree(self.git("write-tree"), [self.head] if born else [], message=message, name=name,
                                 email=email, committer=committer)
 
@@ -110,13 +120,23 @@ class Repo:
         self.git("update-ref", "HEAD", sha)
         return sha
 
+    def raw_commit(self, headers: Sequence[str], message: str = "change") -> str:
+        """Write a commit object exactly as given, however malformed, and move the current branch to it."""
+        content = "\n".join(headers) + "\n\n" + message + "\n"
+        sha = self.git("hash-object", "-t", "commit", "-w", "--stdin", "--literally", input=content.encode("utf-8"))
+        self.git("update-ref", "HEAD", sha)
+        return sha
+
     def tree(self, layout: Layout) -> str:
         """Write a tree with `git mktree`, which takes names the index refuses, such as `.GIT` or `..`."""
-        lines = [
-            f"040000 tree {self.tree(value)}\t{name}" if isinstance(value, Mapping)
-            else f"100644 blob {self.blob(value)}\t{name}"
-            for name, value in layout.items()
-        ]
+        lines = []
+        for name, value in layout.items():
+            if isinstance(value, Tree):
+                lines.append(f"040000 tree {value.sha}\t{name}")
+            elif isinstance(value, Mapping):
+                lines.append(f"040000 tree {self.tree(value)}\t{name}")
+            else:
+                lines.append(f"100644 blob {self.blob(value)}\t{name}")
         return self.git("mktree", "-z", input=_records(lines))
 
     def switch(self, branch: str, start: str | None = None) -> None:
