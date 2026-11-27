@@ -36,6 +36,7 @@ from factory.app_config import load as load_app_config
 from factory.bundle_check import MEGABYTE
 from factory.config import Config
 from factory.config import load as load_config
+from factory.image.build import harness_digest
 from factory.result import MAX_RESULT_BYTES
 from factory.spool import (JOB_ID, MAX_UNIX_SECONDS, MODEL_NAME, TIME_FORMAT, Spool, SpoolError, read_bounded,
                            validate_run)
@@ -52,6 +53,7 @@ MAX_TRANSCRIPT_LINE = 1_000_000
 MAX_JOB_FILE_BYTES = 1_000_000
 MAX_STDERR_BYTES = 100_000
 IMAGE_CHECK_SECONDS = 60
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CLONE_SECONDS = 300
 GIT_SECONDS = 60
 BUNDLE_SECONDS = 600
@@ -586,7 +588,8 @@ def check(runner: Runner, spool: Spool) -> tuple[bool, list[str]]:
         spool_ok, spool_line = False, f"spool: {error}"
     return confinement and image and spool_ok, [
         "confinement: ok" if confinement else "confinement: the host does not refuse a loopback connection",
-        "image: ok" if image else "image: missing or not the one the harness describes",
+        "image: ok" if image else "image: missing or not the one the harness describes; "
+        "python -m factory.image.build rebuilds it",
         spool_line,
     ]
 
@@ -634,7 +637,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         log.error("settings: %s", error)
         return 2
     spool = Spool(settings.spool_dir)
-    runner = Runner(settings, load_config(), spool)
+    runner = Runner(settings, load_config(), spool, digest=lambda: harness_digest(REPOSITORY_ROOT))
     if args.check:
         healthy, lines = check(runner, spool)
         print("\n".join(lines))

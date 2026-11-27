@@ -1,0 +1,14 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git python3 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+ARG CLAUDE_CODE_VERSION
+RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+ && corepack enable \
+ && chown node:node /usr/local/bin /usr/local/lib/node_modules
+COPY harness /opt/factory/harness
+COPY managed-settings.json /etc/claude-code/managed-settings.json
+RUN chmod -R a+rX,a-w /opt/factory/harness /etc/claude-code
+USER node
+WORKDIR /workspace

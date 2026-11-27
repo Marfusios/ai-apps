@@ -20,6 +20,7 @@ from unittest import mock
 from factory import config as factory_config
 from factory import runner
 from factory.bundle_check import MEGABYTE
+from factory.image.build import harness_digest
 from factory.result import MAX_RESULT_BYTES
 from factory.spool import MAX_UNIX_SECONDS, Spool, SpoolError, new_job_id, validate_run
 from factory.tests import gitrepo
@@ -1032,7 +1033,7 @@ class ProgramTests(RunnerCase):
                "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
         instance = self.runner()
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
-                mock.patch.object(runner, "Runner", lambda *_: instance), mock.patch("sys.stdout", io.StringIO()), \
+                mock.patch.object(runner, "Runner", lambda *_, **__: instance), mock.patch("sys.stdout", io.StringIO()), \
                 mock.patch.object(runner, "acquire_lock", side_effect=AssertionError("locked")):
             self.assertEqual(runner.main(["--check"]), 0)
 
@@ -1043,6 +1044,25 @@ class ProgramTests(RunnerCase):
             self.assertEqual(runner.main([]), 2)
         self.assertNotIn("relative-secret", "\n".join(logs.output))
 
+    def test_main_checks_the_image_against_the_digest_of_the_checkout(self):
+        env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
+               "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+        captured: dict = {}
+        instance = self.runner()
+
+        def fake_runner(*_, **options):
+            captured.update(options)
+            return instance
+
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch("sys.stdout", io.StringIO()),                 mock.patch.object(logging, "basicConfig"), mock.patch.object(runner, "Runner", fake_runner):
+            runner.main(["--check"])
+        self.assertEqual(captured["digest"](), harness_digest(Path(runner.__file__).resolve().parents[1]))
+
+    def test_check_names_the_command_that_rebuilds_a_missing_image(self):
+        self.fake.image_status = 1
+        _, lines = runner.check(self.runner(), self.spool)
+        self.assertIn("python -m factory.image.build", lines[1])
+
     def test_main_check_prints_one_line_each_and_exits_by_the_result(self):
         env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
                "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
@@ -1050,7 +1070,7 @@ class ProgramTests(RunnerCase):
             instance = self.runner(confined=lambda: confinement)
             output = io.StringIO()
             with mock.patch.dict(os.environ, env, clear=True), mock.patch("sys.stdout", output), \
-                    mock.patch.object(logging, "basicConfig"), mock.patch.object(runner, "Runner", lambda *_: instance):
+                    mock.patch.object(logging, "basicConfig"), mock.patch.object(runner, "Runner", lambda *_, **__: instance):
                 self.assertEqual(runner.main(["--check"]), expected)
             self.assertEqual(len(output.getvalue().splitlines()), 3)
 
@@ -1061,7 +1081,7 @@ class ProgramTests(RunnerCase):
                "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
         instance = self.runner()
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
-                mock.patch.object(runner, "Runner", lambda *_: instance), \
+                mock.patch.object(runner, "Runner", lambda *_, **__: instance), \
                 mock.patch.object(runner, "acquire_lock", return_value=None), \
                 self.assertLogs("factory.runner", level="WARNING"):
             self.assertEqual(runner.main(["--once"]), 0)
