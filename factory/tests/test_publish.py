@@ -14,7 +14,7 @@ from factory import bundle_check, compose, gitops, jobs, markers
 from factory import config as factory_config
 from factory.github_api import GitHubError
 from factory.gitops import GitError
-from factory.publish import Publisher
+from factory.publish import MAX_SETTLED_BYTES, Publisher
 from factory.result import MAX_RESULT_BYTES
 from factory.snapshot import Bot, Comment, Issue
 from factory.spool import Spool, SpoolError, new_job_id
@@ -111,10 +111,10 @@ class PublishTestCase(unittest.TestCase):
         self.numbers = itertools.count(1)
         self.upstream = Repo(self.tmp / "upstream")
         self.base = self.upstream.commit(BASE_FILES)
-        mirror = self.upstream.bare_clone(self.tmp / "mirror.git")
+        self.mirror = self.upstream.bare_clone(self.tmp / "mirror.git")
         self.remote = self.upstream.bare_clone(self.tmp / "remote.git")
         self.workrepo = self.tmp / "work.git"
-        gitops.ensure_workrepo(self.workrepo, mirror)
+        gitops.ensure_workrepo(self.workrepo, self.mirror)
         self.spool = Spool(self.tmp / "spool")
         self.spool.prepare("dispatcher")
         self.github = FakeGitHub(user={"login": BOT.login, "id": BOT.user_id})
@@ -362,9 +362,11 @@ class SettledOnceTest(PublishTestCase):
         self.github.fail_once.add(("POST", self.pulls))
         with self.assertRaises(GitHubError):
             self.publish()
-        gitops.run_git(self.workrepo, "update-ref", "-d", f"refs/quarantine/{self.job}")
+        rebuilt = self.tmp / "rebuilt.git"  # the work repository was made again, without the run's commits
+        gitops.ensure_workrepo(rebuilt, self.mirror)
         with mock.patch.object(self.spool, "read_run_file", wraps=self.spool.read_run_file) as read:
-            self.assertEqual(self.publish(), "crashed")
+            self.assertEqual(dataclasses.replace(self.publisher, workrepo=rebuilt).publish(self.job, ISSUE, NOW),
+                             "crashed")
         read.assert_not_called()
         self.assertEqual(self.writes("POST", self.pulls), [])
         body = self.comment()
@@ -372,6 +374,79 @@ class SettledOnceTest(PublishTestCase):
         self.assertNotIn("The greeting now says hello.", body)
         self.assertEqual((self.settled()["outcome"], self.settled()["reason"]), ("crashed", "internal"))
         self.assertNeedsAPerson()
+
+    def test_a_repeat_finds_the_checked_commits_without_their_quarantine_ref(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        self.github.fail_once.add(("POST", self.pulls))
+        with self.assertRaises(GitHubError):
+            self.publish()
+        gitops.run_git(self.workrepo, "update-ref", "-d", f"refs/quarantine/{self.job}")
+        self.assertEqual(self.publish(), "done")
+        self.assertEqual(self.remote_branch(), self.work_head)
+        self.assertEqual(len(self.writes("POST", self.pulls)), 1)
+
+    def test_a_close_that_fails_after_a_complete_publication_is_repeated_without_undoing_it(self):
+        for outcome, result in {"done": done_result(), "needs_input": needs_input_result()}.items():
+            with self.subTest(outcome):
+                self.build()
+                self.finish(result=result, bundle=self.bundle_of(GOOD_CHANGE))
+                full_disk = SpoolError("closed.json cannot be written: No space left on device")
+                with mock.patch.object(self.spool, "close", side_effect=full_disk), self.assertRaises(SpoolError):
+                    self.publish()
+                self.assertEqual(self.spool.state(self.job), "finished")
+                self.assertEqual(self.quarantined(), self.work_head)  # the job is closed before the clean-up
+                first = list(self.github.calls)
+                self.assertEqual(self.publish(), outcome)
+                repeat = self.github.calls[len(first):]
+                self.assertEqual(len(self.writes("POST", self.comments)), 1)
+                self.assertEqual(len(self.writes("POST", self.pulls)), 1 if outcome == "done" else 0)
+                self.assertEqual([call for call in repeat if call[1].startswith(self.labels)],
+                                 [call for call in first if call[1].startswith(self.labels)])
+                closed = json.loads(self.spool.job_file(self.job, "closed.json").read_text())
+                self.assertEqual(closed["reason"], outcome)
+                self.assertIsNone(self.quarantined())
+
+    def test_an_unusable_stored_outcome_is_an_internal_error_without_reading_the_run_again(self):
+        damages = {
+            "an empty file": lambda record: b"",
+            "a JSON list": lambda record: b"[]",
+            "a list field holding null": lambda record: json.dumps({**record, "problems": None}).encode("utf-8"),
+            "an unknown field": lambda record: json.dumps({**record, "extra": 1}).encode("utf-8"),
+            "a head that is not a commit name": lambda record: json.dumps({**record, "head_sha": "--all"}).encode(),
+        }
+        for name, damage in damages.items():
+            with self.subTest(name):
+                self.build()
+                self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+                unreachable = dataclasses.replace(self.publisher, push_url=str(self.tmp / "no-such-remote.git"))
+                with self.assertRaises(GitError):
+                    unreachable.publish(self.job, ISSUE, NOW)
+                self.spool.job_file(self.job, "settled.json").write_bytes(damage(self.settled()))
+                with mock.patch.object(self.spool, "read_run_file", wraps=self.spool.read_run_file) as read, \
+                        mock.patch.object(self.spool, "run_record", wraps=self.spool.run_record) as record:
+                    self.assertEqual(self.publish(), "crashed")
+                read.assert_not_called()
+                record.assert_not_called()
+                self.assertIsNone(self.remote_branch())
+                self.assertIn(compose.REASON_WORDS["internal"], self.comment())
+                self.assertEqual((self.settled()["outcome"], self.settled()["reason"]), ("crashed", "internal"))
+                self.assertNeedsAPerson()
+
+    def test_a_result_at_every_text_limit_is_stored_within_the_bound(self):
+        wide = "é"  # two bytes in the result, six once JSON escapes it
+        result = needs_input_result(
+            summary=wide * 4_000, questions=[wide * 2_000] * 20,
+            follow_ups=[{"title": wide * 120, "reason": wide * 1_000}] * 10,
+            pull_request={"title": wide * 120, "body": wide * 20_000},
+        )
+        raw = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        self.assertLessEqual(len(raw), MAX_RESULT_BYTES)
+        self.finish(result=raw)
+        self.assertEqual(self.publish(), "needs_input")
+        stored = self.spool.job_file(self.job, "settled.json").stat().st_size
+        self.assertGreater(stored, 2 * len(raw))
+        self.assertLessEqual(stored, MAX_SETTLED_BYTES)
+        self.assertEqual(self.spool.read_job_json(self.job, "settled.json", MAX_SETTLED_BYTES)["summary"], wide * 4_000)
 
     def test_text_that_compose_refuses_is_an_internal_error_before_anything_is_written(self):
         self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
@@ -383,22 +458,36 @@ class SettledOnceTest(PublishTestCase):
         self.assertEqual((self.settled()["outcome"], self.settled()["head_sha"]), ("crashed", None))
         self.assertNeedsAPerson()
 
-    def test_a_request_for_another_job_or_another_branch_is_an_internal_error_and_pushes_nothing(self):
-        cases = {"another job": {"job_id": new_job_id("fix_issue", 12, NOW)},
-                 "another branch": {"branch": "factory/fix-13"}}
-        for name, change in cases.items():
+    def test_a_request_for_another_job_or_another_branch_stops_before_anything_is_written(self):
+        cases = {"another job": ({"job_id": new_job_id("fix_issue", 12, NOW)}, "another job"),
+                 "another branch": ({"branch": "factory/fix-13"}, "issue #12")}
+        for name, (change, named) in cases.items():
             with self.subTest(name):
                 self.build()
                 self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
                 self.rewrite_request(**change)
-                self.assertEqual(self.publish(), "crashed")
+                with self.assertRaises(SpoolError) as raised:
+                    self.publish()
+                self.assertIn(named, str(raised.exception))
+                self.assertEqual(self.github.calls, [])
                 self.assertIsNone(self.remote_branch())
                 self.assertIsNone(gitops.resolve(self.remote, "refs/heads/factory/fix-13"))
-                self.assertEqual([call for call in self.github.calls if call[1].startswith(self.pulls)], [])
-                body = self.comment()
-                self.assertIn(compose.REASON_WORDS["internal"], body)
-                self.assertNotIn("The greeting now says hello.", body)
-                self.assertNeedsAPerson()
+                self.assertIsNone(self.settled())
+                self.assertEqual(self.spool.state(self.job), "finished")
+
+    def test_a_repeat_called_for_another_issue_stops_and_keeps_the_stored_outcome(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        self.github.fail_once.add(("POST", self.comments))
+        with self.assertRaises(GitHubError):
+            self.publish()
+        stored, written = self.settled(), list(self.github.calls)
+        with self.assertRaises(SpoolError) as raised:
+            self.publish(issue=dataclasses.replace(ISSUE, number=13))
+        self.assertIn("issue #13", str(raised.exception))
+        self.assertEqual(self.github.calls, written)
+        self.assertIsNone(gitops.resolve(self.remote, "refs/heads/factory/fix-13"))
+        self.assertEqual(self.settled(), stored)
+        self.assertEqual(self.spool.state(self.job), "finished")
 
 
 class PullRequestLookupTest(PublishTestCase):

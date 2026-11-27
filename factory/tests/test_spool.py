@@ -1,11 +1,13 @@
 """Tests for the spool directory shared by the dispatcher and the runner."""
 
+import errno
 import json
 import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from factory.spool import (MAX_RECORD_BYTES, Spool, SpoolError, SpoolMissing, new_job_id, read_bounded,
                            validate_run)
@@ -265,6 +267,40 @@ class JobJsonTest(SpoolTestCase):
         with self.assertRaises(SpoolError) as caught:
             spool.read_job_json(job, "settled.json")
         self.assertNotIsInstance(caught.exception, SpoolMissing)
+
+    def test_a_record_reaches_the_disk_before_it_takes_its_name(self):
+        spool, job = self.submitted()
+        events = []
+        real_fsync, real_replace = os.fsync, os.replace
+
+        def fsync(descriptor):
+            events.append("fsync")
+            real_fsync(descriptor)
+
+        def replace(source, target):
+            events.append("replace")
+            real_replace(source, target)
+
+        with mock.patch("factory.spool.os.fsync", side_effect=fsync), \
+                mock.patch("factory.spool.os.replace", side_effect=replace):
+            spool.write_job_json(job, "settled.json", {"outcome": "done"})
+        self.assertEqual(events, ["fsync", "replace"])
+        self.assertEqual(spool.read_job_json(job, "settled.json"), {"outcome": "done"})
+
+    def test_a_file_system_that_cannot_sync_a_file_still_gets_the_record(self):
+        spool, job = self.submitted()
+        with mock.patch("factory.spool.os.fsync", side_effect=OSError(errno.EINVAL, "Invalid argument")):
+            spool.write_job_json(job, "settled.json", {"outcome": "done"})
+        self.assertEqual(spool.read_job_json(job, "settled.json"), {"outcome": "done"})
+
+    def test_a_failed_sync_is_an_error_and_leaves_the_name_untouched(self):
+        spool, job = self.submitted()
+        spool.write_job_json(job, "settled.json", {"outcome": "done"})
+        with mock.patch("factory.spool.os.fsync", side_effect=OSError(errno.EIO, "Input/output error")), \
+                self.assertRaises(SpoolError) as caught:
+            spool.write_job_json(job, "settled.json", {"outcome": "crashed"})
+        self.assertNotIn(str(self.tmp), str(caught.exception))
+        self.assertEqual(spool.read_job_json(job, "settled.json"), {"outcome": "done"})
 
     def test_writing_into_a_job_that_does_not_exist_fails_without_a_host_path(self):
         spool = self.ready()

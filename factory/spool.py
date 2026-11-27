@@ -1,5 +1,6 @@
 """The spool directory the dispatcher and the runner share: job ids, layout, states and safe reads."""
 
+import errno
 import json
 import os
 import re
@@ -29,6 +30,7 @@ JOBS_MODE = 0o2750  # the runner's group may read jobs
 RUNS_MODE = 0o2770  # the runner's group may create run directories
 STALE_INCOMING = timedelta(days=1)
 CHUNK = 65536
+SYNC_UNSUPPORTED = (errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP)
 
 
 class SpoolError(Exception):
@@ -188,9 +190,20 @@ def _make_directory(path: Path, mode: int, *, idempotent: bool = False) -> None:
 
 
 def _write_json(path: Path, record: Mapping[str, object]) -> None:
-    """Write through a temporary name in the same directory so a reader never sees half a file."""
+    """Write through a temporary name in the same directory so a reader never sees half a file.
+
+    The content reaches the disk before the rename, so a power loss cannot leave an empty file under the name. A
+    file system that cannot sync a file says so with one of SYNC_UNSUPPORTED; any other failure is an error.
+    """
     temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(dict(record), indent=2) + "\n", encoding="utf-8")
+    with open(temporary, "w", encoding="utf-8") as stream:
+        stream.write(json.dumps(dict(record), indent=2) + "\n")
+        stream.flush()
+        try:
+            os.fsync(stream.fileno())
+        except OSError as error:
+            if error.errno not in SYNC_UNSUPPORTED:
+                raise
     os.replace(temporary, path)
 
 

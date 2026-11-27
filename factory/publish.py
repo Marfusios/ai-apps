@@ -3,7 +3,6 @@
 import contextlib
 import dataclasses
 import json
-import re
 import urllib.parse
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -21,17 +20,51 @@ from factory.spool import Spool, SpoolError, SpoolMissing
 RESULT_FILE = "result.json"
 BUNDLE_FILE = "commits.bundle"
 SETTLED_FILE = "settled.json"
-# The settled texts come from one result; JSON escaping can make them at most three times its size.
-MAX_SETTLED_BYTES = 4 * result.MAX_RESULT_BYTES
+# The bound rests on the per-field character limits of `factory.result.validate`: a summary of 4,000, twenty
+# questions of 2,000, a failure reason of 4,000, ten follow-ups of 120 and 1,000, and a pull request title of 120
+# and body of 20,000 characters. JSON may spend 12 bytes on one character (a surrogate pair, escaped), and the
+# record's keys, indentation and problems take far less than the 100,000 bytes added for them.
+MAX_SETTLED_CHARACTERS = 4_000 + 20 * 2_000 + 4_000 + 10 * (120 + 1_000) + 120 + 20_000
+MAX_SETTLED_BYTES = 12 * MAX_SETTLED_CHARACTERS + 100_000
 BASE_BRANCH = "main"
 STAGE_LABEL = "stage:fix"
 NOT_FOUND = 404
 # The longest usage window is a week: a reset time further ahead than that and a day is not believed.
 LATEST_RESET = timedelta(days=8)
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-PULL_REQUEST_URL = re.compile(r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+")  # compose's form
 NOT_KEPT = "the work so far was not kept"
 STATUS_AFTER = {"done": BUILDING, "usage_limit": QUEUED}  # every other outcome waits for a person
+
+
+def _is_count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_texts(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _is_pair(value: object, keys: tuple[str, str]) -> bool:
+    return isinstance(value, dict) and set(value) == set(keys) and all(isinstance(value[key], str) for key in keys)
+
+
+# What each field of a stored record must look like for `_Settled.from_record` to trust it. compose checks the
+# values themselves when it builds the texts; the head must be a commit name before git sees it.
+_RECORD_SHAPES: Mapping[str, Callable[[object], bool]] = {
+    "outcome": lambda value: isinstance(value, str),
+    "duration_seconds": _is_count,
+    "model": lambda value: isinstance(value, str),
+    "reason": lambda value: value is None or isinstance(value, str),
+    "retry_at": lambda value: isinstance(value, str),
+    "head_sha": lambda value: value is None or (isinstance(value, str) and gitops.SHA.fullmatch(value) is not None),
+    "commits": _is_count,
+    "problems": _is_texts,
+    "summary": lambda value: isinstance(value, str),
+    "questions": _is_texts,
+    "failure_reason": lambda value: isinstance(value, str),
+    "follow_ups": lambda value: isinstance(value, list) and all(_is_pair(item, ("title", "reason")) for item in value),
+    "pull_request": lambda value: value is None or _is_pair(value, ("title", "body")),
+}
 
 
 @dataclass(frozen=True)
@@ -60,13 +93,14 @@ class _Settled:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_record(cls, record: dict) -> "_Settled":
-        try:
-            settled = cls(**record)
-        except TypeError:
-            raise SpoolError(f"{SETTLED_FILE} does not hold a settled outcome") from None
-        return dataclasses.replace(settled, problems=tuple(settled.problems), questions=tuple(settled.questions),
-                                   follow_ups=tuple(settled.follow_ups))
+    def from_record(cls, record: dict) -> "_Settled | None":
+        """The outcome a record holds, or None when the record does not have the shape `record` writes."""
+        if set(record) != set(_RECORD_SHAPES) or not all(fits(record[name]) for name, fits in _RECORD_SHAPES.items()):
+            return None
+        if record["outcome"] == "done" and record["pull_request"] is None:
+            return None
+        return cls(**{**record, "problems": tuple(record["problems"]), "questions": tuple(record["questions"]),
+                      "follow_ups": tuple(record["follow_ups"])})
 
     def failed_internally(self) -> "_Settled":
         """The same run as an internal error: nothing is pushed and none of its texts is shown."""
@@ -132,19 +166,22 @@ class Publisher:
         """Settle the run's one outcome, show it on GitHub, close the job, and return the outcome.
 
         The outcome is settled once and stored in the job's own directory before the first write. The writes go in
-        this order: the push, the pull request, the run comment, the status label; the job is closed last. A
-        GitHubError or GitError leaves the job finished, so the next poll repeats the call from the stored outcome,
-        and each write is skipped, or has the same effect again, when it was already made. A request that is no
-        longer what the dispatcher wrote raises SpoolError before anything is written.
+        this order: the push, the pull request, the run comment, the status label; then the job is closed, and only
+        then is the quarantine ref dropped. A GitHubError, GitError or SpoolError leaves the job finished, so the next
+        poll repeats the call from the stored outcome, and each write is skipped, or has the same effect again, when
+        it was already made.
+
+        A request that is no longer what the dispatcher wrote, or that belongs to another job or another issue,
+        raises SpoolError on every call before anything is read or written: a wiring bug is a person's to look at.
         """
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("now must be a timezone-aware datetime")
-        request = self._request(job_id)
         branch = branch_for(issue.number)
+        request = self._request(job_id, branch, issue.number)
         settled, pull_request_text = self._settled(job_id, request, issue, branch, now)
         self._show(job_id, request["stage"], issue, branch, settled, pull_request_text)
-        self._clean_up(job_id)
         self.spool.close(job_id, settled.outcome, now)
+        self._clean_up(job_id)
         return settled.outcome
 
     def post_notice(self, issue: Issue, key: str) -> None:
@@ -172,12 +209,16 @@ class Publisher:
     def _repository(self) -> str:
         return self.github.repo.removeprefix("/repos/")
 
-    def _request(self, job_id: str) -> dict:
-        """The dispatcher's own request for the job, which must still be what it wrote."""
+    def _request(self, job_id: str, branch: str, issue_number: int) -> dict:
+        """The dispatcher's own request for the job, which must still be what it wrote, for this job and issue."""
         request = self.spool.request(job_id)
         problems = jobs.validate_request(request)
         if problems:
             raise SpoolError(f"request.json: {'; '.join(problems)}")
+        if request["job_id"] != job_id:
+            raise SpoolError("request.json is the request of another job")
+        if request["branch"] != branch:
+            raise SpoolError(f"request.json names another branch than the one of issue #{issue_number}")
         return request
 
     # Working out the outcome ---------------------------------------------------------------------------------------
@@ -187,14 +228,15 @@ class Publisher:
         """The run's one outcome and its pull request's text, both final before the first write.
 
         A repeat loads the stored outcome and reads nothing from `runs/` again, so the runner cannot change it
-        between two calls. Stored commits to push must still be in quarantine: when they are gone, the repeat is an
-        internal error rather than a second reading of the bundle.
+        between two calls. A stored record that is unusable, or whose commits to push are no longer in the work
+        repository, makes the repeat an internal error, stored over it, rather than a second reading of the run.
         """
-        stored = self.spool.read_job_json(job_id, SETTLED_FILE, MAX_SETTLED_BYTES)
-        loaded = _Settled.from_record(stored) if stored is not None else None
-        if loaded is None:
+        found, loaded = self._stored(job_id)
+        if not found:
             settled = self._settle(job_id, request, branch, now)
-        elif loaded.head_sha is not None and not self._quarantined(job_id, loaded.head_sha):
+        elif loaded is None:
+            settled = _Settled("crashed", 0, request["model"], reason="internal")
+        elif loaded.head_sha is not None and not self._has_commit(loaded.head_sha):
             settled = loaded.failed_internally()
         else:
             settled = loaded
@@ -206,10 +248,22 @@ class Publisher:
             self.spool.write_job_json(job_id, SETTLED_FILE, settled.record())
         return settled, pull_request_text
 
+    def _stored(self, job_id: str) -> tuple[bool, _Settled | None]:
+        """Whether an earlier call stored an outcome, and that outcome unless its record is unusable.
+
+        A record that is not JSON, not an object or not of the shape `_Settled.record` writes is unusable; so is one
+        the spool refuses to read (a link, a file over the limit).
+        """
+        try:
+            record = self.spool.read_job_json(job_id, SETTLED_FILE, MAX_SETTLED_BYTES)
+        except SpoolError:
+            return True, None
+        if record is None:
+            return False, None
+        return True, _Settled.from_record(record)
+
     def _settle(self, job_id: str, request: Mapping, branch: str, now: datetime) -> _Settled:
         """The outcome from the run record and, for a completed run, its result and bundle."""
-        if request["job_id"] != job_id or request["branch"] != branch:
-            return _Settled("crashed", 0, request["model"], reason="internal")  # never one job's work on another issue
         try:
             run = self.spool.run_record(job_id)
         except SpoolError:
@@ -268,7 +322,7 @@ class Publisher:
         """The bundle check on a private copy of the bundle, or None when the run handed over no bundle.
 
         The check reads the file several times; on the copy, the runner cannot swap it in between. The copy is
-        needed only by the check: the push takes the checked head from the quarantine ref the check leaves.
+        needed only by the check: the push takes the checked head the check fetched into the work repository.
         """
         megabytes = self.config.dispatcher.max_bundle_megabytes
         try:
@@ -294,8 +348,13 @@ class Publisher:
             raise SpoolError(f"{BUNDLE_FILE} cannot be copied for checking: "
                              f"{error.strerror or type(error).__name__}") from None
 
-    def _quarantined(self, job_id: str, head_sha: str) -> bool:
-        return gitops.resolve(self.workrepo, f"refs/quarantine/{job_id}") == head_sha
+    def _has_commit(self, sha: str) -> bool:
+        """Whether the work repository still holds the commit, whatever names it.
+
+        `resolve` answers None for a commit that is not there and raises GitError when git itself fails, which
+        `git cat-file -e` could not tell apart (it exits 128 for both).
+        """
+        return gitops.resolve(self.workrepo, sha) == sha
 
     def _compose_ahead(self, job_id: str, stage: str, issue_number: int, branch: str,
                        settled: _Settled) -> Mapping[str, str] | None:
@@ -362,10 +421,10 @@ class Publisher:
         A link that has neither form is left out rather than refused, since the pull request step has written.
         """
         url = pull.get("html_url")
-        if isinstance(url, str) and PULL_REQUEST_URL.fullmatch(url):
+        if isinstance(url, str) and compose.PULL_REQUEST_URL.fullmatch(url):
             return url
         built = f"https://github.com/{self._repository}/pull/{pull['number']}"
-        return built if PULL_REQUEST_URL.fullmatch(built) else ""
+        return built if compose.PULL_REQUEST_URL.fullmatch(built) else ""
 
     def _run_comment(self, job_id: str, stage: str, branch: str, settled: _Settled, url: str) -> str:
         """The run's comment. The texts go to compose raw: compose neutralises them, exactly once."""
@@ -398,9 +457,9 @@ class Publisher:
         return dataclasses.replace(issue, comments=tuple(ordered)).markers(self.bot)
 
     def _clean_up(self, job_id: str) -> None:
-        """Drop the quarantine ref once the run is shown; a failure is ignored, since it must not undo that.
+        """Drop the quarantine ref of a job already closed, as far as git lets it: a ref left behind is harmless.
 
-        After a failed write the ref stays, so the repeat pushes the same checked head.
+        It runs after the close, so an interruption before the close leaves the checked head for the repeat.
         """
         with contextlib.suppress(gitops.GitError):
             gitops.run_git(self.workrepo, "update-ref", "-d", f"refs/quarantine/{job_id}")
