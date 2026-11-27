@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from factory import compose, gitops, jobs, markers
+from factory import bundle_check, compose, gitops, jobs, markers
 from factory import config as factory_config
 from factory.github_api import GitHubError
 from factory.gitops import GitError
@@ -36,12 +36,22 @@ ISSUE = Issue(
     number=12, title="Fix the greeting", body="It says helo.", author="Marfusios", open=True,
     labels=("factory:fix", "status:building"), trigger_actor="Marfusios", comments=(), pull_request=None,
 )
-OPEN_PULLS = {"head": "owner:factory/fix-12", "state": "open", "per_page": "10"}
+OPEN_PULLS = {"head": "owner:factory/fix-12", "base": "main", "state": "open", "per_page": "10"}
 ALL_COMMENTS = {"per_page": "100"}
+MEGABYTE = bundle_check.MEGABYTE
+SETTLED_LIMIT = 10_000_000
 
 
 def key(path: str, params: dict) -> tuple:
     return (path, tuple(sorted(params.items())))
+
+
+def pull_json(number: int, *, ref: str = BRANCH, author: tuple[str, int] = (BOT.login, BOT.user_id),
+              url: str | None = None) -> dict:
+    """An open pull request as GitHub lists it."""
+    return {"number": number, "state": "open", "head": {"ref": ref}, "base": {"ref": "main"},
+            "user": {"login": author[0], "id": author[1]},
+            "html_url": url or f"https://github.com/owner/name/pull/{number}"}
 
 
 def limits(**changes: int) -> factory_config.Config:
@@ -166,6 +176,20 @@ class PublishTestCase(unittest.TestCase):
     def remote_branch(self) -> str | None:
         return gitops.resolve(self.remote, f"refs/heads/{BRANCH}")
 
+    def quarantined(self) -> str | None:
+        return gitops.resolve(self.workrepo, f"refs/quarantine/{self.job}")
+
+    def run_file(self, name: str) -> Path:
+        """A file the runner wrote, for a test that plays a runner changing it afterwards."""
+        return self.spool.root / "runs" / self.job / name
+
+    def settled(self) -> dict | None:
+        return self.spool.read_job_json(self.job, "settled.json", SETTLED_LIMIT)
+
+    def rewrite_request(self, **changes: object) -> None:
+        request = self.spool.request(self.job)
+        self.spool.job_file(self.job, "request.json").write_text(json.dumps({**request, **changes}))
+
     def assertNeedsAPerson(self) -> None:
         self.assertIn(("DELETE", f"{self.labels}/status%3Abuilding", None), self.github.calls)
         self.assertEqual(self.github.posted(self.labels), {"labels": ["status:needs-human"]})
@@ -185,7 +209,7 @@ class DoneTest(PublishTestCase):
         self.assertEqual(gitops.resolve(self.remote, "refs/heads/factory/fix-12"), self.work_head)
         created = self.github.posted(f"{self.github.repo}/pulls")
         self.assertEqual((created["draft"], created["base"], created["head"]), (True, "main", "factory/fix-12"))
-        self.assertTrue(created["body"].endswith("\nCloses #12"))
+        self.assertTrue(created["body"].startswith("Closes #12\n"))  # compose puts the one acting reference first
         comment = self.github.posted(f"{self.github.repo}/issues/12/comments")
         self.assertEqual(markers.parse(comment["body"])["outcome"], "done")
         self.assertEqual(self.spool.state(self.job), "closed")
@@ -198,40 +222,43 @@ class DoneTest(PublishTestCase):
         self.assertIn(f"Pull request: https://github.com/owner/name/pull/{FIRST_NUMBER}", body)
         self.assertEqual(self.github.posted(self.labels), {"labels": ["status:building"]})
         self.assertEqual(json.loads(self.spool.job_file(self.job, "closed.json").read_text())["reason"], "done")
+        self.assertIsNone(self.quarantined())
         self.assertNothingPrivateWritten()
 
     def test_an_open_pull_request_is_updated_and_not_opened_again(self):
-        self.github.answers[key(self.pulls, OPEN_PULLS)] = [
-            {"number": 7, "state": "open", "html_url": "https://example.test/pull/7"},
-        ]
+        self.github.answers[key(self.pulls, OPEN_PULLS)] = [pull_json(7, url="https://example.test/pull/7")]
         self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
         self.assertEqual(self.publish(), "done")
         self.assertEqual(self.writes("POST", self.pulls), [])
         [patched] = self.writes("PATCH", f"{self.pulls}/7")
         self.assertEqual(patched["title"], compose.pull_request_title("Fix the greeting"))
-        self.assertTrue(patched["body"].endswith("\nCloses #12"))
+        self.assertTrue(patched["body"].startswith("Closes #12\n"))
         self.assertEqual(self.github.posted(f"{self.github.repo}/issues/7/labels"), {"labels": ["stage:fix"]})
         # GitHub's link has an unexpected shape, so the comment links the pull request it builds itself.
         self.assertIn("Pull request: https://github.com/owner/name/pull/7", self.comment())
 
     def test_publishing_twice_after_each_possible_interruption_leaves_one_of_everything(self):
-        for failing in ("pulls", f"issues/{FIRST_NUMBER}/labels", "issues/12/comments", "issues/12/labels"):
-            with self.subTest(failing=failing):
+        writes = (("POST", "pulls"), ("POST", f"issues/{FIRST_NUMBER}/labels"), ("POST", "issues/12/comments"),
+                  ("POST", "issues/12/labels"))
+        for method, path in writes:
+            with self.subTest(failing=f"{method} {path}"):
                 self.build()
                 self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
-                self.github.fail_once.add(f"{self.github.repo}/{failing}")
+                self.github.fail_once.add((method, f"{self.github.repo}/{path}"))  # the write fails, not the lookup
                 with self.assertRaises(GitHubError):
                     self.publish()
                 self.assertEqual(self.spool.state(self.job), "finished")
+                self.assertEqual(self.quarantined(), self.work_head)  # kept for the repeat's push
                 self.assertEqual(self.publish(), "done")
                 self.assertEqual(self.remote_branch(), self.work_head)
                 self.assertEqual(len(self.writes("POST", self.pulls)), 1)
                 self.assertEqual(len(self.writes("POST", self.comments)), 1)
                 self.assertEqual(self.spool.state(self.job), "closed")
+                self.assertIsNone(self.quarantined())
 
     def test_a_failure_on_the_status_label_leaves_the_job_open_and_the_repeat_adds_nothing_twice(self):
         self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
-        self.github.fail_once.add(self.labels)
+        self.github.fail_once.add(("POST", self.labels))
         with self.assertRaises(GitHubError):
             self.publish()
         self.assertEqual(self.spool.state(self.job), "finished")
@@ -296,6 +323,133 @@ class DoneTest(PublishTestCase):
         self.assertEqual(self.spool.state(self.job), "finished")
 
 
+class SettledOnceTest(PublishTestCase):
+    def test_the_outcome_is_stored_before_the_first_write(self):
+        self.finish(result=done_result(follow_ups=[{"title": "Tidy", "reason": "Later."}]),
+                    bundle=self.bundle_of(GOOD_CHANGE))
+        unreachable = dataclasses.replace(self.publisher, push_url=str(self.tmp / "no-such-remote.git"))
+        with self.assertRaises(GitError):
+            unreachable.publish(self.job, ISSUE, NOW)
+        settled = self.settled()
+        self.assertEqual((settled["outcome"], settled["reason"], settled["head_sha"], settled["commits"]),
+                         ("done", None, self.work_head, 1))
+        self.assertEqual((settled["summary"], settled["follow_ups"], settled["pull_request"]),
+                         ("The greeting now says hello.", [{"title": "Tidy", "reason": "Later."}],
+                          {"title": "Fix the greeting", "body": "Spell hello right."}))
+        self.assertEqual(self.github.calls, [])
+
+    def test_a_repeat_keeps_the_settled_outcome_when_the_runner_rewrites_its_files(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        self.github.fail_once.add(("POST", self.comments))
+        with self.assertRaises(GitHubError):
+            self.publish()
+        self.assertEqual(len(self.writes("POST", self.pulls)), 1)
+        self.run_file("result.json").write_text(json.dumps(failed_result()), encoding="utf-8")
+        self.run_file("commits.bundle").write_bytes(b"something else")
+        with mock.patch.object(self.spool, "read_run_file", wraps=self.spool.read_run_file) as read, \
+                mock.patch.object(self.spool, "run_record", wraps=self.spool.run_record) as record:
+            self.assertEqual(self.publish(), "done")
+        read.assert_not_called()
+        record.assert_not_called()
+        body = self.comment()
+        self.assertEqual(markers.parse(body)["outcome"], "done")
+        self.assertIn("The greeting now says hello.", body)
+        self.assertEqual(len(self.writes("POST", self.pulls)), 1)
+        self.assertEqual(self.spool.state(self.job), "closed")
+
+    def test_a_repeat_whose_checked_commits_are_gone_is_an_internal_error_and_reads_no_bundle(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        self.github.fail_once.add(("POST", self.pulls))
+        with self.assertRaises(GitHubError):
+            self.publish()
+        gitops.run_git(self.workrepo, "update-ref", "-d", f"refs/quarantine/{self.job}")
+        with mock.patch.object(self.spool, "read_run_file", wraps=self.spool.read_run_file) as read:
+            self.assertEqual(self.publish(), "crashed")
+        read.assert_not_called()
+        self.assertEqual(self.writes("POST", self.pulls), [])
+        body = self.comment()
+        self.assertIn(compose.REASON_WORDS["internal"], body)
+        self.assertNotIn("The greeting now says hello.", body)
+        self.assertEqual((self.settled()["outcome"], self.settled()["reason"]), ("crashed", "internal"))
+        self.assertNeedsAPerson()
+
+    def test_text_that_compose_refuses_is_an_internal_error_before_anything_is_written(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        with mock.patch.object(compose, "pull_request_body", side_effect=ValueError("refused")):
+            self.assertEqual(self.publish(), "crashed")
+        self.assertIsNone(self.remote_branch())
+        self.assertEqual([call for call in self.github.calls if call[1].startswith(self.pulls)], [])
+        self.assertIn(compose.REASON_WORDS["internal"], self.comment())
+        self.assertEqual((self.settled()["outcome"], self.settled()["head_sha"]), ("crashed", None))
+        self.assertNeedsAPerson()
+
+    def test_a_request_for_another_job_or_another_branch_is_an_internal_error_and_pushes_nothing(self):
+        cases = {"another job": {"job_id": new_job_id("fix_issue", 12, NOW)},
+                 "another branch": {"branch": "factory/fix-13"}}
+        for name, change in cases.items():
+            with self.subTest(name):
+                self.build()
+                self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+                self.rewrite_request(**change)
+                self.assertEqual(self.publish(), "crashed")
+                self.assertIsNone(self.remote_branch())
+                self.assertIsNone(gitops.resolve(self.remote, "refs/heads/factory/fix-13"))
+                self.assertEqual([call for call in self.github.calls if call[1].startswith(self.pulls)], [])
+                body = self.comment()
+                self.assertIn(compose.REASON_WORDS["internal"], body)
+                self.assertNotIn("The greeting now says hello.", body)
+                self.assertNeedsAPerson()
+
+
+class PullRequestLookupTest(PublishTestCase):
+    def setUp(self):
+        super().setUp()
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+
+    def listing(self, answer: object) -> None:
+        self.github.answers[key(self.pulls, OPEN_PULLS)] = answer
+
+    def test_a_listing_that_is_not_a_list_stops_before_a_pull_request_is_opened(self):
+        self.listing({"message": "not a list"})
+        with self.assertRaises(GitHubError):
+            self.publish()
+        self.assertEqual(self.writes("POST", self.pulls), [])
+        self.assertEqual(self.writes("POST", self.comments), [])
+        self.assertEqual(self.spool.state(self.job), "finished")
+
+    def test_entries_without_a_number_or_for_another_branch_are_not_the_runs_pull_request(self):
+        without_head = pull_json(9)
+        del without_head["head"]
+        self.listing(["x", None, {**pull_json(7), "number": "7"}, {**pull_json(6), "number": True},
+                      pull_json(8, ref="factory/fix-13"), without_head])
+        self.assertEqual(self.publish(), "done")
+        self.assertEqual(len(self.writes("POST", self.pulls)), 1)
+        self.assertEqual([call for call in self.github.calls if call[0] == "PATCH"], [])
+        self.assertIn(f"Pull request: https://github.com/owner/name/pull/{FIRST_NUMBER}", self.comment())
+
+    def test_a_pull_request_another_account_opened_for_the_branch_is_linked_but_not_changed(self):
+        self.listing([pull_json(7, author=("someone", 99))])
+        self.assertEqual(self.publish(), "done")
+        self.assertEqual(self.writes("POST", self.pulls), [])
+        self.assertEqual([call for call in self.github.calls if call[0] == "PATCH"], [])
+        self.assertEqual(self.writes("POST", f"{self.github.repo}/issues/7/labels"), [])
+        self.assertIn("Pull request: https://github.com/owner/name/pull/7", self.comment())
+
+    def test_the_bots_own_pull_request_comes_before_another_accounts(self):
+        self.listing([pull_json(9, author=("someone", 99)), pull_json(8), pull_json(10, author=(BOT.login, 77))])
+        self.assertEqual(self.publish(), "done")
+        self.assertEqual([call[1] for call in self.github.calls if call[0] == "PATCH"], [f"{self.pulls}/8"])
+        self.assertEqual(self.github.posted(f"{self.github.repo}/issues/8/labels"), {"labels": ["stage:fix"]})
+        self.assertIn("Pull request: https://github.com/owner/name/pull/8", self.comment())
+
+    def test_an_answer_without_a_number_to_opening_the_pull_request_leaves_the_job_unclosed(self):
+        self.github.responses[("POST", self.pulls)] = {"html_url": "https://github.com/owner/name/pull/5"}
+        with self.assertRaises(GitHubError):
+            self.publish()
+        self.assertEqual(self.writes("POST", self.comments), [])
+        self.assertEqual(self.spool.state(self.job), "finished")
+
+
 class NeedsInputTest(PublishTestCase):
     def test_needs_input_keeps_checked_commits_on_the_branch_without_a_pull_request(self):
         self.finish(result=needs_input_result(), bundle=self.bundle_of(GOOD_CHANGE, {"apps/demo/b.txt": "b\n"}))
@@ -311,15 +465,14 @@ class NeedsInputTest(PublishTestCase):
     def test_needs_input_with_a_bad_bundle_posts_the_questions_and_says_the_work_was_not_kept(self):
         cases = {
             "a protected path": (CONFIG, PROTECTED_CHANGE, "README.md, which is outside the writable paths"),
-            "a bundle over the limit": (limits(max_bundle_megabytes=1), None,
-                                        "the bundle is missing or larger than 1 MB"),
+            "a bundle over the limit": (limits(max_bundle_megabytes=1), None, bundle_check.missing_or_too_large(1)),
         }
         for name, (config, change, problem) in cases.items():
             with self.subTest(name):
                 self.build(config)
                 bundle = self.bundle_of(change) if change else self.tmp / "big.bundle"
                 if change is None:
-                    bundle.write_bytes(b"x" * 1_000_001)
+                    bundle.write_bytes(b"x" * (MEGABYTE + 1))
                 self.finish(result=needs_input_result(), bundle=bundle)
                 self.assertEqual(self.publish(), "needs_input")
                 self.assertIsNone(self.remote_branch())
@@ -384,7 +537,9 @@ class RejectionTest(PublishTestCase):
             "a command it ran": (done_result(verification=[
                 {"command": f"cat {PERSONAL_PATH}/x", "exit_code": 0, "summary": "ok"}]), "personal filesystem path"),
             "a follow-up": (done_result(follow_ups=[
-                {"title": "Move the host", "reason": f"It is at {PRIVATE_ADDRESS} now."}]), "private network address"),
+                {"title": "Move the host", "reason": f"It is at {PRIVATE_ADDRESS}."}]), "private network address"),
+            "a summary with a key split by a control character": (
+                done_result(summary=f"Tested with {KEY[:12]}\x1c{KEY[12:]} today."), "possible provider key"),
             "the reason a failed run gives": (failed_result(failure_reason=f"The key {KEY} was refused."),
                                               "possible provider key"),
         }
@@ -396,19 +551,20 @@ class RejectionTest(PublishTestCase):
                 self.assertIsNone(self.remote_branch())
                 body = self.comment()
                 self.assertIn(f"- the result's text contains {label}", body)
-                self.assertNotIn(result["summary"], body)
+                self.assertNotIn(result["summary"][:11], body)
+                self.assertNotIn(KEY[:12], body)
                 self.assertNeedsAPerson()
 
     def test_an_oversized_bundle_is_rejected_without_being_copied_whole(self):
         self.build(limits(max_bundle_megabytes=1))
         oversized = self.tmp / "big.bundle"
-        oversized.write_bytes(b"x" * 1_000_001)
+        oversized.write_bytes(b"x" * (MEGABYTE + 1))
         self.finish(result=done_result(), bundle=oversized)
         with mock.patch.object(self.spool, "read_run_file", wraps=self.spool.read_run_file) as read:
             self.assertEqual(self.publish(), "rejected")
-        read.assert_any_call(self.job, "commits.bundle", 1_000_000)
+        read.assert_any_call(self.job, "commits.bundle", MEGABYTE)
         self.assertFalse(self.scratch.exists())
-        self.assertIn("- the bundle is missing or larger than 1 MB", self.comment())
+        self.assertIn(f"- {bundle_check.missing_or_too_large(1)}", self.comment())
         self.assertNeedsAPerson()
 
 

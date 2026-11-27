@@ -278,6 +278,22 @@ class MarkerTest(unittest.TestCase):
         self.assertEqual((text.outcome, other.outcome, snapshot.Marker(1, "t", {}).outcome), ("published", "", ""))
 
 
+class CommentFromTest(unittest.TestCase):
+    def test_a_listed_comment_becomes_a_comment(self) -> None:
+        self.assertEqual(snapshot.comment_from(comment_json(7, "someone", 5, "hi")),
+                         snapshot.Comment(7, "someone", 5, "2026-01-07T00:00:00Z", "hi"))
+
+    def test_odd_fields_read_as_empty(self) -> None:
+        odd = {"id": "4", "user": {"login": 3, "id": True}, "created_at": None, "body": None}
+        self.assertEqual(snapshot.comment_from(odd), snapshot.Comment(0, "", 0, "", ""))
+        self.assertEqual(snapshot.comment_from({"id": 4, "user": "x"}), snapshot.Comment(4, "", 0, "", ""))
+
+    def test_an_entry_that_is_not_an_object_is_no_comment(self) -> None:
+        for entry in ("text", 5, None, [], True):
+            with self.subTest(entry=entry):
+                self.assertIsNone(snapshot.comment_from(entry))
+
+
 class SmallRecordsTest(unittest.TestCase):
     def test_the_bot_email_is_its_noreply_address(self) -> None:
         self.assertEqual(BOT.email, "4242+mk-factory[bot]@users.noreply.github.com")

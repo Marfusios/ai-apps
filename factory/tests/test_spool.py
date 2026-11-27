@@ -7,7 +7,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from factory.spool import MAX_RECORD_BYTES, Spool, SpoolError, new_job_id, read_bounded, validate_run
+from factory.spool import (MAX_RECORD_BYTES, Spool, SpoolError, SpoolMissing, new_job_id, read_bounded,
+                           validate_run)
 
 NOW = datetime(2026, 11, 27, 10, 15, 0, tzinfo=timezone.utc)
 CAN_SYMLINK = hasattr(os, "symlink")
@@ -115,6 +116,7 @@ class SpoolLifecycleTest(SpoolTestCase):
             lambda: spool.job_file(bad, "a"), lambda: spool.read_run_file(bad, "a", 1),
             lambda: spool.close(bad, "r", NOW), lambda: spool.claim(bad, NOW),
             lambda: spool.finish(bad, {}, {}), lambda: spool.run_record(bad),
+            lambda: spool.write_job_json(bad, "a.json", {}), lambda: spool.read_job_json(bad, "a.json"),
         )
         for call in calls:
             with self.assertRaises(SpoolError):
@@ -129,6 +131,10 @@ class SpoolLifecycleTest(SpoolTestCase):
                 spool.job_file(job, bad)
             with self.assertRaises(SpoolError):
                 spool.read_run_file(job, bad, 10)
+            with self.assertRaises(SpoolError):
+                spool.write_job_json(job, bad, {})
+            with self.assertRaises(SpoolError):
+                spool.read_job_json(job, bad)
 
     def test_finish_writes_run_json_last_and_leaves_no_temporary_file(self):
         spool = self.ready()
@@ -202,11 +208,69 @@ class SpoolLifecycleTest(SpoolTestCase):
             with self.assertRaises(ValueError):
                 call()
 
+    def test_a_missing_request_is_missing(self):
+        spool = self.ready()
+        job = new_job_id("fix_issue", 1, NOW)
+        spool.submit(job, {"context.md": b"text"})
+        with self.assertRaises(SpoolMissing):
+            spool.request(job)
+
     @unittest.skipUnless(os.name == "posix", "directory modes only have an effect on POSIX")
     def test_prepare_applies_the_group_readable_setgid_mode(self):
         self.ready()
         self.assertEqual(os.stat(self.root / "jobs").st_mode & 0o7777, 0o2750)
         self.assertEqual(os.stat(self.root / "runs").st_mode & 0o7777, 0o2770)
+
+
+class JobJsonTest(SpoolTestCase):
+    def submitted(self) -> tuple[Spool, str]:
+        spool = self.ready()
+        job = new_job_id("fix_issue", 1, NOW)
+        spool.submit(job, {"request.json": b"{}"})
+        return spool, job
+
+    def test_a_record_written_is_read_back_and_leaves_no_temporary_file(self):
+        spool, job = self.submitted()
+        spool.write_job_json(job, "settled.json", {"outcome": "done", "problems": ("a", "b"), "head_sha": None})
+        self.assertEqual(spool.read_job_json(job, "settled.json"),
+                         {"outcome": "done", "problems": ["a", "b"], "head_sha": None})
+        spool.write_job_json(job, "settled.json", {"outcome": "crashed"})
+        self.assertEqual(spool.read_job_json(job, "settled.json"), {"outcome": "crashed"})
+        self.assertEqual(sorted(p.name for p in (self.root / "jobs" / job).iterdir()), ["request.json", "settled.json"])
+
+    def test_a_record_that_is_not_there_reads_as_none(self):
+        spool, job = self.submitted()
+        self.assertIsNone(spool.read_job_json(job, "settled.json"))
+
+    def test_a_record_that_is_not_a_json_object_or_too_large_is_refused(self):
+        spool, job = self.submitted()
+        path = spool.job_file(job, "settled.json")
+        for content in (b"{not json", b"[1, 2]", b"\xff\xfe"):
+            with self.subTest(content):
+                path.write_bytes(content)
+                with self.assertRaises(SpoolError):
+                    spool.read_job_json(job, "settled.json")
+        path.write_bytes(b'{"a": "' + b"x" * 100 + b'"}')
+        self.assertEqual(spool.read_job_json(job, "settled.json", 200), {"a": "x" * 100})
+        with self.assertRaises(SpoolError):
+            spool.read_job_json(job, "settled.json", 50)
+
+    @unittest.skipUnless(CAN_SYMLINK, "this platform has no symbolic links")
+    def test_a_record_that_is_a_link_is_refused(self):
+        spool, job = self.submitted()
+        try:
+            os.symlink(self.file(b'{"outcome": "done"}'), spool.job_file(job, "settled.json"))
+        except OSError:
+            self.skipTest("creating symbolic links is not permitted here")
+        with self.assertRaises(SpoolError) as caught:
+            spool.read_job_json(job, "settled.json")
+        self.assertNotIsInstance(caught.exception, SpoolMissing)
+
+    def test_writing_into_a_job_that_does_not_exist_fails_without_a_host_path(self):
+        spool = self.ready()
+        with self.assertRaises(SpoolError) as caught:
+            spool.write_job_json(new_job_id("fix_issue", 1, NOW), "settled.json", {"outcome": "done"})
+        self.assertNotIn(str(self.tmp), str(caught.exception))
 
 
 class ReadBoundedTest(SpoolTestCase):
@@ -225,12 +289,14 @@ class ReadBoundedTest(SpoolTestCase):
             read_bounded(link, 100)
 
     def test_read_bounded_refuses_a_directory_a_missing_file_and_an_oversized_file(self):
-        with self.assertRaises(SpoolError):
+        with self.assertRaises(SpoolError) as directory:
             read_bounded(self.tmp, 100)
-        with self.assertRaises(SpoolError):
+        with self.assertRaises(SpoolMissing):
             read_bounded(self.tmp / "absent", 100)
-        with self.assertRaises(SpoolError):
+        with self.assertRaises(SpoolError) as oversized:
             read_bounded(self.file(b"abcd"), 3)
+        self.assertNotIsInstance(directory.exception, SpoolMissing)
+        self.assertNotIsInstance(oversized.exception, SpoolMissing)
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "this platform has no named pipes")
     def test_read_bounded_refuses_a_named_pipe_without_hanging(self):
@@ -316,9 +382,10 @@ class RunRecordTest(SpoolTestCase):
         spool, job = self.finished()
         (self.root / "runs" / job / "result.json").write_bytes(b"12345")
         self.assertEqual(spool.read_run_file(job, "result.json", 5), b"12345")
-        with self.assertRaises(SpoolError):
+        with self.assertRaises(SpoolError) as oversized:
             spool.read_run_file(job, "result.json", 4)
-        with self.assertRaises(SpoolError):
+        self.assertNotIsInstance(oversized.exception, SpoolMissing)
+        with self.assertRaises(SpoolMissing):
             spool.read_run_file(job, "absent.json", 4)
 
     @unittest.skipUnless(CAN_SYMLINK, "this platform has no symbolic links")
@@ -328,8 +395,9 @@ class RunRecordTest(SpoolTestCase):
             os.symlink(self.file(b"secret"), self.root / "runs" / job / "result.json")
         except OSError:
             self.skipTest("creating symbolic links is not permitted here")
-        with self.assertRaises(SpoolError):
+        with self.assertRaises(SpoolError) as caught:
             spool.read_run_file(job, "result.json", 100)
+        self.assertNotIsInstance(caught.exception, SpoolMissing)
 
     def test_validate_run_accepts_a_valid_record(self):
         self.assertEqual(validate_run(run_record(new_job_id("fix_issue", 1, NOW))), [])

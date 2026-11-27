@@ -80,12 +80,13 @@ class FakeGitHub:
     """The public methods of `GitHub`, answering from `answers` and recording what is written.
 
     `answers` maps `(path, sorted params)` to what `get` returns and `get_all` lists. `responses` maps
-    `(method, path)` to what a `post` or `patch` returns. Every path in `fail` raises GitHubError(502), a path in
-    `fail_once` raises it on its next request only, and every path in `missing` raises GitHubError(404).
+    `(method, path)` to what a `post` or `patch` returns. A request whose path, or whose `(method, path)`, is in
+    `fail` raises GitHubError(502); one in `fail_once` raises it on the first such request only, before it has
+    any effect; and one in `missing` raises GitHubError(404).
 
     Like GitHub, it remembers what it creates. A pull request posted to `<repo>/pulls` or a comment posted to
     `<repo>/issues/<n>/comments`, unless `responses` scripts the answer, gets the next number from FIRST_NUMBER on and
-    joins every later listing of that path, whatever its params. Its comments are written by `user`.
+    joins every later listing of that path, whatever its params. Both are written by `user`.
     """
 
     def __init__(self, repository: str = "owner/name", user: Mapping[str, object] | None = None) -> None:
@@ -94,9 +95,9 @@ class FakeGitHub:
         self.answers: dict[tuple[str, tuple[tuple[str, str], ...]], object] = {}
         self.responses: dict[tuple[str, str], object] = {}
         self.calls: list[tuple[str, str, Mapping | None]] = []
-        self.fail: set[str] = set()
-        self.fail_once: set[str] = set()
-        self.missing: set[str] = set()
+        self.fail: set[str | tuple[str, str]] = set()
+        self.fail_once: set[str | tuple[str, str]] = set()
+        self.missing: set[str | tuple[str, str]] = set()
         self._created: dict[str, list[dict]] = {}
         self._numbers = itertools.count(FIRST_NUMBER)
 
@@ -105,7 +106,7 @@ class FakeGitHub:
         return f"/repos/{self._repository}"
 
     def get(self, path: str, params: Mapping[str, str] | None = None) -> object:
-        self._check(path)
+        self._check("GET", path)
         key = (path, tuple(sorted((params or {}).items())))
         created = [dict(item) for item in self._created.get(path, [])]
         if key not in self.answers and not created:
@@ -126,7 +127,7 @@ class FakeGitHub:
         return self._write("PATCH", path, body)
 
     def delete(self, path: str) -> None:
-        self._check(path)
+        self._check("DELETE", path)
         self.calls.append(("DELETE", path, None))
 
     def posted(self, path: str) -> Mapping:
@@ -137,7 +138,7 @@ class FakeGitHub:
         raise AssertionError(f"nothing was posted to {path}")
 
     def _write(self, method: str, path: str, body: Mapping) -> object:
-        self._check(path)
+        self._check(method, path)
         self.calls.append((method, path, body))
         if (method, path) in self.responses:
             return self.responses[(method, path)]
@@ -146,6 +147,7 @@ class FakeGitHub:
             return self._create(path, {
                 "number": number, "html_url": f"https://github.com/{self._repository}/pull/{number}", "state": "open",
                 "draft": body.get("draft", False), "title": body.get("title"), "body": body.get("body"),
+                "head": {"ref": body.get("head")}, "base": {"ref": body.get("base")}, "user": dict(self.user),
             })
         if method == "POST" and path.startswith(self.repo) and ISSUE_COMMENTS.fullmatch(path[len(self.repo):]):
             return self._create(path, {
@@ -158,11 +160,13 @@ class FakeGitHub:
         self._created.setdefault(path, []).append(item)
         return dict(item)
 
-    def _check(self, path: str) -> None:
-        if path in self.fail_once:
-            self.fail_once.discard(path)
-            raise GitHubError(502, f"{path} failed")
-        if path in self.fail:
-            raise GitHubError(502, f"{path} failed")
-        if path in self.missing:
-            raise GitHubError(404, f"{path} was not found")
+    def _check(self, method: str, path: str) -> None:
+        keys = (path, (method, path))
+        once = [key for key in keys if key in self.fail_once]
+        if once:
+            self.fail_once.difference_update(once)
+            raise GitHubError(502, f"{method} {path} failed")
+        if any(key in self.fail for key in keys):
+            raise GitHubError(502, f"{method} {path} failed")
+        if any(key in self.missing for key in keys):
+            raise GitHubError(404, f"{method} {path} was not found")

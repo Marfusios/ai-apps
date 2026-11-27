@@ -112,10 +112,17 @@ def _labels(raw: dict) -> tuple[str, ...]:
     return tuple(_text(label.get("name")) for label in _objects(raw.get("labels")))
 
 
-def _comment(raw: dict) -> Comment:
-    user = raw.get("user")
+def comment_from(entry: object) -> Comment | None:
+    """A comment as GitHub lists it, or None for an entry that is not an object.
+
+    A missing or odd field reads as empty or 0, and a comment without a user then matches no bot.
+    """
+    if not isinstance(entry, dict):
+        return None
+    user = entry.get("user")
     author_id = _integer(user.get("id")) if isinstance(user, dict) else 0
-    return Comment(_integer(raw.get("id")), _login(user), author_id, _text(raw.get("created_at")), _text(raw.get("body")))
+    return Comment(_integer(entry.get("id")), _login(user), author_id, _text(entry.get("created_at")),
+                   _text(entry.get("body")))
 
 
 def _trigger_actor(events: list) -> str | None:
@@ -189,7 +196,8 @@ def _open_issue(github: GitHub, entry: dict) -> Issue:
     number = entry["number"]
     events = github.get_all(f"{github.repo}/issues/{number}/events", {"per_page": "100"})
     raw_comments = github.get_all(f"{github.repo}/issues/{number}/comments", {"per_page": "100"})
-    comments = tuple(sorted((_comment(raw) for raw in _objects(raw_comments)), key=lambda comment: comment.id))
+    listed = (comment_from(raw) for raw in raw_comments)
+    comments = tuple(sorted((comment for comment in listed if comment is not None), key=lambda comment: comment.id))
     return _issue(entry, True, _trigger_actor(events), comments, _pull_request_of(github, number))
 
 

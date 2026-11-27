@@ -114,6 +114,11 @@ class _Blob:
     target: str | None  # the content as a link target, when it can be one
 
 
+def missing_or_too_large(megabytes: int) -> str:
+    """Check 1's sentence, also for a caller that could not copy the bundle within the same limit."""
+    return f"the bundle is missing or larger than {megabytes} MB"
+
+
 def _verdict(head: str | None, commits: int, problems: list[Problem]) -> Verdict:
     sentences = [sentence for _, sentence in sorted(problems, key=lambda problem: problem[0])]
     if len(sentences) > MAX_PROBLEMS:
@@ -445,7 +450,7 @@ def check(bundle: Path, *, workrepo: Path, base_sha: str, branch: str, job_id: s
     megabytes = config.dispatcher.max_bundle_megabytes
     path = Path(bundle).absolute()  # an absolute path never reads to git as an option
     if not _is_regular_file_within(path, megabytes * MEGABYTE):
-        return _verdict(None, 0, [(1, f"the bundle is missing or larger than {megabytes} MB")])
+        return _verdict(None, 0, [(1, missing_or_too_large(megabytes))])
     listed = _listed_head(workrepo, path, branch)
     if listed is None:
         return _verdict(None, 0, [(2, NOT_THE_BRANCH)])

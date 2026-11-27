@@ -2,13 +2,15 @@
 
 import ipaddress
 import re
+import unicodedata
 from pathlib import PurePath
 
 PRIVATE_NETWORKS = tuple(
     ipaddress.ip_network(network)
     for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
-IP_ADDRESS = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+# A full stop after the address ends a sentence; one followed by a digit makes a longer dotted number.
+IP_ADDRESS = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\d|\.\d)")
 PATTERNS = (
     ("possible provider key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
     ("possible GitHub token", re.compile(r"\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}\b")),
@@ -45,8 +47,17 @@ def _has_private_address(line: str) -> bool:
     return False
 
 
+def _without_controls(line: str) -> str:
+    return "".join(char for char in line if char == "\t" or unicodedata.category(char) != "Cc")
+
+
 def line_problems(line: str) -> list[str]:
-    """Labels of the patterns a line matches, never the matched text itself."""
+    """Labels of the patterns a line matches, never the matched text itself.
+
+    Control characters other than tab are removed first: the bot removes them before posting, so a key split by
+    one would otherwise be posted whole.
+    """
+    line = _without_controls(line)
     problems = [label for label, pattern in PATTERNS if pattern.search(line)]
     if _has_private_address(line):
         problems.append(PRIVATE_ADDRESS_LABEL)
@@ -54,9 +65,13 @@ def line_problems(line: str) -> list[str]:
 
 
 def text_problems(text: str) -> list[tuple[int, str]]:
-    """The line number (from 1) and label of every problem in every line of a text."""
+    """The line number (from 1) and label of every problem in every line of a text.
+
+    Lines end only at a newline: `str.splitlines` would also end one at control characters that the bot removes
+    before posting, which joins what they separated.
+    """
     return [
         (number, label)
-        for number, line in enumerate(text.splitlines(), 1)
+        for number, line in enumerate(text.split("\n"), 1)
         for label in line_problems(line)
     ]

@@ -35,6 +35,10 @@ class SpoolError(Exception):
     """A spool file or id is unusable. Messages name files by their job-relative name, never a host path."""
 
 
+class SpoolMissing(SpoolError):
+    """The file to read is not there; any other refusal (a link, a special file, one too large) is a SpoolError."""
+
+
 @contextmanager
 def _spool_errors(what: str) -> Iterator[None]:
     """Turn an operating system error into a SpoolError that names `what` but no host path."""
@@ -73,7 +77,7 @@ def _read_open(name: str, limit: int, *, path: Path | None = None, dir_fd: int |
     try:
         descriptor = os.open(name if dir_fd is not None else path, _open_flags(), dir_fd=dir_fd)
     except FileNotFoundError:
-        raise SpoolError(f"{name} is missing") from None
+        raise SpoolMissing(f"{name} is missing") from None
     except OSError:
         raise SpoolError(f"{name} cannot be opened") from None
     try:
@@ -269,18 +273,33 @@ class Spool:
         return "queued"
 
     def request(self, job_id: str) -> dict:
-        data = _parse_json(read_bounded(self.job_file(job_id, "request.json"), MAX_RECORD_BYTES), "request.json")
-        if not isinstance(data, dict):
-            raise SpoolError("request.json: must be an object")
-        return data
+        record = self.read_job_json(job_id, "request.json")
+        if record is None:
+            raise SpoolMissing("request.json is missing")
+        return record
 
     def job_file(self, job_id: str, name: str) -> Path:
         return self._jobs / _check_id(job_id) / _plain_name(name)
 
+    def write_job_json(self, job_id: str, name: str, record: Mapping[str, object]) -> None:
+        """Write a record of the dispatcher's own into the job's directory, whole or not at all."""
+        path = self.job_file(job_id, name)
+        with _spool_errors(f"{name} cannot be written"):
+            _write_json(path, record)
+
+    def read_job_json(self, job_id: str, name: str, limit: int = MAX_RECORD_BYTES) -> dict | None:
+        """A JSON object the dispatcher wrote into the job's directory, or None when there is none."""
+        try:
+            data = read_bounded(self.job_file(job_id, name), limit)
+        except SpoolMissing:
+            return None
+        record = _parse_json(data, name)
+        if not isinstance(record, dict):
+            raise SpoolError(f"{name}: must be an object")
+        return record
+
     def close(self, job_id: str, reason: str, now: datetime) -> None:
-        path = self.job_file(job_id, "closed.json")
-        with _spool_errors("closed.json cannot be written"):
-            _write_json(path, {"reason": reason, "closed_at": _stamp(now)})
+        self.write_job_json(job_id, "closed.json", {"reason": reason, "closed_at": _stamp(now)})
 
     def claim(self, job_id: str, now: datetime) -> bool:
         """Take a job by creating its run directory; only one caller can."""
