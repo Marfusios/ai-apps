@@ -29,10 +29,14 @@ MAX_SETTLED_BYTES = 12 * MAX_SETTLED_CHARACTERS + 100_000
 BASE_BRANCH = "main"
 STAGE_LABEL = "stage:fix"
 NOT_FOUND = 404
-# The longest usage window is a week: a reset time further ahead than that and a day is not believed.
-LATEST_RESET = timedelta(hours=6)  # a process in the container can forge the event; this bounds one forgery
+# A reset time reported more than six hours ahead is not believed: a process in the container can forge the event
+# that reports it, and this bounds how long one forgery holds the factory back.
+LATEST_RESET = timedelta(hours=6)
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 NOT_KEPT = "the work so far was not kept"
+PUSH_REFUSED = 1  # git's exit status when the remote refuses a ref; a network or sign-in failure exits 128
+REFUSED_PUSH = "GitHub refused the push of the checked commits"
+BRANCH_MOVED = "the work branch changed on GitHub while the run was going"
 STATUS_AFTER = {"done": BUILDING, "usage_limit": QUEUED}  # every other outcome waits for a person
 
 
@@ -49,11 +53,12 @@ def _is_pair(value: object, keys: tuple[str, str]) -> bool:
 
 
 # What each field of a stored record must look like for `_Settled.from_record` to trust it. compose checks the
-# values themselves when it builds the texts; the head must be a commit name before git sees it.
+# values themselves when it builds the texts; the head must be a commit name before git sees it, and the model one
+# that compose accepts: `record` never stores another, so a record that holds one is not what it wrote.
 _RECORD_SHAPES: Mapping[str, Callable[[object], bool]] = {
     "outcome": lambda value: isinstance(value, str),
     "duration_seconds": _is_count,
-    "model": lambda value: isinstance(value, str),
+    "model": lambda value: isinstance(value, str) and compose.MODEL.fullmatch(value) is not None,
     "reason": lambda value: value is None or isinstance(value, str),
     "retry_at": lambda value: isinstance(value, str),
     "head_sha": lambda value: value is None or (isinstance(value, str) and gitops.SHA.fullmatch(value) is not None),
@@ -103,8 +108,12 @@ class _Settled:
                       "follow_ups": tuple(record["follow_ups"])})
 
     def failed_internally(self) -> "_Settled":
-        """The same run as an internal error: nothing is pushed and none of its texts is shown."""
-        return _Settled("crashed", self.duration_seconds, self.model, reason="internal")
+        """The same run as an internal error: nothing is pushed, and neither its texts nor its model are shown."""
+        return _Settled("crashed", self.duration_seconds, "", reason="internal")
+
+    def rejected(self, problem: str) -> "_Settled":
+        """The same run refused for one problem found on GitHub: its commits are not pushed, its texts still shown."""
+        return dataclasses.replace(self, outcome="rejected", head_sha=None, commits=0, problems=(problem,))
 
 
 def _strings(value: object) -> Iterator[str]:
@@ -161,6 +170,7 @@ class Publisher:
     scratch: Path
     push_url: str
     token: Callable[[], str]
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
 
     def publish(self, job_id: str, issue: Issue, now: datetime) -> str:
         """Settle the run's one outcome, show it on GitHub, close the job, and return the outcome.
@@ -171,6 +181,10 @@ class Publisher:
         poll repeats the call from the stored outcome, and each write is skipped, or has the same effect again, when
         it was already made.
 
+        Commits are pushed only while the work branch on GitHub is still where the run started, or already at the
+        checked head. When it is elsewhere, or GitHub refuses the push, the run is stored again as rejected, and that
+        is what is shown: a push that can never succeed must end in a comment, not in a retry without end.
+
         A request that is no longer what the dispatcher wrote, or that belongs to another job or another issue,
         raises SpoolError on every call before anything is read or written: a wiring bug is a person's to look at.
         """
@@ -179,9 +193,29 @@ class Publisher:
         branch = branch_for(issue.number)
         request = self._request(job_id, branch, issue.number)
         settled, pull_request_text = self._settled(job_id, request, issue, branch, now)
-        self._show(job_id, request["stage"], issue, branch, settled, pull_request_text)
-        self.spool.close(job_id, settled.outcome, now)
-        self._clean_up(job_id)
+        if settled.head_sha is not None:
+            settled = self._push(job_id, request["base_sha"], branch, settled)
+        self._show(job_id, request["stage"], issue, branch, settled,
+                   pull_request_text if settled.outcome == "done" else None)
+        self._close(job_id, settled)
+        return settled.outcome
+
+    def give_up(self, job_id: str, issue: Issue, now: datetime) -> str:
+        """Show the run as an internal error after publishing it has failed too often; close the job; return that.
+
+        The internal error is stored over the settled outcome without reading anything from `runs/`, and shown with
+        the writes of any outcome without commits, each safe to repeat: the run comment, which carries the marker,
+        then the status label, then the close. `now` is checked as `publish` checks it, and the request too.
+        """
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be a timezone-aware datetime")
+        branch = branch_for(issue.number)
+        request = self._request(job_id, branch, issue.number)
+        _, loaded = self._stored(job_id)
+        settled = self._store(job_id, loaded.failed_internally() if loaded is not None
+                              else _Settled("crashed", 0, "", reason="internal"))
+        self._show(job_id, request["stage"], issue, branch, settled, None)
+        self._close(job_id, settled)
         return settled.outcome
 
     def post_notice(self, issue: Issue, key: str) -> None:
@@ -245,7 +279,7 @@ class Publisher:
         except ValueError:
             settled, pull_request_text = settled.failed_internally(), None
         if settled is not loaded:
-            self.spool.write_job_json(job_id, SETTLED_FILE, settled.record())
+            self._store(job_id, settled)
         return settled, pull_request_text
 
     def _stored(self, job_id: str) -> tuple[bool, _Settled | None]:
@@ -373,11 +407,48 @@ class Publisher:
 
     # Showing it on GitHub ------------------------------------------------------------------------------------------
 
+    def _push(self, job_id: str, base_sha: str, branch: str, settled: _Settled) -> _Settled:
+        """Push the checked commits and return the outcome; a rejected one, stored, when GitHub stands in the way.
+
+        A branch that GitHub does not have yet is fine: a run that starts from `main` creates it. Any other failure
+        of the push, of the network or of signing in, is raised, so that the next poll tries again.
+        """
+        if self._branch_head(branch) not in (None, base_sha, settled.head_sha):
+            return self._store(job_id, settled.rejected(BRANCH_MOVED))
+        try:
+            gitops.push(self.workrepo, self.push_url, self.token(), settled.head_sha, branch)
+        except gitops.GitError as error:
+            if error.status != PUSH_REFUSED:
+                raise
+            return self._store(job_id, settled.rejected(REFUSED_PUSH))
+        return settled
+
+    def _branch_head(self, branch: str) -> str | None:
+        """The commit the work branch names on GitHub, or None when GitHub has no such branch."""
+        try:
+            answer = self.github.get(f"{self.github.repo}/git/ref/heads/{branch}")
+        except GitHubError as error:
+            if error.status != NOT_FOUND:
+                raise
+            return None
+        target = answer.get("object") if isinstance(answer, dict) else None
+        sha = target.get("sha") if isinstance(target, dict) else None
+        if not (isinstance(sha, str) and gitops.SHA.fullmatch(sha)):
+            raise GitHubError(0, "GET /git/ref did not answer with a commit")  # never push on a guess
+        return sha
+
+    def _store(self, job_id: str, settled: _Settled) -> _Settled:
+        self.spool.write_job_json(job_id, SETTLED_FILE, settled.record())
+        return settled
+
+    def _close(self, job_id: str, settled: _Settled) -> None:
+        """Close the job at this moment, then drop its quarantine ref."""
+        self.spool.close(job_id, settled.outcome, self.clock())
+        self._clean_up(job_id)
+
     def _show(self, job_id: str, stage: str, issue: Issue, branch: str, settled: _Settled,
               pull_request_text: Mapping[str, str] | None) -> None:
-        """The writes, each safe to repeat; the comment comes after the pull request, since it links it."""
-        if settled.head_sha is not None:
-            gitops.push(self.workrepo, self.push_url, self.token(), settled.head_sha, branch)
+        """The writes after the push, each safe to repeat; the comment comes after the pull request, which it links."""
         url = self._pull_request(branch, pull_request_text) if pull_request_text is not None else ""
         self._post_run_comment(issue, job_id, self._run_comment(job_id, stage, branch, settled, url), settled.outcome)
         wanted = STATUS_AFTER.get(settled.outcome, NEEDS_HUMAN)

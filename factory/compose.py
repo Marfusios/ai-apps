@@ -49,6 +49,7 @@ FOLLOW_UP_TITLE_LIMIT = 120
 FOLLOW_UP_REASON_LIMIT = 1_000
 MAX_FOLLOW_UPS = 10
 TITLE_LIMIT = 120
+FALLBACK_TITLE = "Change from the factory"  # GitHub refuses a pull request without a title
 BODY_LIMIT = 20_000
 # The least of a text that a cut keeps; a summary that cannot keep it is replaced by a fixed line.
 CUT_FLOOR = 100
@@ -59,7 +60,7 @@ OMITTED_SUMMARY = "(The summary was left out to keep this comment within GitHub'
 PULL_REQUEST_URL = re.compile(r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+")
 _BRANCH = re.compile(r"factory/[a-z0-9][a-z0-9-]{0,60}")
 _RETRY_AT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
-_MODEL = re.compile(r"[A-Za-z0-9._:\[\]-]{0,100}")
+MODEL = re.compile(r"[A-Za-z0-9._:\[\]-]{0,100}")
 
 _NOTICES: Mapping[str, tuple[str, str]] = {
     "untrusted-author": (
@@ -228,7 +229,7 @@ def run_comment(
     if stage not in result.STAGES:
         raise ValueError(f"unknown stage: {stage!r}")
     _check("job_id", job_id, spool.JOB_ID)
-    _check("model", model, _MODEL)
+    _check("model", model, MODEL)
     _check("branch", branch, _BRANCH, optional=True)
     _check("retry_at", retry_at, _RETRY_AT, optional=True)
     _check("pull_request_url", pull_request_url, PULL_REQUEST_URL, optional=True)
@@ -284,8 +285,9 @@ def run_comment(
 
 
 def pull_request_title(title: str) -> str:
-    """One neutral line of at most 120 characters."""
-    return textsafe.single_line(title, TITLE_LIMIT)
+    """One neutral line of at most 120 characters, or a fixed title when nothing printable is left of it."""
+    line = textsafe.single_line(title, TITLE_LIMIT)
+    return line if result.has_visible_character(line) else FALLBACK_TITLE
 
 
 def pull_request_body(body: str, issue_number: int, follow_ups: Sequence[Mapping[str, str]]) -> str:

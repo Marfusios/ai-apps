@@ -31,14 +31,14 @@ class GitError(Exception):
     """A git command failed, timed out, was refused or could not start.
 
     It names the command and how it ended, never its arguments, output or environment, which can hold a URL, a host
-    path or a token.
+    path or a token. `ending` is git's exit status, or the words for how it ended otherwise; `status` is the exit
+    status, None when git did not exit on its own (a timeout, too much output) or never ran.
     """
 
-    def __init__(self, subcommand: str, status: int | str) -> None:
+    def __init__(self, subcommand: str, ending: int | str) -> None:
         self.subcommand = subcommand
-        self.status = status
-        ending = f"exit status {status}" if isinstance(status, int) else status
-        super().__init__(f"git {subcommand} failed: {ending}")
+        self.status: int | None = ending if isinstance(ending, int) else None
+        super().__init__(f"git {subcommand} failed: {f'exit status {ending}' if isinstance(ending, int) else ending}")
 
 
 class GitOutputTooLarge(GitError):

@@ -240,13 +240,23 @@ class GitopsTestCase(unittest.TestCase):
         self.assertEqual(str(error), "git fetch failed: exit status 128")
         self.assertIsNone(error.__context__)
 
+    def test_a_git_that_did_not_exit_on_its_own_has_no_exit_status(self):
+        with mock.patch("factory.gitops.subprocess.Popen", side_effect=FileNotFoundError("git")), \
+                self.assertRaises(GitError) as not_started:
+            gitops.run_git(self.tmp / "missing.git", "status")
+        self.assertEqual((not_started.exception.status, str(not_started.exception)),
+                         (None, "git status failed: FileNotFoundError"))
+        with self.assertRaises(GitError) as refused:
+            gitops.push(self.tmp / "workrepo.git", URL, TOKEN, self.main, "main")
+        self.assertIsNone(refused.exception.status)
+
     @unittest.skipUnless(shutil.which("sh"), "needs sh to run a git alias whose child keeps git's output open")
     def test_the_timeout_holds_when_a_child_of_git_keeps_the_pipe_open(self):
         started = time.monotonic()
         with self.assertRaises(GitError) as raised:
             gitops.run_git(self.upstream.path / ".git", "-c", "alias.wait=!sleep 15", "wait", timeout=1)
         self.assertLess(time.monotonic() - started, 6)
-        self.assertEqual(str(raised.exception), "git wait failed: timeout")
+        self.assertEqual((str(raised.exception), raised.exception.status), ("git wait failed: timeout", None))
         self.assertIsNone(raised.exception.__cause__)
         self.assertTrue(raised.exception.__suppress_context__)
 
@@ -260,6 +270,7 @@ class GitopsTestCase(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 10)
         self.assertIsInstance(raised.exception, GitError)
         self.assertEqual(str(raised.exception), "git cat-file failed: more than 100000 bytes of output")
+        self.assertIsNone(raised.exception.status)
 
     def test_output_past_the_limit_stops_git_promptly(self):
         self.assert_output_past_the_limit_stops_git_promptly()

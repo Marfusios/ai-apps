@@ -97,6 +97,26 @@ class ResultTest(unittest.TestCase):
         self.mentions({**asking, "questions": ["q" * 2001]}, "step", "questions[0]")
         self.mentions({**asking, "questions": [""]}, "step", "questions")
 
+    def test_every_posted_text_must_hold_a_printable_character_that_is_not_white_space(self):
+        blank = ("   ", "\x01\t\x7f", "​ ", "\n\n")
+        asking = {"schema": 1, "outcome": "needs_input", "summary": "Stuck."}
+        failed = {"schema": 1, "outcome": "failed", "summary": "Broke."}
+        for text in blank:
+            cases = {
+                "summary": (done(summary=text), "step"),
+                "questions[1]": ({**asking, "questions": ["Which?", text]}, "step"),
+                "failure_reason": ({**failed, "failure_reason": text}, "step"),
+                "pull_request.title": (done(pull_request={"title": text, "body": "b"}), "step"),
+                "pull_request.body": (done(pull_request={"title": "t", "body": text}), "step"),
+                "follow_ups[0].title": (done(follow_ups=[{"title": text, "reason": "r"}]), "step"),
+                "follow_ups[0].reason": (done(follow_ups=[{"title": "t", "reason": text}]), "step"),
+            }
+            for field, (data, stage) in cases.items():
+                with self.subTest(field=field, text=text):
+                    problems = validate(data, stage)
+                    self.assertTrue(any(problem.startswith(f"{field}: ") for problem in problems), problems)
+        self.assertEqual(validate(done(summary=" ​. ", pull_request={"title": "\tA", "body": "b\n"}), "step"), [])
+
     def test_verification_is_bounded(self):
         entry = {"command": "c" * 500, "exit_code": 0, "summary": "s" * 2000}
         self.assertEqual(validate(done(verification=[entry] * 30), "step"), [])

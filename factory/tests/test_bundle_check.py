@@ -120,15 +120,22 @@ FORGED = [  # (name, header lines, message, fragment): commit objects written by
     ("a signature", PLAIN_HEADERS + ["gpgsig -----BEGIN PGP SIGNATURE-----", " iQEzBAABCAAdFiEE", " =abcd",
                                      " -----END PGP SIGNATURE-----"], "change", OTHER_HEADERS),
     ("no author line", ["tree {tree}", "parent {parent}", f"committer {BOT_IDENT}"], "change", NOT_AUTHORED),
+    ("a zero-padded date", ["tree {tree}", "parent {parent}", f"author {BOT.login} <{BOT.email}> 0123 +0000",
+                            f"committer {BOT_IDENT}"], "change", NOT_AUTHORED),
+    ("a date longer than git reads", ["tree {tree}", "parent {parent}", f"author {BOT_IDENT}",
+                                      f"committer {BOT.login} <{BOT.email}> {'1' * 17} +0000"], "change",
+     NOT_AUTHORED),
     ("an encoding", PLAIN_HEADERS + ["encoding ISO-8859-1"], "change", OTHER_HEADERS),
     ("an unknown header", PLAIN_HEADERS + ["x-note hello"], "change", OTHER_HEADERS),
     ("a repeated author line", PLAIN_HEADERS + [f"author {BOT_IDENT}"], "change", OTHER_HEADERS),
     ("a commit larger than a commit may be", PLAIN_HEADERS, "x" * 100_001, "is larger than a commit may be"),
 ]
 # Rows that git 2.46 and later can refuse while fetching, before these checks see them: the fsck that applies
-# then refuses a link into .git, a date that is not a number and a commit without an author.
-GIT_MAY_REFUSE = {"link into .git", "link into .git in another spelling", "link into .git through a zero-width joiner",
-                  "link into .git through a byte order mark", "an ident with a third bracket", "no author line"}
+# then refuses a link into .git, a date that is not a number, is zero-padded or overflows, and a commit without an
+# author.
+GIT_MAY_REFUSE = {"link into .git", "link into .git in another spelling",
+                  "link into .git through a zero-width joiner", "link into .git through a byte order mark",
+                  "an ident with a third bracket", "no author line", "a zero-padded date", "a date longer than git reads"}
 
 
 class BundleCheckTestCase(unittest.TestCase):
@@ -204,6 +211,8 @@ class BundleCheckTestCase(unittest.TestCase):
             return self.work.bundle(self.base, BRANCH, self.fresh("bundle"))
 
         self.assertEqual(self.check(forged(PLAIN_HEADERS)).problems, ())  # written by hand just as git writes it
+        at_the_epoch = [line.replace("1764230400", "0") for line in PLAIN_HEADERS]
+        self.assertEqual(self.check(forged(at_the_epoch)).problems, ())
         for name, headers, message, fragment in FORGED:
             with self.subTest(name):
                 verdict = self.check(forged(headers, message))

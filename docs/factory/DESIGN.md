@@ -217,7 +217,9 @@ The agent returns one of three outcomes: done, needs input (with questions), or 
 (with a reason). For the last two, and for timeouts and crashes, the dispatcher posts a
 comment saying what happened and sets `status:needs-human`. Hitting the subscription's
 usage limit is not a failure: the dispatcher stops starting runs, says so once, and
-resumes after the limit resets.
+resumes after the limit resets. A finished run whose publication fails eight times, with a
+growing delay between attempts, is shown as an internal error in the same way, so that one
+publication cannot hold up the factory without a word.
 
 ## 7. Trust and safety
 
@@ -282,6 +284,9 @@ the pod (section 9).
   link target matches a credential pattern. The dispatcher uses its own trusted copy of
   the patterns, `factory/hygiene.py` in its deployed checkout, never the one on the
   branch.
+- The work branch on GitHub is still where the run started, or already at the checked
+  commits, and GitHub accepts their push. A branch someone moved, or a push GitHub
+  refuses, makes the run rejected: it is reported in a comment, not retried.
 
 **What the bot posts.** Text written by an agent (a summary, questions, a failure reason,
 follow-ups, a pull request's title and body) is neutralised once before it is posted:

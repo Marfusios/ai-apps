@@ -205,8 +205,13 @@ def _commits_on_base(workrepo: Path, base: str, head: str, max_commits: int) -> 
 
 
 def _identity(bot: Bot) -> re.Pattern[bytes]:
-    """The bot's author or committer value exactly as git writes it: `login <email> seconds zone`."""
-    return re.compile(re.escape(f"{bot.login} <{bot.email}>".encode("utf-8")) + rb" [0-9]+ [+-][0-9]{4}")
+    """The bot's author or committer value exactly as git writes it: `login <email> seconds zone`.
+
+    git writes the seconds without leading zeros and in far fewer than 17 digits. GitHub checks the objects it
+    receives and refuses a zero-padded or overflowing date, so a commit with one could never be pushed.
+    """
+    seconds = rb"(?:0|[1-9][0-9]{0,15})"
+    return re.compile(re.escape(f"{bot.login} <{bot.email}>".encode("utf-8")) + rb" " + seconds + rb" [+-][0-9]{4}")
 
 
 def _header_problems(raw: bytes, identity: re.Pattern[bytes], where: str) -> list[Problem]:

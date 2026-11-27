@@ -36,6 +36,8 @@ SETTLE_WINDOW = timedelta(minutes=10)  # how long a published job still holds it
 UNREADABLE_REQUEST = "unreadable request"
 FIRST_RETRY_SECONDS = 60
 LONGEST_RETRY_SECONDS = 30 * 60
+MAX_PUBLISH_ATTEMPTS = 8  # failed publications of a job before it is shown as an internal error instead
+ATTEMPTS_FILE = "attempts.json"
 SHORTEST_RATE_LIMIT_SLEEP_SECONDS = 60  # a reset time that is not ahead must not make the loop spin
 LONGEST_SLEEP_SECONDS = 3600
 SLEEP_SLICE_SECONDS = 1.0
@@ -278,19 +280,57 @@ class Dispatcher:
         return all(self._spool.state(job_id) == "closed" for job_id in self._spool.job_ids())
 
     def _publish(self, action: PublishRun, issue: Issue, now: datetime) -> None:
-        """Publish a finished run unless its retry time has not come. A failure delays the next attempt, nothing more."""
+        """Publish a finished run unless its retry time has not come, or give up on it after too many failures.
+
+        A failure delays the next attempt and is counted in the job's own directory, so that the count survives a
+        restart. Once MAX_PUBLISH_ATTEMPTS have failed the publisher shows the run as an internal error instead, and
+        when even that fails it is tried again after the longest delay. A failure affects this job only.
+        """
         failures, next_attempt = self._publish_failures.get(action.job_id, (0, now))
         if now < next_attempt:
             return
+        stored, first_failed_at = self._failed_attempts(action.job_id)
+        failed = max(failures, stored)  # the memory counts on when the count could not be stored
+        giving_up = failed >= MAX_PUBLISH_ATTEMPTS
         try:
-            self._publisher.publish(action.job_id, issue, now)
+            if giving_up:
+                since = (first_failed_at or now).strftime(TIME_FORMAT)
+                log.warning("job %s: publishing it failed %d times since %s; it is shown as an internal error instead",
+                            action.job_id, failed, since)
+                self._publisher.give_up(action.job_id, issue, now)
+            else:
+                self._publisher.publish(action.job_id, issue, now)
         except RateLimited:
             raise
-        except RECOVERABLE as error:
+        except (*RECOVERABLE, ValueError) as error:  # ValueError: a value compose or a record refused
             log.error("%s failed: %s", action.describe(), type(error).__name__)
-            self._publish_failures[action.job_id] = (failures + 1, now + _retry_delay(failures + 1))
+            delay = timedelta(seconds=LONGEST_RETRY_SECONDS) if giving_up else _retry_delay(failed + 1)
+            self._publish_failures[action.job_id] = (failed + 1, now + delay)
+            self._count_failure(action.job_id, failed + 1, first_failed_at or now)
             return
         self._publish_failures.pop(action.job_id, None)
+
+    def _failed_attempts(self, job_id: str) -> tuple[int, datetime | None]:
+        """The count of failed publications stored for the job and the time of the first; (0, None) for none."""
+        try:
+            record = self._spool.read_job_json(job_id, ATTEMPTS_FILE) or {}
+        except SpoolError:
+            return 0, None
+        count, first = record.get("failed"), record.get("first_failed_at")
+        if not (isinstance(count, int) and not isinstance(count, bool) and count > 0 and isinstance(first, str)):
+            return 0, None
+        try:
+            return count, datetime.strptime(first, TIME_FORMAT).replace(tzinfo=timezone.utc)
+        except ValueError:
+            return 0, None
+
+    def _count_failure(self, job_id: str, count: int, first_failed_at: datetime) -> None:
+        """Store the count of failed publications; one that cannot be stored still counts in memory."""
+        record = {"failed": count, "first_failed_at": first_failed_at.astimezone(timezone.utc).strftime(TIME_FORMAT)}
+        try:
+            self._spool.write_job_json(job_id, ATTEMPTS_FILE, record)
+        except SpoolError as error:  # its message names the file by its job-relative name only
+            log.error("job %s: the count of failed publications cannot be stored: %s", job_id, error)
 
     def _apply(self, action: Action, issues: Mapping[int, Issue], now: datetime) -> None:
         if isinstance(action, SetStatus):

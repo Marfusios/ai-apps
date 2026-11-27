@@ -4,6 +4,7 @@ import dataclasses
 import itertools
 import json
 import os
+import re
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ CONFIG = factory_config.load()
 BOT = Bot("factory-test[bot]", 4242)
 BRANCH = "factory/fix-12"
 NOW = datetime(2026, 11, 27, 10, 15, 0, tzinfo=timezone.utc)
+CLOSING_TIME = NOW + timedelta(minutes=3)  # what the publisher's own clock says when it closes a job
 KEY = "sk-" + "a" * 24
 TOKEN = "token-" + "x" * 20
 PERSONAL_PATH = "/" + "home/someone/project"  # joined at run time: the repository checker refuses the literal
@@ -121,12 +123,14 @@ class PublishTestCase(unittest.TestCase):
         self.pulls = f"{self.github.repo}/pulls"
         self.comments = f"{self.github.repo}/issues/12/comments"
         self.labels = f"{self.github.repo}/issues/12/labels"
+        self.branch_ref = f"{self.github.repo}/git/ref/heads/{BRANCH}"
         self.github.answers[key(self.pulls, OPEN_PULLS)] = []
         self.github.answers[key(self.comments, ALL_COMMENTS)] = []
+        self.github.missing.add(self.branch_ref)  # the work branch is not on GitHub yet
         self.scratch = self.tmp / "scratch"
         self.publisher = Publisher(
             spool=self.spool, github=self.github, config=config, bot=BOT, workrepo=self.workrepo,
-            scratch=self.scratch, push_url=str(self.remote), token=lambda: TOKEN,
+            scratch=self.scratch, push_url=str(self.remote), token=lambda: TOKEN, clock=lambda: CLOSING_TIME,
         )
         self.job = self.new_job()
 
@@ -189,6 +193,19 @@ class PublishTestCase(unittest.TestCase):
     def rewrite_request(self, **changes: object) -> None:
         request = self.spool.request(self.job)
         self.spool.job_file(self.job, "request.json").write_text(json.dumps({**request, **changes}))
+
+    def branch_on_github(self, sha: str) -> None:
+        """GitHub's answer for the work branch: it exists and names this commit."""
+        self.github.missing.discard(self.branch_ref)
+        self.github.answers[key(self.branch_ref, {})] = {"ref": f"refs/heads/{BRANCH}", "object": {
+            "type": "commit", "sha": sha}}
+
+    def someone_pushes(self) -> str:
+        """A person's commit on the work branch of the remote, which the run's commits do not descend from."""
+        self.upstream.switch("someone", self.base)
+        theirs = self.upstream.commit({"apps/demo/a.txt": "theirs\n"})
+        self.upstream.git("push", "-q", str(self.remote), f"{theirs}:refs/heads/{BRANCH}")
+        return theirs
 
     def assertNeedsAPerson(self) -> None:
         self.assertIn(("DELETE", f"{self.labels}/status%3Abuilding", None), self.github.calls)
@@ -322,6 +339,11 @@ class DoneTest(PublishTestCase):
         self.assertIsNone(self.remote_branch())
         self.assertEqual(self.spool.state(self.job), "finished")
 
+    def test_the_close_is_stamped_with_the_time_it_happens_not_the_time_of_the_poll(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        self.assertEqual(self.publish(), "done")
+        self.assertEqual(self.spool.read_job_json(self.job, "closed.json")["closed_at"], stamp(CLOSING_TIME))
+
 
 class SettledOnceTest(PublishTestCase):
     def test_the_outcome_is_stored_before_the_first_write(self):
@@ -413,6 +435,7 @@ class SettledOnceTest(PublishTestCase):
             "a list field holding null": lambda record: json.dumps({**record, "problems": None}).encode("utf-8"),
             "an unknown field": lambda record: json.dumps({**record, "extra": 1}).encode("utf-8"),
             "a head that is not a commit name": lambda record: json.dumps({**record, "head_sha": "--all"}).encode(),
+            "a model compose refuses": lambda record: json.dumps({**record, "model": "Some Model!"}).encode(),
         }
         for name, damage in damages.items():
             with self.subTest(name):
@@ -456,6 +479,15 @@ class SettledOnceTest(PublishTestCase):
         self.assertEqual([call for call in self.github.calls if call[1].startswith(self.pulls)], [])
         self.assertIn(compose.REASON_WORDS["internal"], self.comment())
         self.assertEqual((self.settled()["outcome"], self.settled()["head_sha"]), ("crashed", None))
+        self.assertNeedsAPerson()
+
+    def test_an_internal_error_names_no_model_so_a_model_compose_refuses_cannot_fail_it_again(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        with mock.patch.object(compose, "MODEL", re.compile("")):  # compose now refuses every model but none
+            self.assertEqual(self.publish(), "crashed")
+        self.assertIsNone(self.remote_branch())
+        self.assertIn("model `unknown`", self.comment())
+        self.assertEqual((self.settled()["outcome"], self.settled()["model"]), ("crashed", ""))
         self.assertNeedsAPerson()
 
     def test_a_request_for_another_job_or_another_branch_stops_before_anything_is_written(self):
@@ -655,6 +687,148 @@ class RejectionTest(PublishTestCase):
         self.assertFalse(self.scratch.exists())
         self.assertIn(f"- {bundle_check.missing_or_too_large(1)}", self.comment())
         self.assertNeedsAPerson()
+
+
+REFUSED_PUSH = "GitHub refused the push of the checked commits"
+BRANCH_MOVED = "the work branch changed on GitHub while the run was going"
+
+
+class WorkBranchOnGitHubTest(PublishTestCase):
+    def assertRejectedFor(self, problem: str) -> None:
+        body = self.comment()
+        self.assertEqual(markers.parse(body)["outcome"], "rejected")
+        self.assertIn(f"- {problem}", body)
+        self.assertEqual(self.writes("POST", self.pulls), [])
+        settled = self.settled()
+        self.assertEqual((settled["outcome"], settled["head_sha"], settled["commits"], settled["problems"]),
+                         ("rejected", None, 0, [problem]))
+        self.assertNeedsAPerson()
+
+    def test_a_push_github_refuses_is_rejected_with_a_comment_instead_of_being_retried(self):
+        for outcome, result in {"done": done_result(), "needs_input": needs_input_result()}.items():
+            with self.subTest(outcome):
+                self.build()
+                self.finish(result=result, bundle=self.bundle_of(GOOD_CHANGE))
+                theirs = self.someone_pushes()  # GitHub's listing lags: it does not show the branch yet
+                self.assertEqual(self.publish(), "rejected")
+                self.assertEqual(self.remote_branch(), theirs)
+                self.assertRejectedFor(REFUSED_PUSH)
+
+    def test_a_repeat_after_a_refused_push_pushes_nothing_and_posts_once(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        self.someone_pushes()
+        self.github.fail_once.add(("POST", self.comments))
+        with self.assertRaises(GitHubError):
+            self.publish()
+        with mock.patch("factory.gitops.push") as push:
+            self.assertEqual(self.publish(), "rejected")
+        push.assert_not_called()
+        self.assertRejectedFor(REFUSED_PUSH)
+
+    def test_a_push_that_fails_for_another_reason_is_left_for_the_next_attempt(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        for status in (128, None):
+            with self.subTest(status=status), \
+                    mock.patch("factory.gitops.push", side_effect=GitError("push", status if status else "timeout")):
+                with self.assertRaises(GitError):
+                    self.publish()
+                self.assertEqual(self.github.calls, [])
+                self.assertEqual(self.settled()["outcome"], "done")
+                self.assertEqual(self.spool.state(self.job), "finished")
+
+    def test_a_work_branch_someone_moved_on_github_is_rejected_before_the_push(self):
+        for outcome, result in {"done": done_result(), "needs_input": needs_input_result()}.items():
+            with self.subTest(outcome):
+                self.build()
+                self.finish(result=result, bundle=self.bundle_of(GOOD_CHANGE))
+                self.branch_on_github("c" * 40)
+                with mock.patch("factory.gitops.push") as push:
+                    self.assertEqual(self.publish(), "rejected")
+                push.assert_not_called()
+                self.assertRejectedFor(BRANCH_MOVED)
+
+    def test_a_work_branch_at_the_base_or_at_the_checked_head_is_pushed(self):
+        for name in ("the base", "the checked head, after an earlier push"):
+            with self.subTest(name):
+                self.build()
+                self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+                self.branch_on_github(self.base if name == "the base" else self.work_head)
+                self.assertEqual(self.publish(), "done")
+                self.assertEqual(self.remote_branch(), self.work_head)
+                self.assertEqual(len(self.writes("POST", self.pulls)), 1)
+
+    def test_an_answer_for_the_branch_that_is_not_a_commit_stops_before_anything_is_written(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        for answer in ([], {"object": None}, {"object": {"sha": "--all"}}, None):
+            with self.subTest(answer=answer):
+                self.github.missing.discard(self.branch_ref)
+                self.github.answers[key(self.branch_ref, {})] = answer
+                with self.assertRaises(GitHubError):
+                    self.publish()
+                self.assertEqual(self.github.calls, [])
+                self.assertIsNone(self.remote_branch())
+                self.assertEqual(self.spool.state(self.job), "finished")
+
+    def test_a_run_without_commits_does_not_look_at_the_branch(self):
+        self.github.missing.discard(self.branch_ref)
+        self.github.fail.add(self.branch_ref)
+        self.finish(result=needs_input_result())
+        self.assertEqual(self.publish(), "needs_input")
+
+
+class GiveUpTest(PublishTestCase):
+    def give_up(self) -> str:
+        with mock.patch.object(self.spool, "read_run_file", wraps=self.spool.read_run_file) as read, \
+                mock.patch.object(self.spool, "run_record", wraps=self.spool.run_record) as record:
+            outcome = self.publisher.give_up(self.job, ISSUE, NOW)
+        read.assert_not_called()
+        record.assert_not_called()
+        return outcome
+
+    def assertInternalError(self) -> None:
+        body = self.comment()
+        self.assertEqual(markers.parse(body)["outcome"], "crashed")
+        self.assertIn(compose.REASON_WORDS["internal"], body)
+        self.assertNotIn("The greeting now says hello.", body)
+        self.assertEqual((self.settled()["outcome"], self.settled()["reason"]), ("crashed", "internal"))
+        self.assertEqual(self.spool.read_job_json(self.job, "closed.json"),
+                         {"reason": "crashed", "closed_at": stamp(CLOSING_TIME)})
+        self.assertNeedsAPerson()
+
+    def test_giving_up_shows_an_internal_error_over_the_stored_outcome_and_pushes_nothing(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        unreachable = dataclasses.replace(self.publisher, push_url=str(self.tmp / "no-such-remote.git"))
+        with self.assertRaises(GitError):
+            unreachable.publish(self.job, ISSUE, NOW)
+        self.assertEqual(self.settled()["outcome"], "done")
+        self.assertEqual(self.give_up(), "crashed")
+        self.assertIsNone(self.remote_branch())
+        self.assertEqual(self.writes("POST", self.pulls), [])
+        self.assertIn("· 12 min ·", self.comment())  # the stored duration is kept
+        self.assertInternalError()
+
+    def test_giving_up_before_anything_was_stored_still_reads_nothing_of_the_run(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        self.assertIsNone(self.settled())
+        self.assertEqual(self.give_up(), "crashed")
+        self.assertIn("model `unknown`", self.comment())
+        self.assertInternalError()
+
+    def test_giving_up_again_after_an_interruption_posts_one_comment(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        self.github.fail_once.add(("POST", self.labels))
+        with self.assertRaises(GitHubError):
+            self.publisher.give_up(self.job, ISSUE, NOW)
+        self.assertEqual(self.spool.state(self.job), "finished")
+        self.assertEqual(self.give_up(), "crashed")
+        self.assertInternalError()
+
+    def test_giving_up_refuses_a_request_that_belongs_to_another_issue(self):
+        self.finish(result=done_result(), bundle=self.bundle_of(GOOD_CHANGE))
+        with self.assertRaises(SpoolError):
+            self.publisher.give_up(self.job, dataclasses.replace(ISSUE, number=13), NOW)
+        self.assertEqual(self.github.calls, [])
+        self.assertIsNone(self.settled())
 
 
 class UnusableRunTest(PublishTestCase):

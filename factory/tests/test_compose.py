@@ -366,6 +366,12 @@ class PullRequestTests(unittest.TestCase):
         self.assertNotIn("@octocat", title)
         self.assertEqual(title, textsafe.single_line("Fix\nthe   bug @octocat, closes #5 " + "x" * 300, 120))
 
+    def test_a_title_with_nothing_printable_left_is_a_fixed_title(self) -> None:
+        for title in ("   ", "\x01\x02\x7f", "\t\n\r", "​ ‌", ""):
+            with self.subTest(title=title):
+                self.assertEqual(compose.pull_request_title(title), "Change from the factory")
+        self.assertEqual(compose.pull_request_title("​Add a test"), "​Add a test")
+
 
 class NoticeTests(unittest.TestCase):
     def test_notices_parse_with_their_outcomes(self) -> None:

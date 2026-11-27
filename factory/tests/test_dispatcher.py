@@ -221,6 +221,7 @@ class DispatcherTestCase(unittest.TestCase):
         publisher = Publisher(
             spool=spool, github=self.github, config=CONFIG, bot=BOT, workrepo=settings.workrepo,
             scratch=settings.scratch, push_url=str(self.tmp / "remote.git"), token=lambda: TOKEN,
+            clock=lambda: self.now,
         )
         return Dispatcher(settings, CONFIG, self.github, spool, publisher, token=lambda: TOKEN, git=self.git,
                           clock=lambda: self.now)
@@ -502,6 +503,93 @@ class PublishTest(DispatcherTestCase):
             self.now = NOW + timedelta(seconds=20)
             self.dispatcher.tick()
         self.assertEqual(publish.call_count, 2)
+
+    def fail_publications(self, job: str, failures: int, start: datetime = NOW) -> datetime:
+        """Let `failures` publications of the job fail, each at its retry time; return the time of the next one."""
+        attempt_at = start
+        with mock.patch.object(Publisher, "publish", side_effect=GitHubError(502, "down")), \
+                self.assertLogs("factory.dispatcher", "ERROR"):
+            for _ in range(failures):
+                self.now = attempt_at
+                self.dispatcher.tick()
+                attempt_at += timedelta(seconds=dispatcher_module.LONGEST_RETRY_SECONDS)
+        self.assertEqual(self.spool.state(job), "finished")
+        return attempt_at
+
+    def assertGivenUp(self, job: str) -> None:
+        self.assertEqual(self.spool.read_job_json(job, "closed.json")["reason"], "crashed")
+        (comment,) = self.calls_to("POST", self.comments)
+        self.assertIn("the factory hit an internal error", comment["body"])
+        self.assertEqual(self.github.posted(self.labels), {"labels": ["status:needs-human"]})
+
+    def test_after_eight_failed_publications_the_dispatcher_gives_up_with_an_internal_error(self):
+        job = self.finished_job()
+        next_attempt = self.fail_publications(job, 8)
+        self.assertEqual(self.spool.read_job_json(job, "attempts.json"),
+                         {"failed": 8, "first_failed_at": "2026-11-27T10:15:00Z"})
+        self.now = next_attempt
+        with mock.patch.object(Publisher, "publish") as publish, \
+                self.assertLogs("factory.dispatcher", "WARNING") as logged:
+            self.dispatcher.tick()
+        publish.assert_not_called()
+        self.assertEqual(logged.output, [f"WARNING:factory.dispatcher:job {job}: publishing it failed 8 times since "
+                                         "2026-11-27T10:15:00Z; it is shown as an internal error instead"])
+        self.assertGivenUp(job)
+
+    def test_the_count_of_failed_publications_survives_a_restart(self):
+        job = self.finished_job()
+        next_attempt = self.fail_publications(job, 7)
+        restarted = self.build(self.spool)
+        self.now = next_attempt
+        with mock.patch.object(Publisher, "publish", side_effect=GitHubError(502, "down")) as publish, \
+                self.assertLogs("factory.dispatcher", "ERROR"):
+            restarted.tick()
+        publish.assert_called_once()
+        self.assertEqual(self.spool.read_job_json(job, "attempts.json")["failed"], 8)
+        self.now = next_attempt + timedelta(seconds=dispatcher_module.LONGEST_RETRY_SECONDS)
+        with self.assertLogs("factory.dispatcher", "WARNING"):
+            self.build(self.spool).tick()
+        self.assertGivenUp(job)
+
+    def test_a_failed_give_up_is_tried_again_half_an_hour_later(self):
+        job = self.finished_job()
+        give_up_at = self.fail_publications(job, 8)
+        with mock.patch.object(Publisher, "give_up", side_effect=GitHubError(502, "down")) as give_up, \
+                self.assertLogs("factory.dispatcher", "ERROR"):
+            for moment in (give_up_at, give_up_at + timedelta(minutes=29, seconds=59)):
+                self.now = moment
+                self.dispatcher.tick()
+        give_up.assert_called_once()
+        self.now = give_up_at + timedelta(minutes=30)
+        with self.assertLogs("factory.dispatcher", "WARNING"):
+            self.dispatcher.tick()
+        self.assertGivenUp(job)
+
+    def test_a_value_error_from_a_publication_is_a_failed_attempt_and_not_the_end_of_the_loop(self):
+        job = self.finished_job()
+        with mock.patch.object(Publisher, "publish", side_effect=ValueError("refused")), \
+                self.assertLogs("factory.dispatcher", "ERROR") as logged:
+            self.dispatcher.tick()
+        self.assertIn(f"{PublishRun(job, 12).describe()} failed: ValueError", logged.output[0])
+        self.assertEqual(self.spool.read_job_json(job, "attempts.json")["failed"], 1)
+        self.assertEqual(self.spool.state(job), "finished")
+
+    def test_a_count_that_cannot_be_stored_still_counts_in_memory(self):
+        job = self.finished_job()
+        real_write = self.spool.write_job_json
+
+        def full_disk(job_id, name, record):
+            if name == "attempts.json":
+                raise SpoolError("attempts.json cannot be written: No space left on device")
+            return real_write(job_id, name, record)
+
+        with mock.patch.object(self.spool, "write_job_json", side_effect=full_disk):
+            next_attempt = self.fail_publications(job, 8)
+            self.now = next_attempt
+            with self.assertLogs("factory.dispatcher", "WARNING"):
+                self.dispatcher.tick()
+        self.assertIsNone(self.spool.read_job_json(job, "attempts.json"))
+        self.assertGivenUp(job)
 
     def test_a_failed_publish_does_not_stop_the_actions_that_follow(self):
         self.dispatcher.tick()

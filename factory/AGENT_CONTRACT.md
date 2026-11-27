@@ -72,13 +72,17 @@ it. A key that is not listed here makes the file invalid.
 | --- | --- | --- |
 | `schema` | The integer `1`. | Always. |
 | `outcome` | `"done"`, `"needs_input"` or `"failed"`. | Always. |
-| `summary` | String of 1 to 4,000 characters. | Always. |
-| `questions` | List of at most 20 strings of 1 to 2,000 characters each. | Required and non-empty with `needs_input`; otherwise leave it out. |
+| `summary` | Non-blank string of 1 to 4,000 characters. | Always. |
+| `questions` | List of at most 20 non-blank strings of 1 to 2,000 characters each. | Required and non-empty with `needs_input`; otherwise leave it out. |
 | `failure_reason` | Non-blank string of 1 to 4,000 characters. | Required with `failed`; otherwise leave it out. |
-| `pull_request` | Object with exactly `title` (1 to 120 characters) and `body` (1 to 20,000 characters). | Required with `done`, except in the `fix` and `revise` stages, where it may be left out. |
+| `pull_request` | Object with exactly `title` (1 to 120 characters) and `body` (1 to 20,000 characters), both non-blank. | Required with `done`, except in the `fix` and `revise` stages, where it may be left out. |
 | `thread_replies` | List of objects with exactly `thread_id` (1 to 200 characters), `body` (1 to 4,000 characters) and `resolved` (`true` or `false`). | Only in the `revise` stage. Any other stage must leave the key out, even as an empty list. |
 | `verification` | List of at most 30 objects with exactly `command` (1 to 500 characters), `exit_code` (integer) and `summary` (at most 2,000 characters). | Required and non-empty with `done`; optional otherwise. |
-| `follow_ups` | List of at most 10 objects with exactly `title` (1 to 120 characters) and `reason` (1 to 1,000 characters). | Optional. Leave the key out rather than setting it to `null`. |
+| `follow_ups` | List of at most 10 objects with exactly `title` (1 to 120 characters) and `reason` (1 to 1,000 characters), both non-blank. | Optional. Leave the key out rather than setting it to `null`. |
+
+A non-blank string holds at least one character that is printable and not white space. The
+dispatcher posts these texts, and one made only of spaces, line breaks, control characters or
+zero-width characters would show nothing.
 
 What each field is for:
 
