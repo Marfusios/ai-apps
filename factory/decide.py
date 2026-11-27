@@ -176,8 +176,12 @@ def _is_settling(issue: Issue, jobs: Sequence[JobView], bot: Bot) -> bool:
 
 
 def _without_marker_rows(issue: Issue, trusted_comments: list[Comment], config: Config) -> list[Action] | None:
-    """Rows 4 to 6: an issue the factory has not written to yet."""
-    if issue.pull_request is not None:  # no marker, a pull request exists
+    """Rows 4 to 6: an issue the factory has not written to yet, or whose comments from the factory are gone.
+
+    Only an open pull request holds the issue back: after one was closed without merging, an issue without a marker
+    is like any other.
+    """
+    if issue.pull_request is not None and issue.pull_request.open:  # no marker, an open pull request exists
         return []
     if not is_trusted(issue.author, config) and not trusted_comments:  # no marker, author not trusted
         return [PostNotice(issue.number, "untrusted-author"), *_status(issue, NEEDS_HUMAN)]
@@ -258,8 +262,14 @@ def _usage_limit_ahead(snapshot: Snapshot, now: datetime, config: Config, bot: B
 def _starts_blocked(
     snapshot: Snapshot, jobs: Sequence[JobView], now: datetime, config: Config, bot: Bot
 ) -> bool:
-    """One job at a time, and none while halted or while a usage limit still holds; closed jobs do not count."""
-    return snapshot.halted or any(job.state != "closed" for job in jobs) or _usage_limit_ahead(snapshot, now, config, bot)
+    """One job at a time, and none while halted, while a usage limit still holds or while an issue settles.
+
+    A closed job counts only while its issue settles: until its marker is listed, the outcome it published, a usage
+    limit for one, is not known yet.
+    """
+    settling = any(_is_handled(issue, config) and _is_settling(issue, jobs, bot) for issue in snapshot.issues)
+    return (snapshot.halted or any(job.state != "closed" for job in jobs) or settling
+            or _usage_limit_ahead(snapshot, now, config, bot))
 
 
 def _wants_to_start(issue: Issue, snapshot: Snapshot, config: Config) -> tuple[list[Action], str | None]:

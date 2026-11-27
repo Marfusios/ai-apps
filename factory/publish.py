@@ -11,10 +11,10 @@ from pathlib import Path
 
 from factory import bundle_check, compose, gitops, hygiene, jobs, result, snapshot
 from factory.bundle_check import Verdict
-from factory.config import Config
+from factory.config import Config, is_trusted
 from factory.decide import BUILDING, NEEDS_HUMAN, QUEUED, STATUS_PREFIX
 from factory.github_api import GitHub, GitHubError
-from factory.snapshot import Bot, Issue, Marker, branch_for
+from factory.snapshot import Bot, Issue, branch_for
 from factory.spool import Spool, SpoolError, SpoolMissing
 
 RESULT_FILE = "result.json"
@@ -219,12 +219,21 @@ class Publisher:
         return settled.outcome
 
     def post_notice(self, issue: Issue, key: str) -> None:
-        """Post the fixed notice `key`, unless the issue's last marker is already that notice."""
+        """Post the fixed notice `key`, unless GitHub now lists that notice last with no trusted comment after it.
+
+        The listing is read fresh, since the poll's may lag behind a notice just posted. A trusted comment after the
+        notice is an answer that did not settle it, such as a second `app:` line that names no app either, and gets
+        the notice again.
+        """
         body = compose.notice(key)
-        found = issue.markers(self.bot)
-        last = found[-1].data if found else {}
-        if last.get("kind") == "notice" and last.get("key") == key:
-            return
+        fresh = self._fresh(issue)
+        found = fresh.markers(self.bot)
+        last = found[-1] if found else None
+        if last is not None and last.data.get("kind") == "notice" and last.data.get("key") == key:
+            answered = any(comment.id > last.comment_id and comment.author != self.bot.login
+                           and is_trusted(comment.author, self.config) for comment in fresh.comments)
+            if not answered:
+                return
         self.github.post(f"{self.github.repo}/issues/{issue.number}/comments", {"body": body})
 
     def set_status(self, issue_number: int, add: str | None, remove: Sequence[str]) -> None:
@@ -512,7 +521,7 @@ class Publisher:
 
         A usage limit right after a usage limit edits that comment instead, so a long wait leaves one comment.
         """
-        found = self._fresh_markers(issue)
+        found = self._fresh(issue).markers(self.bot)
         if any(marker.data.get("job") == job_id for marker in found):
             return
         if outcome == "usage_limit" and found and found[-1].outcome == "usage_limit":
@@ -520,12 +529,12 @@ class Publisher:
         else:
             self.github.post(f"{self.github.repo}/issues/{issue.number}/comments", {"body": body})
 
-    def _fresh_markers(self, issue: Issue) -> tuple[Marker, ...]:
-        """The markers in the bot's own comments as GitHub lists them now; the issue passed in may be a poll old."""
+    def _fresh(self, issue: Issue) -> Issue:
+        """The issue with its comments as GitHub lists them now, oldest first; the one passed in may be a poll old."""
         listed = self.github.get_all(f"{self.github.repo}/issues/{issue.number}/comments", {"per_page": "100"})
         comments = (snapshot.comment_from(entry) for entry in listed)
         ordered = sorted((comment for comment in comments if comment is not None), key=lambda comment: comment.id)
-        return dataclasses.replace(issue, comments=tuple(ordered)).markers(self.bot)
+        return dataclasses.replace(issue, comments=tuple(ordered))
 
     def _clean_up(self, job_id: str) -> None:
         """Drop the quarantine ref of a job already closed, as far as git lets it: a ref left behind is harmless.

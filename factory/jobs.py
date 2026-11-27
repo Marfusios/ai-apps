@@ -69,19 +69,25 @@ def _app_of_form(body: str) -> str | None:
     return None
 
 
+def _usable(name: str | None, apps: Sequence[str]) -> bool:
+    """An app that exists and has a name `validate_request` accepts; a directory named otherwise is never chosen."""
+    return name is not None and APP.fullmatch(name) is not None and name in apps
+
+
 def choose_app(issue: Issue, apps: Sequence[str], config: Config) -> str | None:
     """The app a run works on, or None when the dispatcher has to ask.
 
     The last trusted `app:` line decides alone: naming an unknown app is a typo to ask about, not a reason to
-    guess. Only without such a line do the issue form and then the only app apply.
+    guess. Only without such a line do the issue form and then the only app apply. Each step returns only a name
+    that fully matches APP.
     """
     named = _app_of_comments(issue, config)
     if named is not None:
-        return named if named in apps else None
+        return named if _usable(named, apps) else None
     form = _app_of_form(issue.body) if is_trusted(issue.author, config) else None
-    if form in apps:
+    if _usable(form, apps):
         return form
-    return apps[0] if len(apps) == 1 else None
+    return apps[0] if len(apps) == 1 and _usable(apps[0], apps) else None
 
 
 def _cut(text: str) -> str:

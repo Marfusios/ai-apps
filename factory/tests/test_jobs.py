@@ -74,6 +74,14 @@ class ChooseAppTest(unittest.TestCase):
         stranger_typo = issue(body=form, comments=(comment("app: alhpa", "stranger"),))
         self.assertEqual("alpha", jobs.choose_app(stranger_typo, apps, CONFIG))
 
+    def test_choose_app_returns_only_a_name_the_request_accepts(self):
+        odd = ["1abc", "AirCase"]
+        self.assertIsNone(jobs.choose_app(issue(comments=(comment("app: 1abc"),)), odd, CONFIG))
+        self.assertIsNone(jobs.choose_app(issue(body="### App\n\n1abc"), odd, CONFIG))
+        for only in ("AirCase", "1abc", "a--b", "trailing-"):
+            with self.subTest(only=only):
+                self.assertIsNone(jobs.choose_app(issue(body="no form"), [only], CONFIG))
+
     def test_choose_app_reads_only_an_exact_app_line_and_form_value(self):
         apps = ["alpha", "beta"]
         for body in ("app: alpha beta", "app:\nalpha", "my app: alpha", "app: Alpha", "app: alpha!"):

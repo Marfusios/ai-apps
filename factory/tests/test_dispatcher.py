@@ -93,6 +93,7 @@ class SettingsTest(unittest.TestCase):
     def test_a_malformed_value_is_named_and_never_echoed(self):
         cases = {
             "FACTORY_BOT_USER_ID": ["0", "-3", "12x", ""],
+            "FACTORY_BOT_LOGIN": ["-factory[bot]", "-x"],
             "FACTORY_REPOSITORY": ["name", "a/b/c", "../x", "owner/..", "ow ner/name"],
             "FACTORY_SPOOL_DIR": ["relative/spool"],
             "FACTORY_MIRROR_DIR": ["mirror"],
@@ -331,6 +332,16 @@ class TickTest(DispatcherTestCase):
         with self.decided(PostNotice(12, "needs-app"), SetStatus(12, "status:needs-human", ()),
                           SetStatus(3, "status:queued", ())), self.assertLogs("factory.dispatcher", "ERROR"):
             self.dispatcher.tick()
+        self.assertEqual(self.calls_to("POST", self.labels), [])
+        self.assertEqual(self.calls_to("POST", f"{self.github.repo}/issues/3/labels"), [{"labels": ["status:queued"]}])
+
+    def test_a_request_the_runner_would_refuse_is_never_submitted_and_skips_its_issue(self):
+        with self.decided(StartJob(12, "AirCase"), SetStatus(12, "status:building", ()),
+                          SetStatus(3, "status:queued", ())), self.assertLogs("factory.dispatcher", "ERROR") as logged:
+            self.dispatcher.tick()
+        self.assertEqual(self.spool.job_ids(), [])
+        self.assertEqual(logged.output, [f"ERROR:factory.dispatcher:{StartJob(12, 'AirCase').describe()} failed: "
+                                         "SpoolError"])
         self.assertEqual(self.calls_to("POST", self.labels), [])
         self.assertEqual(self.calls_to("POST", f"{self.github.repo}/issues/3/labels"), [{"labels": ["status:queued"]}])
 

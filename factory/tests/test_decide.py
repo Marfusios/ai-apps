@@ -160,9 +160,21 @@ class SettlingTest(unittest.TestCase):
     def test_a_fresh_issue_with_a_closed_job_does_not_start(self):
         self.assertEqual(run(issue(12), jobs=[self.CLOSED]), [])
 
-    def test_a_closed_job_does_not_block_other_issues(self):
-        actions = run(issue(12), issue(13), jobs=[self.CLOSED])
-        self.assertEqual(actions, [SetStatus(13, BUILDING, ()), StartJob(13, "demo")])
+    def test_a_settling_issue_blocks_every_start_for_this_poll(self):
+        lagging = issue(12, comments=(marker_comment(3, "needs_input"),))
+        self.assertEqual(run(lagging, issue(13), jobs=[self.CLOSED]), [SetStatus(13, QUEUED, ())])
+
+    def test_once_its_marker_is_visible_a_closed_job_blocks_nothing(self):
+        seen = issue(12, comments=(marker_comment(3, "usage_limit", job="j1", retry_at=PAST),))
+        self.assertEqual(run(seen, issue(13), jobs=[self.CLOSED]),
+                         [SetStatus(12, BUILDING, ()), StartJob(12, "demo"), SetStatus(13, QUEUED, ())])
+
+    def test_a_closed_job_of_an_issue_that_is_not_handled_blocks_nothing(self):
+        for other in (issue(12, open=False), issue(12, trigger="stranger"),
+                      dataclasses.replace(issue(12, trigger=None), unreadable=True)):
+            with self.subTest(other=other):
+                self.assertEqual(run(other, issue(13), jobs=[self.CLOSED])[-2:],
+                                 [SetStatus(13, BUILDING, ()), StartJob(13, "demo")])
 
     def test_a_closed_job_of_a_closed_or_unlabelled_issue_is_not_closed_again(self):
         self.assertEqual(run(issue(12, open=False), jobs=[self.CLOSED]), [])
@@ -265,9 +277,13 @@ class NoMarkerTest(unittest.TestCase):
         self.assertEqual(run(issue(12, pull=pull(merged=True))), [SetStatus(12, DONE, ())])
         self.assertEqual(run(with_marker(12, "failed", pr=pull(merged=True))), [SetStatus(12, DONE, ())])
 
-    def test_no_marker_with_a_pull_request_does_nothing(self):
+    def test_no_marker_with_an_open_pull_request_does_nothing(self):
         self.assertEqual(run(issue(12, pull=pull(open=True))), [])
-        self.assertEqual(run(issue(12, pull=pull())), [])
+
+    def test_no_marker_with_a_closed_unmerged_pull_request_is_like_no_marker_at_all(self):
+        self.assertEqual(run(issue(12, pull=pull())), STARTS_12)
+        stranger = issue(12, author="stranger", pull=pull())
+        self.assertEqual(run(stranger), [PostNotice(12, "untrusted-author"), SetStatus(12, NEEDS_HUMAN, ())])
 
     def test_untrusted_author_without_trusted_comment_gets_the_notice(self):
         stranger = issue(12, author="stranger")

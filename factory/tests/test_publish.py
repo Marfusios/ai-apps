@@ -982,30 +982,50 @@ class RunCommentTest(PublishTestCase):
 
 
 class NoticeTest(PublishTestCase):
-    def bot_comment(self, comment_id: int, body: str, *, author: tuple[str, int] = (BOT.login, BOT.user_id)) -> Comment:
-        return Comment(comment_id, author[0], author[1], "2026-11-27T09:00:00Z", body)
+    NOTICE = compose.notice("needs-app")
+    POSTED = ("POST", "/repos/owner/name/issues/12/comments", {"body": compose.notice("needs-app")})
+
+    def listed(self, *comments: tuple[int, str, int, str]) -> None:
+        """GitHub's fresh listing of the issue's comments, each as (id, login, user id, body)."""
+        self.github.answers[key(self.comments, ALL_COMMENTS)] = [comment_json(*comment) for comment in comments]
+
+    def bot(self, comment_id: int, body: str) -> tuple[int, str, int, str]:
+        return (comment_id, BOT.login, BOT.user_id, body)
 
     def test_post_notice_posts_the_fixed_text(self):
         self.publisher.post_notice(ISSUE, "needs-app")
-        self.assertEqual(self.github.calls, [("POST", self.comments, {"body": compose.notice("needs-app")})])
+        self.assertEqual(self.github.calls, [self.POSTED])
 
-    def test_post_notice_does_not_repeat_the_last_marker(self):
-        issue = dataclasses.replace(ISSUE, comments=(self.bot_comment(5, compose.notice("needs-app")),))
-        self.publisher.post_notice(issue, "needs-app")
+    def test_post_notice_does_not_repeat_the_notice_github_lists_last_although_the_poll_missed_it(self):
+        self.listed(self.bot(5, self.NOTICE), (6, "stranger", 9, "app: whatever"), self.bot(7, "plain text"))
+        self.assertEqual(ISSUE.comments, ())
+        self.publisher.post_notice(ISSUE, "needs-app")
         self.assertEqual(self.github.calls, [])
+
+    def test_post_notice_answers_a_trusted_comment_after_the_same_notice(self):
+        self.listed(self.bot(5, self.NOTICE), (6, "Marfusios", 1, "app: still-wrong"))
+        self.publisher.post_notice(ISSUE, "needs-app")
+        self.assertEqual(self.github.calls, [self.POSTED])
+
+    def test_post_notice_reads_the_fresh_listing_and_not_the_poll(self):
+        issue = dataclasses.replace(ISSUE, comments=(Comment(5, BOT.login, BOT.user_id, "2026-11-27T09:00:00Z",
+                                                             self.NOTICE),))
+        self.publisher.post_notice(issue, "needs-app")
+        self.assertEqual(self.github.calls, [self.POSTED])
 
     def test_post_notice_posts_when_the_last_marker_is_something_else(self):
         run = markers.encode({"kind": "run", "job": self.job, "stage": "fix_issue", "outcome": "needs_input"})
         cases = {
-            "a run after the notice": (self.bot_comment(5, compose.notice("needs-app")), self.bot_comment(6, run)),
-            "another notice": (self.bot_comment(5, compose.notice("untrusted-author")),),
-            "the notice from another account": (self.bot_comment(5, compose.notice("needs-app"), author=("x", 9)),),
+            "a run after the notice": (self.bot(5, self.NOTICE), self.bot(6, run)),
+            "another notice": (self.bot(5, compose.notice("untrusted-author")),),
+            "the notice from another account": ((5, "x", 9, self.NOTICE),),
         }
         for name, comments in cases.items():
             with self.subTest(name):
-                self.github.calls.clear()
-                self.publisher.post_notice(dataclasses.replace(ISSUE, comments=comments), "needs-app")
-                self.assertEqual(self.github.calls, [("POST", self.comments, {"body": compose.notice("needs-app")})])
+                self.build()  # a fresh GitHub: the fake lists the notices it was given
+                self.listed(*comments)
+                self.publisher.post_notice(ISSUE, "needs-app")
+                self.assertEqual(self.github.calls, [self.POSTED])
 
     def test_post_notice_refuses_an_unknown_notice(self):
         with self.assertRaises(ValueError):

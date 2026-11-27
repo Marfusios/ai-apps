@@ -34,7 +34,7 @@ from factory.spool import JOB_ID, TIME_FORMAT, Spool, SpoolError, new_job_id
 log = logging.getLogger("factory.dispatcher")
 
 REPOSITORY = re.compile(r"(?!\.+/)[A-Za-z0-9._-]+/(?!\.+$)[A-Za-z0-9._-]+")
-LOGIN = re.compile(r"[A-Za-z0-9-]+(?:\[bot\])?")
+LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?")  # git and the request refuse a leading "-"
 DIGITS = re.compile(r"[0-9]+")  # explicit [0-9]: \d would accept other scripts' digits
 STAGE = REQUIRED_STAGE  # the one stage this version starts
 SETTLE_WINDOW = timedelta(minutes=10)  # how long a published job still holds its issue while GitHub's listing lags
@@ -373,6 +373,9 @@ class Dispatcher:
         bot = settings.bot
         request = jobs.request_file(job_id=job_id, stage=STAGE, app=app, branch=branch, base_sha=base_sha,
                                     repository=settings.repository, config=self._config, bot=bot)
+        problems = jobs.validate_request(request)
+        if problems:  # the runner and the publisher would refuse it, so the job would never end
+            raise SpoolError(f"request.json would be refused: {'; '.join(problems)}")
         job = jobs.job_file(stage=STAGE, app=app, issue=issue, branch=branch, base_sha=base_sha, config=self._config)
         self._spool.submit(job_id, {
             "request.json": _json(request),
