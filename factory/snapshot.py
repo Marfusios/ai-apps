@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from factory import markers
-from factory.config import Config
 from factory.github_api import GitHub
 
 FIX_LABEL = "factory:fix"
@@ -74,6 +73,8 @@ class Issue:
         for comment in self.comments:
             if comment.author != bot.login or comment.author_id != bot.user_id:
                 continue
+            if not bot.login or bot.user_id <= 0:
+                continue  # a missing user reads as ("", 0) and must never match a bot
             data = markers.parse(comment.body)
             if data is not None:
                 found.append(Marker(comment.id, comment.created_at, data))
@@ -145,19 +146,30 @@ def _issue_entries(items: object) -> list[dict]:
     ]
 
 
+def _first_of_each(entries: list[dict], seen: set[int]) -> list[dict]:
+    """Entries whose number is not in `seen` yet, the first occurrence of each; `seen` grows."""
+    fresh = []
+    for entry in entries:
+        if entry["number"] not in seen:
+            seen.add(entry["number"])
+            fresh.append(entry)
+    return fresh
+
+
 def _unfinished(entry: dict) -> bool:
     return any(name.startswith("status:") and name != DONE_STATUS for name in _labels(entry))
 
 
 def _issue(
-    entry: dict, trigger_actor: str | None, comments: tuple[Comment, ...], pull_request: PullRequest | None
+    entry: dict, is_open: bool, trigger_actor: str | None, comments: tuple[Comment, ...],
+    pull_request: PullRequest | None,
 ) -> Issue:
     return Issue(
         number=entry["number"],
         title=_text(entry.get("title")),
         body=_text(entry.get("body")),
         author=_login(entry.get("user")),
-        open=entry.get("state") == "open",
+        open=is_open,
         labels=_labels(entry),
         trigger_actor=trigger_actor,
         comments=comments,
@@ -178,12 +190,12 @@ def _open_issue(github: GitHub, entry: dict) -> Issue:
     events = github.get_all(f"{github.repo}/issues/{number}/events", {"per_page": "100"})
     raw_comments = github.get_all(f"{github.repo}/issues/{number}/comments", {"per_page": "100"})
     comments = tuple(sorted((_comment(raw) for raw in _objects(raw_comments)), key=lambda comment: comment.id))
-    return _issue(entry, _trigger_actor(events), comments, _pull_request_of(github, number))
+    return _issue(entry, True, _trigger_actor(events), comments, _pull_request_of(github, number))
 
 
 def _halted(github: GitHub) -> bool:
+    """True when a halt issue is open; an answer that is not an empty list halts: stopping is the safe reading."""
     answer = github.get(f"{github.repo}/issues", {"state": "open", "labels": HALT_LABEL, "per_page": "1"})
-    # An answer that is not an empty list is treated as a halt: when in doubt, do nothing.
     return not (isinstance(answer, list) and not answer)
 
 
@@ -192,7 +204,7 @@ def _apps(github: GitHub) -> tuple[str, ...]:
     return tuple(sorted(_text(e.get("name")) for e in _objects(entries) if e.get("type") == "dir" and _text(e.get("name"))))
 
 
-def fetch(github: GitHub, config: Config) -> Snapshot:
+def fetch(github: GitHub) -> Snapshot:
     """Read the issues, the halt switch and the apps; any GitHubError ends the poll without a snapshot."""
     open_entries = _issue_entries(
         github.get_all(f"{github.repo}/issues", {"state": "open", "labels": FIX_LABEL, "per_page": "100"})
@@ -206,9 +218,13 @@ def fetch(github: GitHub, config: Config) -> Snapshot:
             },
         )
     )
+    # Pagination can repeat an issue and one can reopen between the two lists: the open list wins.
+    seen: set[int] = set()
+    open_entries = _first_of_each(open_entries, seen)
+    closed_entries = _first_of_each(closed_entries, seen)
     issues = [_open_issue(github, entry) for entry in open_entries]
     issues += [
-        _issue(entry, None, (), _pull_request_of(github, entry["number"]))
+        _issue(entry, False, None, (), _pull_request_of(github, entry["number"]))
         for entry in closed_entries
         if _unfinished(entry)
     ]

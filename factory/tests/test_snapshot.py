@@ -2,13 +2,11 @@
 
 import unittest
 
-from factory import config as factory_config
 from factory import markers, snapshot
 from factory.github_api import GitHubError
 from factory.snapshot import Bot
 from factory.tests.fakes import FakeGitHub
 
-CONFIG = factory_config.load()
 BOT = Bot("mk-factory[bot]", 4242)
 OPEN_LIST = {"state": "open", "labels": "factory:fix", "per_page": "100"}
 CLOSED_LIST = {
@@ -79,7 +77,7 @@ class FetchTest(unittest.TestCase):
             pulls=[pull_json(30, state="closed"), pull_json(31, state="open")],
         )
 
-        result = snapshot.fetch(github, CONFIG)
+        result = snapshot.fetch(github)
 
         self.assertEqual(len(result.issues), 1)
         issue = result.issues[0]
@@ -99,14 +97,14 @@ class FetchTest(unittest.TestCase):
             labeled("Marfusios"),
         ])
 
-        self.assertEqual(snapshot.fetch(github, CONFIG).issues[0].trigger_actor, "Marfusios")
+        self.assertEqual(snapshot.fetch(github).issues[0].trigger_actor, "Marfusios")
 
     def test_a_missing_actor_or_no_labeled_event_leaves_no_trigger_actor(self) -> None:
         github = github_with([issue_json(12), issue_json(13)])
         add_history(github, 12, events=[labeled(None)])
         add_history(github, 13, events=[{"event": "closed", "actor": {"login": "x"}}])
 
-        issues = snapshot.fetch(github, CONFIG).issues
+        issues = snapshot.fetch(github).issues
 
         self.assertEqual([i.trigger_actor for i in issues], [None, None])
 
@@ -114,18 +112,18 @@ class FetchTest(unittest.TestCase):
         github = github_with([issue_json(12)])
         add_history(github, 12, comments=[comment_json(9, "a", 1), comment_json(3, "b", 2), comment_json(5, "c", 3)])
 
-        self.assertEqual([c.id for c in snapshot.fetch(github, CONFIG).issues[0].comments], [3, 5, 9])
+        self.assertEqual([c.id for c in snapshot.fetch(github).issues[0].comments], [3, 5, 9])
 
     def test_pull_requests_in_the_issue_list_are_dropped(self) -> None:
         github = github_with([issue_json(12), issue_json(13, pull_request={"url": "x"})])
 
-        self.assertEqual([i.number for i in snapshot.fetch(github, CONFIG).issues], [12])
+        self.assertEqual([i.number for i in snapshot.fetch(github).issues], [12])
 
     def test_a_merged_pull_request_is_closed_and_merged(self) -> None:
         github = github_with([issue_json(12)])
         add_history(github, 12, pulls=[pull_json(40, state="closed", merged_at="2026-01-01T00:00:00Z")])
 
-        pull = snapshot.fetch(github, CONFIG).issues[0].pull_request
+        pull = snapshot.fetch(github).issues[0].pull_request
 
         self.assertEqual((pull.open, pull.merged), (False, True))
 
@@ -143,7 +141,7 @@ class FetchTest(unittest.TestCase):
             del github.answers[key(f"{github.repo}/issues/{number}/events", {"per_page": "100"})]
             del github.answers[key(f"{github.repo}/issues/{number}/comments", {"per_page": "100"})]
 
-        result = snapshot.fetch(github, CONFIG)
+        result = snapshot.fetch(github)
 
         self.assertEqual([i.number for i in result.issues], [20, 23])
         kept = result.issues[0]
@@ -157,33 +155,68 @@ class FetchTest(unittest.TestCase):
             {"name": "zeta", "type": "dir"}, {"name": "README.md", "type": "file"}, {"name": "alpha", "type": "dir"},
         ]
 
-        result = snapshot.fetch(github, CONFIG)
+        result = snapshot.fetch(github)
 
         self.assertTrue(result.halted)
         self.assertEqual(result.apps, ("alpha", "zeta"))
 
+    def test_an_answer_that_is_not_a_list_halts(self) -> None:
+        github = github_with([])
+        github.answers[key(f"{github.repo}/issues", HALT_LIST)] = {"message": "odd"}
+
+        self.assertTrue(snapshot.fetch(github).halted)
+
+    def test_the_same_issue_twice_in_the_open_list_gives_one_issue(self) -> None:
+        github = github_with([issue_json(12, title="first"), issue_json(12, title="second")])
+
+        issues = snapshot.fetch(github).issues
+
+        self.assertEqual([(i.number, i.title) for i in issues], [(12, "first")])
+
+    def test_an_issue_in_both_lists_is_one_open_issue_with_its_history(self) -> None:
+        github = github_with(
+            [issue_json(12, labels=("factory:fix", "status:working"))],
+            [issue_json(12, state="closed", labels=("factory:fix", "status:failed"))],
+        )
+        add_history(github, 12, events=[labeled("Marfusios")], comments=[comment_json(3, "a", 1)])
+
+        issues = snapshot.fetch(github).issues
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual((issues[0].open, issues[0].trigger_actor, len(issues[0].comments)), (True, "Marfusios", 1))
+
+    def test_openness_comes_from_the_list_not_the_state_field(self) -> None:
+        entry = issue_json(12)
+        del entry["state"]
+        closed = issue_json(20, state="open", labels=("factory:fix", "status:failed"))
+        github = github_with([entry], [closed])
+
+        issues = snapshot.fetch(github).issues
+
+        self.assertEqual([(i.number, i.open) for i in issues], [(12, True), (20, False)])
+
     def test_not_halted_when_the_halt_list_is_empty(self) -> None:
-        self.assertFalse(snapshot.fetch(github_with([]), CONFIG).halted)
+        self.assertFalse(snapshot.fetch(github_with([])).halted)
 
     def test_a_missing_apps_directory_means_no_apps(self) -> None:
         github = github_with([])
         github.answers[key(f"{github.repo}/contents/apps")] = {"message": "Not Found"}
 
-        self.assertEqual(snapshot.fetch(github, CONFIG).apps, ())
+        self.assertEqual(snapshot.fetch(github).apps, ())
 
     def test_a_failing_request_ends_the_fetch(self) -> None:
         github = github_with([issue_json(12)])
         github.fail.add(f"{github.repo}/issues/12/comments")
 
         with self.assertRaises(GitHubError):
-            snapshot.fetch(github, CONFIG)
+            snapshot.fetch(github)
 
     def test_a_failing_pull_request_lookup_ends_the_fetch(self) -> None:
         github = github_with([issue_json(12)])
         github.fail.add(f"{github.repo}/pulls")
 
         with self.assertRaises(GitHubError):
-            snapshot.fetch(github, CONFIG)
+            snapshot.fetch(github)
 
     def test_odd_json_does_not_crash(self) -> None:
         odd = {"number": 12, "title": None, "body": None, "user": None, "state": "open"}  # no labels at all
@@ -195,7 +228,7 @@ class FetchTest(unittest.TestCase):
             pulls=["x", {"number": "y"}],
         )
 
-        result = snapshot.fetch(github, CONFIG)
+        result = snapshot.fetch(github)
 
         self.assertEqual([i.number for i in result.issues], [12])
         issue = result.issues[0]
@@ -214,7 +247,7 @@ class MarkerTest(unittest.TestCase):
             comment_json(4, BOT.login, BOT.user_id, "no marker here"),
         ])
 
-        issue = snapshot.fetch(github, CONFIG).issues[0]
+        issue = snapshot.fetch(github).issues[0]
 
         self.assertEqual([m.data["n"] for m in issue.markers(BOT)], [3])
         self.assertEqual(issue.markers(BOT)[0].comment_id, 3)
@@ -226,9 +259,17 @@ class MarkerTest(unittest.TestCase):
             comment_json(2, BOT.login, BOT.user_id, markers.encode({"n": 2})),
         ])
 
-        issue = snapshot.fetch(github, CONFIG).issues[0]
+        issue = snapshot.fetch(github).issues[0]
 
         self.assertEqual([m.data["n"] for m in issue.markers(BOT)], [2, 6])
+
+    def test_a_bot_without_a_login_or_id_matches_no_comment(self) -> None:
+        github = github_with([issue_json(12)])
+        add_history(github, 12, comments=[{"id": 1, "user": None, "body": markers.encode({"n": 1})}])
+
+        issue = snapshot.fetch(github).issues[0]
+
+        self.assertEqual(issue.markers(Bot("", 0)), ())
 
     def test_the_outcome_is_the_marker_text_or_empty(self) -> None:
         text = snapshot.Marker(1, "t", {"outcome": "published"})
