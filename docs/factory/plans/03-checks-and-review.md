@@ -64,7 +64,9 @@ The comments of an issue and of its pull request form one stream (both are issue
 | checks `passed`, the pull request is a draft | `HandOff` |
 | anything else (checks pending, already handed over) | nothing |
 
-Checks for a head are: `failed` when any check run of the head ended in failure or timed out; otherwise `pending` when a name in `required_checks` is missing or not completed; otherwise `passed`. A cancelled, skipped or neutral run is neither a failure nor a pass of a required name.
+Checks for a head are: `failed` when a check named in `required_checks` ended in failure or timed out; otherwise `pending` when a name in `required_checks` is missing or has not passed; otherwise `passed`. Only required names decide: a helper job that breaks (one matrix job, the job that calls the review model) is covered by the aggregate names `apps` and `review`. A cancelled, skipped or neutral run is neither a failure nor a pass of a required name.
+
+Two more rulings made during the build: the review workflow picks the document prompt when every changed file lies under `apps/<app>/docs/epics/` (the bot labels a pull request only after opening it, so a label cannot choose the first review's prompt), and it does not run again when a pull request is marked ready (that head has its review already).
 
 ---
 
