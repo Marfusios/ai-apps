@@ -5,10 +5,11 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 ARG CLAUDE_CODE_VERSION
 RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
- && corepack enable \
- && chown node:node /usr/local/bin /usr/local/lib/node_modules
+ && corepack enable
 COPY harness /opt/factory/harness
 COPY managed-settings.json /etc/claude-code/managed-settings.json
 RUN chmod -R a+rX,a-w /opt/factory/harness /etc/claude-code
+ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
+ENV PATH=${PATH}:/home/node/.npm-global/bin
 USER node
 WORKDIR /workspace

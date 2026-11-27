@@ -12,7 +12,7 @@ import tempfile
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
-from factory.config import Config
+from factory.config import Config, ConfigError
 from factory.config import load as load_config
 from factory.image import managed_settings
 
@@ -36,8 +36,9 @@ def _matching(root: Path, patterns: Sequence[str]) -> Iterator[tuple[str, Path]]
     found: dict[str, Path] = {}
     for pattern in patterns:
         for path in root.glob(pattern):
-            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
-                found[path.relative_to(root).as_posix()] = path
+            relative = path.relative_to(root)
+            if path.is_file() and "__pycache__" not in relative.parts and path.suffix != ".pyc":
+                found[relative.as_posix()] = path
     yield from sorted(found.items())
 
 
@@ -93,7 +94,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if IMAGE_NAME.fullmatch(image) is None:
         print("FACTORY_IMAGE is malformed", file=sys.stderr)
         return 2
-    config = load_config()
+    try:
+        config = load_config()
+    except ConfigError as error:
+        print(f"the factory configuration cannot be loaded: {error}", file=sys.stderr)
+        return 2
     with tempfile.TemporaryDirectory(prefix="factory-image-") as holder:
         context = Path(holder) / "context"
         write_context(ROOT, context)

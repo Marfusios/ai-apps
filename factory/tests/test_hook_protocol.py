@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,9 +22,10 @@ HARMLESS = {
 
 @unittest.skipIf(shutil.which("sh") is None, "sh is not on PATH")
 class HookProtocolTests(unittest.TestCase):
-    def run_hook(self, name: str, stdin: str) -> subprocess.CompletedProcess[str]:
+    def run_hook(self, name: str, stdin: str, **environment: str) -> subprocess.CompletedProcess[str]:
         env = {k: v for k, v in os.environ.items() if k != "FACTORY_RUN"}
         env["CLAUDE_PROJECT_DIR"] = str(ROOT)
+        env.update(environment)
         return subprocess.run(
             ["sh", LAUNCHER, name], input=stdin, capture_output=True, text=True, cwd=ROOT, env=env, timeout=120
         )
@@ -54,6 +56,25 @@ class HookProtocolTests(unittest.TestCase):
 
     def test_unknown_hook_name_exits_2(self) -> None:
         self.assertEqual(self.run_hook("no_such_hook", "{}").returncode, 2)
+
+    def test_the_named_interpreter_runs_the_hook(self) -> None:
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git push --force"}, "cwd": "."})
+        result = self.run_hook("guard_git", payload, FACTORY_HOOK_PYTHON=sys.executable)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_a_named_interpreter_that_is_missing_exits_2_although_python3_is_on_the_path(self) -> None:
+        with tempfile.TemporaryDirectory() as empty:
+            missing = str(Path(empty) / "no-such-python")
+            result = self.run_hook("guard_git", json.dumps(HARMLESS["guard_git"]), FACTORY_HOOK_PYTHON=missing)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("FACTORY_HOOK_PYTHON", result.stderr)
+
+    def test_a_named_program_that_is_not_python_3_11_exits_2(self) -> None:
+        # sh cannot run the version check, which is what an interpreter that is too old would also fail
+        result = self.run_hook("guard_git", json.dumps(HARMLESS["guard_git"]), FACTORY_HOOK_PYTHON=shutil.which("sh"))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("FACTORY_HOOK_PYTHON", result.stderr)
 
     def run_without_python(self, name: str, factory_run: bool) -> subprocess.CompletedProcess[str]:
         """Run the launcher by the absolute path of sh with a PATH that holds nothing at all."""

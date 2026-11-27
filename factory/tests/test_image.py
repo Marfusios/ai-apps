@@ -13,11 +13,15 @@ from pathlib import Path
 from unittest import mock
 
 from factory import runner
-from factory.config import load
+from factory.config import ConfigError, load
 from factory.image import build, managed_settings
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = load()
+
+
+EXPECTED_PATHS_COMMAND = ("FACTORY_HOOK_PYTHON=/usr/bin/python3 /bin/sh /opt/factory/harness/.claude/hooks/run "
+                          "guard_paths")
 
 
 def project_settings() -> dict:
@@ -69,13 +73,61 @@ class ManagedSettingsTests(unittest.TestCase):
         entry = managed["hooks"]["PreToolUse"][1]
         self.assertEqual(entry["matcher"], "Edit|Write|MultiEdit|NotebookEdit")
         self.assertEqual(entry["hooks"][0], {"type": "command", "timeout": 20,
-                                             "command": "sh /opt/factory/harness/.claude/hooks/run guard_paths"})
+                                             "command": EXPECTED_PATHS_COMMAND})
+
+    def test_every_command_names_its_interpreter_and_the_absolute_shell(self):
+        managed = managed_settings.build(project_settings())
+        commands = {h["command"] for group in managed["hooks"].values() for entry in group for h in entry["hooks"]}
+        self.assertEqual(commands, {
+            f"FACTORY_HOOK_PYTHON=/usr/bin/python3 /bin/sh /opt/factory/harness/.claude/hooks/run {name}"
+            for name in managed_settings.EXPECTED_HOOKS})
 
     def test_an_unexpected_hook_command_fails_the_build(self):
         project = project_settings()
         project["hooks"]["Stop"][0]["hooks"][0]["command"] = "sh ./finish_check.sh"
         with self.assertRaisesRegex(ValueError, "Stop"):
             managed_settings.build(project)
+
+    def test_a_command_that_does_not_start_with_the_project_launcher_fails_the_build(self):
+        launcher = 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/run" guard_git'
+        for command in (f"true || {launcher}", f" {launcher}", f"bash {launcher[3:]}",
+                        launcher.replace("sh ", "FOO=1 sh ", 1)):
+            with self.subTest(command=command):
+                project = project_settings()
+                project["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = command
+                with self.assertRaisesRegex(ValueError, "PreToolUse"):
+                    managed_settings.build(project)
+
+    def test_a_guard_removed_from_the_settings_fails_the_build(self):
+        project = project_settings()
+        del project["hooks"]["PreToolUse"][1]["hooks"][1]
+        with self.assertRaisesRegex(ValueError, "guard_quality"):
+            managed_settings.build(project)
+
+    def test_a_hook_that_is_not_expected_fails_the_build(self):
+        project = project_settings()
+        project["hooks"]["Stop"][0]["hooks"].append(
+            {"type": "command", "command": 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/run" extra'})
+        with self.assertRaisesRegex(ValueError, "extra"):
+            managed_settings.build(project)
+
+    def test_settings_without_a_pre_tool_use_or_a_stop_command_fail_the_build(self):
+        for event in ("PreToolUse", "Stop"):
+            with self.subTest(event=event):
+                project = project_settings()
+                del project["hooks"][event]
+                with self.assertRaisesRegex(ValueError, event):
+                    managed_settings.build(project)
+
+    def test_wrongly_shaped_hooks_fail_the_build(self):
+        shapes = ({"Stop": ["x"]}, {"Stop": {"hooks": []}}, {"Stop": [{"hooks": "x"}]}, {"Stop": [{"hooks": ["x"]}]},
+                  {"Stop": [{"hooks": [{"command": 1}]}]}, ["x"])
+        for hooks in shapes:
+            with self.subTest(hooks=hooks):
+                project = project_settings()
+                project["hooks"] = hooks
+                with self.assertRaises(ValueError):
+                    managed_settings.build(project)
 
     def test_settings_without_hooks_fail_the_build(self):
         with self.assertRaises(ValueError):
@@ -141,6 +193,21 @@ class WriteContextTests(TemporaryDirectoryTestCase):
         self.assertEqual(json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
+    def test_the_copied_package_imports_the_modules_the_hooks_load_late(self):
+        context = self.tmp / "context"
+        build.write_context(ROOT, context)
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        env = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"}
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); "
+                "import factory.config, factory.app_config, factory.result; print(factory.result.__file__)")
+        harness = context / "harness"
+        done = subprocess.run([sys.executable, "-c", code, str(harness)], capture_output=True, text=True,
+                              cwd=elsewhere, env=env, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue(Path(done.stdout.strip()).is_relative_to(harness), done.stdout)
+
+
 class DigestTests(TemporaryDirectoryTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -179,6 +246,11 @@ class DigestTests(TemporaryDirectoryTestCase):
         (self.tree / "factory" / "b.py").write_bytes(b"b")
         self.assertNotEqual(build.harness_digest(self.tree), before)
 
+    def test_a_checkout_below_a_directory_named_pycache_is_still_digested(self):
+        nested = self.tmp / "__pycache__" / "checkout"
+        copy_harness(nested)
+        self.assertEqual(build.harness_digest(nested), build.harness_digest(self.tree))
+
     def test_the_digest_is_a_sha256_hex_string(self):
         self.assertRegex(build.harness_digest(self.tree), r"^[0-9a-f]{64}$")
 
@@ -199,6 +271,17 @@ class ContainerfileTests(unittest.TestCase):
         lines = (ROOT / "factory" / "image" / "Containerfile").read_text(encoding="utf-8").splitlines()
         self.assertEqual([line for line in lines if line.startswith("USER ")][-1], "USER node")
         self.assertEqual(lines[-1], "WORKDIR /workspace")
+
+    def test_the_agent_cannot_write_where_the_system_looks_first(self):
+        text = (ROOT / "factory" / "image" / "Containerfile").read_text(encoding="utf-8")
+        lines = text.splitlines()
+        self.assertNotIn("chown", text)
+        self.assertIn("ENV NPM_CONFIG_PREFIX=/home/node/.npm-global", lines)
+        self.assertIn("ENV PATH=${PATH}:/home/node/.npm-global/bin", lines)
+        self.assertLess(lines.index("ENV PATH=${PATH}:/home/node/.npm-global/bin"), lines.index("USER node"))
+        installs = text[text.index("RUN npm install -g"):text.index("COPY harness")]
+        self.assertIn("corepack enable", installs)
+        self.assertIn("claude-code", installs)
 
     def test_the_image_label_is_the_one_the_runner_checks(self):
         self.assertEqual(build.IMAGE_LABEL, runner.IMAGE_LABEL)
@@ -233,6 +316,16 @@ class MainTests(TemporaryDirectoryTestCase):
             status, out, _ = self.run_main(["--print-digest"], {})
         self.assertEqual(status, 0)
         self.assertEqual(out.strip(), build.harness_digest(ROOT))
+        run.assert_not_called()
+
+    def test_a_configuration_that_cannot_be_loaded_is_a_one_line_message_and_status_2(self):
+        error = ConfigError("cannot read config.toml: broken")
+        with mock.patch.object(build, "load_config", side_effect=error), \
+                mock.patch.object(build.subprocess, "run") as run:
+            status, out, err = self.run_main([], {"FACTORY_IMAGE": "factory-agent:1"})
+        self.assertEqual(status, 2)
+        self.assertEqual(out, "")
+        self.assertEqual(err, "the factory configuration cannot be loaded: cannot read config.toml: broken\n")
         run.assert_not_called()
 
     def test_the_build_gets_a_context_that_is_removed_afterwards_and_podmans_status_is_returned(self):
