@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from factory.config import ConfigError, is_writable, load
+from factory.config import ConfigError, is_trusted, is_writable, load
 
-VALID = """schema = 1
+TOP = """schema = 1
 trusted_logins = ["someone"]
 writable_paths = ["apps/"]
 protected_branches = ["main"]
@@ -18,6 +18,73 @@ color = "5319e7"
 description = "Run it"
 applied_by = "person"
 """
+DISPATCHER = """
+[dispatcher]
+poll_seconds = 45
+usage_limit_backoff_minutes = 30
+max_bundle_megabytes = 50
+max_file_megabytes = 5
+max_commits = 50
+"""
+AGENT = """
+[agent]
+permission_mode = "auto"
+claude_code_version = "2.1.332"
+base_image = "docker.io/library/node:24-bookworm-slim"
+
+[agent.toolchains]
+node = ["24"]
+"""
+STAGES = """
+[stages.fix_issue]
+model = "opus"
+timeout_minutes = 90
+max_turns = 300
+"""
+VALID = TOP + DISPATCHER + AGENT + STAGES
+
+# (name, text to replace, replacement, key the message must contain)
+INVALID_SETTINGS = [
+    ("poll low", "poll_seconds = 45", "poll_seconds = 14", "dispatcher.poll_seconds"),
+    ("poll high", "poll_seconds = 45", "poll_seconds = 601", "dispatcher.poll_seconds"),
+    ("poll bool", "poll_seconds = 45", "poll_seconds = true", "dispatcher.poll_seconds"),
+    ("poll string", "poll_seconds = 45", 'poll_seconds = "45"', "dispatcher.poll_seconds"),
+    ("poll float", "poll_seconds = 45", "poll_seconds = 45.0", "dispatcher.poll_seconds"),
+    ("backoff low", "backoff_minutes = 30", "backoff_minutes = 4", "dispatcher.usage_limit_backoff_minutes"),
+    ("backoff high", "backoff_minutes = 30", "backoff_minutes = 721", "dispatcher.usage_limit_backoff_minutes"),
+    ("bundle zero", "max_bundle_megabytes = 50", "max_bundle_megabytes = 0", "dispatcher.max_bundle_megabytes"),
+    ("bundle high", "max_bundle_megabytes = 50", "max_bundle_megabytes = 501", "dispatcher.max_bundle_megabytes"),
+    ("file zero", "max_file_megabytes = 5", "max_file_megabytes = 0", "dispatcher.max_file_megabytes"),
+    ("file high", "max_file_megabytes = 5", "max_file_megabytes = 101", "dispatcher.max_file_megabytes"),
+    ("commits zero", "max_commits = 50", "max_commits = 0", "dispatcher.max_commits"),
+    ("commits high", "max_commits = 50", "max_commits = 501", "dispatcher.max_commits"),
+    ("unknown dispatcher key", "max_commits = 50", "max_commits = 50\nextra = 1", "dispatcher"),
+    ("missing dispatcher key", "max_commits = 50\n", "", "dispatcher.max_commits"),
+    ("permission mode", 'permission_mode = "auto"', 'permission_mode = "plan"', "agent.permission_mode"),
+    ("version too short", '"2.1.332"', '"2.1"', "agent.claude_code_version"),
+    ("version prefix", '"2.1.332"', '"v2.1.332"', "agent.claude_code_version"),
+    ("version non-ASCII digit", '"2.1.332"', '"2.1.\\u0663"', "agent.claude_code_version"),
+    ("version trailing newline", '"2.1.332"', '"2.1.332\\n"', "agent.claude_code_version"),
+    ("base image registry", "docker.io/library/node:24-bookworm-slim", "evil.example/node:24", "agent.base_image"),
+    ("unknown agent key", "[agent.toolchains]", "extra = 1\n\n[agent.toolchains]", "agent"),
+    ("toolchain name", 'node = ["24"]', 'ruby = ["3"]', "agent.toolchains"),
+    ("toolchain empty list", 'node = ["24"]', "node = []", "agent.toolchains.node"),
+    ("toolchain non-string", 'node = ["24"]', "node = [24]", "agent.toolchains.node"),
+    ("toolchain empty string", 'node = ["24"]', 'node = [""]', "agent.toolchains.node"),
+    ("no toolchains", '[agent.toolchains]\nnode = ["24"]\n', "", "agent.toolchains"),
+    ("stage name", "[stages.fix_issue]", "[stages.bogus]", "stages.bogus"),
+    ("model uppercase", 'model = "opus"', 'model = "Opus"', "stages.fix_issue.model"),
+    ("model empty", 'model = "opus"', 'model = ""', "stages.fix_issue.model"),
+    ("timeout low", "timeout_minutes = 90", "timeout_minutes = 4", "stages.fix_issue.timeout_minutes"),
+    ("timeout high", "timeout_minutes = 90", "timeout_minutes = 361", "stages.fix_issue.timeout_minutes"),
+    ("turns low", "max_turns = 300", "max_turns = 9", "stages.fix_issue.max_turns"),
+    ("turns high", "max_turns = 300", "max_turns = 1001", "stages.fix_issue.max_turns"),
+    ("unknown stage key", "max_turns = 300", "max_turns = 300\nextra = 1", "stages.fix_issue"),
+    ("no stages", STAGES, "\n[stages]\n", "stages"),
+    ("writable path without slash", 'writable_paths = ["apps/"]', 'writable_paths = ["apps"]', "writable_paths"),
+    ("registry without slash", 'image_registries = ["docker.io/library/"]',
+     'image_registries = ["docker.io/library"]', "image_registries"),
+]
 
 
 class ConfigTest(unittest.TestCase):
@@ -34,6 +101,19 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(len(config.labels), 15)
         self.assertEqual({l.applied_by for l in config.labels}, {"person", "dispatcher"})
 
+    def test_repository_config_has_dispatcher_agent_and_stage_settings(self):
+        config = load()
+        dispatcher = config.dispatcher
+        self.assertEqual((dispatcher.poll_seconds, dispatcher.usage_limit_backoff_minutes,
+                          dispatcher.max_bundle_megabytes, dispatcher.max_file_megabytes, dispatcher.max_commits),
+                         (45, 30, 50, 5, 50))
+        agent = config.agent
+        self.assertEqual((agent.permission_mode, agent.claude_code_version, agent.base_image),
+                         ("auto", "2.1.332", "docker.io/library/node:24-bookworm-slim"))
+        self.assertEqual(dict(agent.toolchains), {"node": ("24",), "python": ("3.11",)})
+        stage = config.stages["fix_issue"]
+        self.assertEqual((stage.model, stage.timeout_minutes, stage.max_turns), ("opus", 90, 300))
+
     def test_label_descriptions_fit_github_limit(self):
         for label in load().labels:
             self.assertLessEqual(len(label.description), 100, label.name)
@@ -49,6 +129,13 @@ class ConfigTest(unittest.TestCase):
     def test_drive_letter_path_is_not_writable(self):
         self.assertFalse(is_writable("C:/apps/x.py", load()))
 
+    def test_is_trusted_ignores_case(self):
+        config = load()
+        self.assertTrue(is_trusted("Marfusios", config))
+        self.assertTrue(is_trusted("marfusios", config))
+        self.assertFalse(is_trusted("Marfusios2", config))
+        self.assertFalse(is_trusted("", config))
+
     def test_minimal_valid_config_loads(self):
         self.assertEqual(self.load_text(VALID).trusted_logins, ("someone",))
 
@@ -63,6 +150,26 @@ class ConfigTest(unittest.TestCase):
         for name, text in cases.items():
             with self.subTest(name), self.assertRaises(ConfigError):
                 self.load_text(text)
+
+    def test_invalid_settings_name_their_key(self):
+        for name, old, new, key in INVALID_SETTINGS:
+            with self.subTest(name):
+                self.assertIn(old, VALID)
+                with self.assertRaises(ConfigError) as caught:
+                    self.load_text(VALID.replace(old, new))
+                self.assertIn(key, str(caught.exception))
+
+    def test_each_settings_table_is_required(self):
+        for table, text in (("dispatcher", DISPATCHER), ("agent", AGENT), ("stages", STAGES)):
+            with self.subTest(table), self.assertRaises(ConfigError) as caught:
+                self.load_text(VALID.replace(text, ""))
+            self.assertIn(table, str(caught.exception))
+
+    def test_duplicate_label_names_are_rejected(self):
+        label = TOP[TOP.index("[[labels]]"):]
+        with self.assertRaises(ConfigError) as caught:
+            self.load_text(VALID.replace(DISPATCHER, label + DISPATCHER, 1))
+        self.assertIn("factory:epic", str(caught.exception))
 
     def test_deeply_nested_value_raises_config_error(self):
         with self.assertRaises(ConfigError):
