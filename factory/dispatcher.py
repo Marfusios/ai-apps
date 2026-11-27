@@ -217,7 +217,7 @@ class Dispatcher:
     def tick(self, dry_run: bool = False) -> list[Action]:
         """Fetch, decide and apply; return the actions decided. With `dry_run` nothing is written anywhere."""
         now = self._clock()
-        current = snapshot.fetch(self._github)
+        current = snapshot.fetch(self._github, self._config)
         for issue in current.issues:
             if issue.unreadable:
                 log.warning("issue #%d could not be read in full this poll, so it is left as it is", issue.number)
