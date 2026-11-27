@@ -100,6 +100,14 @@ usage_limit_backoff_minutes = 30
 max_bundle_megabytes = 50
 max_file_megabytes = 5
 max_commits = 50
+# The checks that must pass on a pull request, by the name GitHub shows for them.
+required_checks = ["repository", "apps", "review"]
+max_fix_rounds = 3
+
+# The account the review workflow comments as; the id is checked because a login can be renamed.
+[review]
+bot_login = "github-actions[bot]"
+bot_user_id = 41898282
 
 [agent]
 permission_mode = "auto"
@@ -116,3 +124,13 @@ python = ["3.11"]
 model = "opus"
 timeout_minutes = 90
 max_turns = 300
+
+[stages.fix]
+model = "opus"
+timeout_minutes = 60
+max_turns = 200
+
+[stages.revise]
+model = "opus"
+timeout_minutes = 60
+max_turns = 200

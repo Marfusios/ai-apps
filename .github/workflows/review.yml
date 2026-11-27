@@ -1,0 +1,126 @@
+name: Review
+
+# Two jobs with nothing in common but the answer. The `codex` job holds the API key and may only read; it runs a
+# model over the pull request's merged tree, with a prompt and a schema taken from the base commit so that the
+# pull request cannot change how it is reviewed. The `review` job may comment but holds no secret, and runs only
+# code from the base commit, never anything from the pull request.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  codex:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      answer: ${{ steps.fallback.outputs.final-message || steps.first.outputs.final-message }}
+      model: ${{ steps.fallback.outcome == 'success' && vars.FACTORY_REVIEW_FALLBACK_MODEL || vars.FACTORY_REVIEW_MODEL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the base and head commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+      # Written outside the checkout, from the base commit. Before the base commit has them (the pull request that
+      # adds them), nothing is written and the Codex steps skip, so the report says the review could not run.
+      - name: Write the prompt and the schema from the base commit
+        id: prepare
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -eu
+          if printf '%s' "$LABELS" | grep -Eq '"stage:(design|plan)"'; then
+            prompt=document.md
+          else
+            prompt=code.md
+          fi
+          if git cat-file -e "$BASE_SHA:factory/review/$prompt" && git cat-file -e "$BASE_SHA:factory/review/schema.json"; then
+            git show "$BASE_SHA:factory/review/$prompt" > "$RUNNER_TEMP/prompt.md"
+            {
+              printf '\nBase commit: %s\n' "$BASE_SHA"
+              printf 'Head commit: %s\n' "$HEAD_SHA"
+              printf 'Pull request: %s\n' "$PR_NUMBER"
+            } >> "$RUNNER_TEMP/prompt.md"
+            git show "$BASE_SHA:factory/review/schema.json" > "$RUNNER_TEMP/schema.json"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Review with the first model
+        id: first
+        if: steps.prepare.outputs.ready == 'true'
+        continue-on-error: true
+        uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1.14
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: ${{ runner.temp }}/prompt.md
+          output-schema-file: ${{ runner.temp }}/schema.json
+          permission-profile: ":read-only"
+          model: ${{ vars.FACTORY_REVIEW_MODEL }}
+          allow-bot-users: mk-factory
+      - name: Review with the fallback model
+        id: fallback
+        if: steps.first.outcome == 'failure' && vars.FACTORY_REVIEW_FALLBACK_MODEL != ''
+        continue-on-error: true
+        uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1.14
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: ${{ runner.temp }}/prompt.md
+          output-schema-file: ${{ runner.temp }}/schema.json
+          permission-profile: ":read-only"
+          model: ${{ vars.FACTORY_REVIEW_FALLBACK_MODEL }}
+          allow-bot-users: mk-factory
+
+  review:
+    needs: codex
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      # Before the base commit has the report (the pull request that adds it), nothing is posted.
+      - name: Report the verdict as a comment
+        env:
+          ANSWER: ${{ needs.codex.outputs.answer }}
+          MODEL: ${{ needs.codex.outputs.model }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f factory/review/report.py ]; then
+            echo "The base commit has no review report yet; nothing to post."
+            exit 0
+          fi
+          printf '%s' "$ANSWER" > "$RUNNER_TEMP/answer.json"
+          status=0
+          python -m factory.review.report --answer-file "$RUNNER_TEMP/answer.json" --head "$HEAD_SHA" --model "$MODEL" --out "$RUNNER_TEMP/comment.md" || status=$?
+          if [ -f "$RUNNER_TEMP/comment.md" ]; then
+            gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md"
+          fi
+          exit "$status"

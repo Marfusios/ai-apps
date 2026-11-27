@@ -32,6 +32,25 @@ class MarkerTests(unittest.TestCase):
     def test_deeply_nested_json_is_none_not_an_error(self) -> None:
         self.assertIsNone(markers.parse("<!-- factory:v1 " + "[" * 100000 + " -->"))
 
+    def test_review_marker_round_trips_with_its_own_prefix(self) -> None:
+        data = {"head": "a" * 40, "verdict": "pass", "findings": 0}
+        encoded = markers.encode_review(data)
+        self.assertEqual(markers.REVIEW_PREFIX, "<!-- factory-review:v1 ")
+        self.assertTrue(encoded.startswith(markers.REVIEW_PREFIX))
+        self.assertEqual(markers.parse_review("text\n\n" + encoded), data)
+
+    def test_review_marker_cannot_close_the_comment_early_and_the_last_one_wins(self) -> None:
+        self.assertEqual(markers.parse_review(markers.encode_review({"a": "x --> y"})), {"a": "x --> y"})
+        two = markers.encode_review({"n": 1}) + "\n" + markers.encode_review({"n": 2})
+        self.assertEqual(markers.parse_review(two), {"n": 2})
+        for body in ("", "<!-- factory-review:v1 [1] -->", "<!-- factory-review:v1 nope -->"):
+            with self.subTest(body=body):
+                self.assertIsNone(markers.parse_review(body))
+
+    def test_neither_parser_reads_the_other_marker(self) -> None:
+        self.assertIsNone(markers.parse(markers.encode_review({"n": 1})))
+        self.assertIsNone(markers.parse_review(markers.encode({"n": 1})))
+
 
 if __name__ == "__main__":
     unittest.main()

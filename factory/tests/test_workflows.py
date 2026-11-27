@@ -123,5 +123,120 @@ class AppChecksWorkflowTests(unittest.TestCase):
         self.assertRegex(block, r"needs:\s*\[plan, app\]")
 
 
+SAME_REPOSITORY = "github.event.pull_request.head.repo.full_name == github.repository"
+CODEX_ACTION = "openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1.14"
+
+
+def steps(block: str) -> dict[str, str]:
+    """Return each step's text of a job, keyed by its id (or its name when it has none)."""
+    found: dict[str, str] = {}
+    for chunk in re.split(r"\n      - (?=\S)", block)[1:]:
+        key = re.search(r"^\s*id:\s*(\S+)", chunk, re.M) or re.search(r"^(?:name:\s*)?(.+)$", chunk, re.M)
+        found[key.group(1)] = chunk
+    return found
+
+
+class ReviewWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.text = read("review.yml")
+        self.jobs = jobs(self.text)
+
+    def test_runs_on_pull_requests_with_no_permissions_by_default(self) -> None:
+        self.assertEqual(set(self.jobs), {"codex", "review"})
+        self.assertRegex(self.text, r"(?m)^permissions: \{\}$")
+        self.assertNotRegex(self.text, r"(?m)^permissions:\s*$")
+        self.assertRegex(self.text, r"types: \[opened, synchronize, reopened, ready_for_review\]")
+
+    def test_one_review_per_pull_request_and_a_new_push_cancels_the_old(self) -> None:
+        self.assertRegex(self.text, r"group: review-\$\{\{ github\.event\.pull_request\.number \}\}")
+        self.assertIn("cancel-in-progress: true", self.text)
+
+    def test_both_jobs_run_only_for_a_branch_of_this_repository(self) -> None:
+        for name, block in self.jobs.items():
+            with self.subTest(name):
+                self.assertRegex(block, rf"(?m)^    if: .*{re.escape(SAME_REPOSITORY)}")
+
+    def test_the_api_key_is_in_the_job_that_only_reads_and_nowhere_else(self) -> None:
+        codex = self.jobs["codex"]
+        self.assertEqual(permission_lines(codex), ["contents: read"])
+        self.assertNotIn("write", codex)
+        self.assertEqual(self.text.count("secrets."), 2)
+        lines = [line.strip() for line in codex.splitlines() if "secrets.OPENAI_API_KEY" in line]
+        self.assertEqual(lines, ["openai-api-key: ${{ secrets.OPENAI_API_KEY }}"] * 2)
+
+    def test_the_job_that_comments_holds_no_secret_and_runs_only_base_code(self) -> None:
+        block = self.jobs["review"]
+        self.assertEqual(permission_lines(block), ["pull-requests: write"])
+        self.assertNotIn("secrets.", block)
+        self.assertNotIn("OPENAI", block)
+        self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", block)
+        self.assertNotIn("refs/pull", block)
+        self.assertIn("persist-credentials: false", block)
+        self.assertIn("python-version: \"3.11\"", block)
+
+    def test_the_review_job_is_the_check_other_programs_wait_for(self) -> None:
+        block = self.jobs["review"]
+        self.assertRegex(block, r"(?m)^    needs: codex$")
+        self.assertRegex(block, r"(?m)^    if: always\(\) && ")
+
+    def test_the_codex_checkout_is_the_merge_ref_without_credentials(self) -> None:
+        checkout = steps(self.jobs["codex"])["uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"]
+        self.assertIn("ref: refs/pull/${{ github.event.pull_request.number }}/merge", checkout)
+        self.assertIn("persist-credentials: false", checkout)
+
+    def test_prompt_and_schema_come_from_the_base_commit_outside_the_checkout(self) -> None:
+        script = run_blocks(steps(self.jobs["codex"])["prepare"])[0]
+        self.assertIn('git show "$BASE_SHA:factory/review/$prompt" > "$RUNNER_TEMP/prompt.md"', script)
+        self.assertIn('git show "$BASE_SHA:factory/review/schema.json" > "$RUNNER_TEMP/schema.json"', script)
+        self.assertRegex(script, r'"stage:\(design\|plan\)"')
+        self.assertIn("prompt=document.md", script)
+        self.assertIn("prompt=code.md", script)
+        for value in ("BASE_SHA", "HEAD_SHA", "PR_NUMBER"):
+            self.assertRegex(script, rf"printf '[^']*%s\\n' \"\${value}\"")
+
+    def test_a_base_without_the_prompt_makes_the_model_steps_skip(self) -> None:
+        found = steps(self.jobs["codex"])
+        self.assertIn('echo "ready=false" >> "$GITHUB_OUTPUT"', found["prepare"])
+        self.assertIn("steps.prepare.outputs.ready == 'true'", found["first"])
+
+    def test_both_model_steps_use_the_pinned_action_read_only_and_may_fail(self) -> None:
+        found = steps(self.jobs["codex"])
+        for key, model in (("first", "FACTORY_REVIEW_MODEL"), ("fallback", "FACTORY_REVIEW_FALLBACK_MODEL")):
+            with self.subTest(key):
+                step = found[key]
+                self.assertIn(f"uses: {CODEX_ACTION}", step)
+                self.assertIn("continue-on-error: true", step)
+                self.assertIn('permission-profile: ":read-only"', step)
+                self.assertIn("prompt-file: ${{ runner.temp }}/prompt.md", step)
+                self.assertIn("output-schema-file: ${{ runner.temp }}/schema.json", step)
+                self.assertIn(f"model: ${{{{ vars.{model} }}}}", step)
+                self.assertIn("allow-bot-users: mk-factory", step)
+
+    def test_the_fallback_runs_only_after_a_failure_and_when_it_is_configured(self) -> None:
+        self.assertIn("if: steps.first.outcome == 'failure' && vars.FACTORY_REVIEW_FALLBACK_MODEL != ''",
+                      steps(self.jobs["codex"])["fallback"])
+
+    def test_the_job_answers_with_the_fallback_when_it_succeeded_else_the_first(self) -> None:
+        block = self.jobs["codex"]
+        self.assertIn("answer: ${{ steps.fallback.outputs.final-message || steps.first.outputs.final-message }}", block)
+        self.assertIn("model: ${{ steps.fallback.outcome == 'success' && vars.FACTORY_REVIEW_FALLBACK_MODEL"
+                      " || vars.FACTORY_REVIEW_MODEL }}", block)
+
+    def test_the_report_runs_from_the_base_and_posts_before_it_exits_with_its_status(self) -> None:
+        script = run_blocks(steps(self.jobs["review"])["Report the verdict as a comment"])[0]
+        self.assertIn("if [ ! -f factory/review/report.py ]", script)
+        self.assertIn("python -m factory.review.report --answer-file \"$RUNNER_TEMP/answer.json\" "
+                      "--head \"$HEAD_SHA\" --model \"$MODEL\" --out \"$RUNNER_TEMP/comment.md\"", script)
+        self.assertIn("|| status=$?", script)
+        self.assertIn('gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md"', script)
+        self.assertLess(script.index("gh api"), script.index('exit "$status"'))
+        self.assertIn("GH_TOKEN: ${{ github.token }}", self.jobs["review"])
+        self.assertIn("ANSWER: ${{ needs.codex.outputs.answer }}", self.jobs["review"])
+
+    def test_no_script_expands_an_expression(self) -> None:
+        for script in run_blocks(self.text):
+            self.assertNotIn("${{", script)
+
+
 if __name__ == "__main__":
     unittest.main()
