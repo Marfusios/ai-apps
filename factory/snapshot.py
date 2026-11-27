@@ -181,12 +181,16 @@ def _pull_request(candidates: object) -> PullRequest | None:
 
 
 def checks_state(pull: PullRequest, required: Sequence[str]) -> str:
-    """Failed when any check failed, else pending until every required check has passed, else passed."""
-    if any(check.state == "failed" for check in pull.checks):
-        return "failed"
+    """Only required names decide: failed when one failed, else pending until all have passed, else passed.
+
+    A failed check that is not required (a helper job broken for infrastructure reasons) is ignored: the
+    required aggregate names cover real failures.
+    """
     if not pull.head_sha:
         return "pending"
     states = {check.name: check.state for check in pull.checks}
+    if any(states.get(name) == "failed" for name in required):
+        return "failed"
     return "pending" if any(states.get(name) != "passed" for name in required) else "passed"
 
 
@@ -221,13 +225,19 @@ def _reviews(raw: list) -> tuple[Review, ...]:
 
 
 def _verdict(comments: Sequence[Comment], head: str, config: Config) -> tuple[str, str]:
-    """The verdict and text of the review bot's newest comment about this head; empty when it has none."""
+    """The verdict and text of the review bot's newest comment about this head.
+
+    Empty when it has none, or when that newest comment's verdict is not a known one: an older comment
+    for the same head is superseded, not a fallback.
+    """
     bot = config.review
     for comment in sorted(comments, key=lambda comment: comment.id, reverse=True):
         if comment.author != bot.bot_login or comment.author_id != bot.bot_user_id:
             continue
         data = markers.parse_review(comment.body)
-        if data is not None and data.get("head") == head and data.get("verdict") in VERDICTS:
+        if data is not None and data.get("head") == head:
+            if data.get("verdict") not in VERDICTS:
+                return "", ""
             text = comment.body[: comment.body.index(markers.REVIEW_PREFIX)]
             return data["verdict"], text.strip()[:REVIEW_TEXT_LIMIT]
     return "", ""
