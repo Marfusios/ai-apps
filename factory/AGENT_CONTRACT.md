@@ -215,8 +215,9 @@ or the check itself failed, return `failed` and quote its message.
 
 Before it publishes anything, the dispatcher checks the result and every commit again, with its
 own copy of these rules. A `done` run that breaks one is reported as work not published, and
-nothing of it is pushed. With `needs_input` the questions are still posted, but commits that
-break a rule are not kept. The finish check catches most of these first.
+nothing of it is pushed. With `needs_input`, commits that break a commit rule are not kept and
+the questions are still posted. A hygiene finding in a posted text makes the whole run work not
+published, whatever its outcome. The finish check catches most of these first.
 
 - At most 50 commits on top of `FACTORY_BASE_SHA`, each with exactly one parent: the history is
   a straight line from the base, with no merge.

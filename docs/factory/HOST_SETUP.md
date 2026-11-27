@@ -563,6 +563,10 @@ lead-ins, and a hidden marker at the end names the job and the outcome.
 
 ### Reasons
 
+**Work not published** with "GitHub refused the push of the checked commits" means that a rule on
+GitHub or a moved branch rejected the push. A network failure during a push is not a refusal: the
+dispatcher retries it instead.
+
 A run that is **not started** or **ended without a result** names its reason in the line "This
 run ended because ...".
 
@@ -596,8 +600,11 @@ least a minute, at most an hour.
   attempt, with a growing delay between attempts. After eight failed attempts the factory posts
   an internal-error comment by itself and sets `status:needs-human`. Removing `factory:fix` drops
   the job at once.
-- **`status:building`, and the runner's log shows nothing new.** The runner is gone, and its job
-  stays running. Restart the runner (`systemctl --user restart factory-runner.service`, as the
+- **`status:building`, and the runner's log shows nothing new.** A healthy run logs nothing
+  between the runner claiming the job and its end, which can take up to the stage's time limit.
+  The runner is gone when `systemctl --user status factory-runner.service` shows the service
+  inactive, or when `podman ps`, as the runner, lists no container whose name starts with
+  `factory-` while the issue still shows `status:building`. Its job stays running. Restart the runner (`systemctl --user restart factory-runner.service`, as the
   runner): it records the job as **ended without a result** with the reason `internal`, and
   `/factory retry` runs it again.
 - **A merged pull request on an issue that is still open.** The issue shows `status:done` and the
@@ -607,9 +614,10 @@ least a minute, at most an hour.
 - **An issue that lost `factory:fix` keeps its status label.** The factory no longer looks at the
   issue, so it does not remove the label: remove it by hand.
 - **An issue the dispatcher does not act on, and a log line that it could not be read in full.**
-  GitHub refused part of the issue's history, most often because it holds more or longer comments
-  than the dispatcher reads. The other issues go on; this one, and a job it has, waits. When it
-  stays so, move the request to a new issue.
+  The usual cause is the dispatcher's own read limits: more than ten pages of comments or events,
+  or a page over 10 MB. The other issues go on; this one, and a job it has, waits. Remove the
+  flood of comments, or remove the label `factory:fix`; when neither is possible, move the
+  request to a new issue.
 
 ### Logs, transcripts and job files
 

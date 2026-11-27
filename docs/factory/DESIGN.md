@@ -466,8 +466,10 @@ command. Inside the agent container they are additionally installed as system-le
 managed settings that a repository file cannot override. The image starts the guards with
 a named interpreter and `-E -s`, which ignore the environment's `PYTHON` variables and the
 user site directory, both of which the agent can write, and the managed settings fix
-`FACTORY_RUN`, `FACTORY_JOB_DIR` and `FACTORY_RESULT_PATH`, so that no settings file the
-agent writes can switch a guard off. The finish check takes the stage and the base commit
+`FACTORY_RUN`, `FACTORY_JOB_DIR` and `FACTORY_RESULT_PATH`, so that a settings file cannot
+change those variables or the interpreter's start. The guards still see only what they see: a
+settings file written from the shell can change other variables, and the dispatcher's checks
+before publishing remain the boundary. The finish check takes the stage and the base commit
 from the read-only `job.json`, and `guard_paths` refuses writes to the session's own
 settings in the home.
 
