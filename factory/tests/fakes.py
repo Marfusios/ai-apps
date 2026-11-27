@@ -15,7 +15,7 @@ ISSUE_COMMENTS = re.compile(r"/issues/[0-9]+/comments")
 FIRST_NUMBER = 1000  # the number FakeGitHub gives the first pull request or comment it creates
 
 
-def _message(headers: Mapping[str, str]) -> email.message.Message:
+def message(headers: Mapping[str, str]) -> email.message.Message:
     """Headers with the case-insensitive `get` that urllib's responses have."""
     message = email.message.Message()
     for name, value in headers.items():
@@ -34,7 +34,7 @@ class Recorded:
 class FakeResponse:
     def __init__(self, status: int, headers: Mapping[str, str], body: bytes) -> None:
         self.status = status
-        self.headers = _message(headers)
+        self.headers = message(headers)
         self._stream = io.BytesIO(body)
 
     def read(self, amount: int = -1) -> bytes:
@@ -72,7 +72,7 @@ class FakeOpener:
             raise status
         data = body if isinstance(body, bytes) else body.encode() if isinstance(body, str) else json.dumps(body).encode()
         if status == 304 or status >= 400:
-            raise urllib.error.HTTPError(recorded.url, status, "answer", _message(headers), io.BytesIO(data))
+            raise urllib.error.HTTPError(recorded.url, status, "answer", message(headers), io.BytesIO(data))
         return FakeResponse(status, headers, data)
 
 

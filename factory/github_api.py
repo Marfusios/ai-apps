@@ -73,8 +73,21 @@ def _label(method: str, url: str) -> str:
     return f"{method} {urllib.parse.urlsplit(url).path}"
 
 
+def _is_https_url(url: str) -> bool:
+    """Whether `url` is an ASCII https URL with a host, one urllib can send."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        return url.isascii() and parts.scheme == "https" and bool(parts.hostname)
+    except ValueError:
+        return False
+
+
 def _tail(response, limit: int, label: str) -> bytes:
-    """The last `limit` bytes of a body read in chunks, so memory stays near the limit plus one chunk."""
+    """The last `limit` bytes of a body read in chunks.
+
+    While reading, about `limit` plus one chunk is held; the oldest chunk is trimmed to the limit before the final
+    join, so the chunks and the joined result together are at most about twice the limit.
+    """
     chunks: deque[bytes] = deque()
     kept = total = 0
     while chunk := response.read(DOWNLOAD_CHUNK_BYTES):
@@ -85,8 +98,9 @@ def _tail(response, limit: int, label: str) -> bytes:
         kept += len(chunk)
         while len(chunks) > 1 and kept - len(chunks[0]) >= limit:
             kept -= len(chunks.popleft())
-    data = b"".join(chunks)
-    return data[max(0, len(data) - limit):]
+    if chunks and kept > limit:
+        chunks[0] = chunks[0][kept - limit:]
+    return b"".join(chunks)
 
 
 def _page_size(url: str) -> int | None:
@@ -158,7 +172,7 @@ class GitHub:
         data = answer.get("data") if isinstance(answer, dict) else None
         if errors:
             count = len(errors) if isinstance(errors, list) else 1
-            raise GitHubError(0, f"POST /graphql failed with {count} errors")
+            raise GitHubError(0, f"POST /graphql failed with {count} {'error' if count == 1 else 'errors'}")
         if not isinstance(data, dict):
             raise GitHubError(0, "POST /graphql answered no data")
         return data
@@ -176,11 +190,12 @@ class GitHub:
         if first.status == 302:
             location = first.headers.get("location") or ""
             first.close()
-            if not location.startswith("https://"):
+            if not _is_https_url(location):
                 raise GitHubError(0, f"{label} redirected somewhere other than an https URL")
             request = urllib.request.Request(location, headers={"User-Agent": USER_AGENT}, method="GET")
             response = self._open(request, label)
         else:
+            self._raise_if_limited(first.status, first.headers, label)
             response = first
         return self._read_tail(response, limit, label).decode("utf-8", errors="replace")
 
@@ -189,7 +204,7 @@ class GitHub:
             if response.status != 200:
                 raise GitHubError(response.status, f"{label} failed")
             return _tail(response, limit, label)
-        except (OSError, http.client.HTTPException) as error:
+        except (OSError, ValueError, http.client.HTTPException) as error:
             raise GitHubError(0, f"{label} failed on the network ({type(error).__name__})") from None
         finally:
             response.close()
@@ -200,7 +215,7 @@ class GitHub:
             return self._opener(request, timeout=TIMEOUT_SECONDS)
         except urllib.error.HTTPError as error:
             return error
-        except (OSError, http.client.HTTPException) as error:
+        except (OSError, ValueError, http.client.HTTPException) as error:  # ValueError: a URL urllib cannot use
             raise GitHubError(0, f"{label} failed on the network ({type(error).__name__})") from None
 
     @staticmethod
@@ -255,12 +270,15 @@ class GitHub:
         if status == 401 and retry_on_401:
             status, headers, content = self._exchange(method, url, data, etag, self._refresh)
         label = _label(method, url)
-        limited = "retry-after" in headers or headers.get("x-ratelimit-remaining") == "0"
-        if status == 429 or (status == 403 and limited):  # a 429 says "too many requests" whatever its headers say
-            raise RateLimited(status, f"{label} was rate limited", self._retry_at(headers))
+        self._raise_if_limited(status, headers, label)
         if status != 304 and not 200 <= status < 300:
             raise GitHubError(status, f"{label} failed")
         return status, headers, content
+
+    def _raise_if_limited(self, status: int, headers, label: str) -> None:
+        limited = "retry-after" in headers or headers.get("x-ratelimit-remaining") == "0"
+        if status == 429 or (status == 403 and limited):  # a 429 says "too many requests" whatever its headers say
+            raise RateLimited(status, f"{label} was rate limited", self._retry_at(headers))
 
     def _retry_at(self, headers) -> float:
         now = self._clock()

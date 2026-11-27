@@ -10,6 +10,7 @@ from unittest import mock
 
 from factory.github_api import (
     API_ROOT,
+    DOWNLOAD_CHUNK_BYTES,
     MAX_BODY_BYTES,
     MAX_REMEMBERED,
     GitHub,
@@ -19,7 +20,7 @@ from factory.github_api import (
     post_as_app,
 )
 from factory.github_auth import InstallationToken
-from factory.tests.fakes import FakeGitHub, FakeOpener, _message
+from factory.tests.fakes import FakeGitHub, FakeOpener, message
 
 TOKEN = "tok-" + "x" * 20
 NOW = 1_800_000_000.0
@@ -427,6 +428,11 @@ class GraphQLTest(unittest.TestCase):
         with self.assertRaises(GitHubError) as caught:
             github.graphql("q", {})
         self.assertIn("3 errors", caught.exception.message)
+        github, _ = client([("POST", "/graphql", 200, {}, {"errors": [{}]})])
+        with self.assertRaises(GitHubError) as one:
+            github.graphql("q", {})
+        self.assertIn("1 error", one.exception.message)
+        self.assertNotIn("1 errors", one.exception.message)
 
 
 SIGNED = "https://logs.example/signed?sig=" + "k" * 12
@@ -499,12 +505,12 @@ class DownloadTextTest(unittest.TestCase):
 
         def opener(request, timeout=None):
             if request.full_url.startswith(API_ROOT):
-                raise urllib.error.HTTPError(request.full_url, 302, "Found", _message({"Location": SIGNED}), None)
+                raise urllib.error.HTTPError(request.full_url, 302, "Found", message({"Location": SIGNED}), None)
             return Stream()
 
         text = GitHub("o/n", lambda: TOKEN, opener=opener).download_text("/x", 100)
         self.assertEqual(text, "y" * 100)
-        self.assertTrue(all(0 < amount <= 1_000_000 for amount in amounts))
+        self.assertTrue(all(0 < amount <= DOWNLOAD_CHUNK_BYTES for amount in amounts))
 
     def test_a_decoding_error_is_replaced(self):
         github, _ = client([redirect(), ("GET", "", 200, {}, b"ok \xff\xfe end")])
@@ -523,7 +529,7 @@ class DownloadTextTest(unittest.TestCase):
 
         def opener(request, timeout=None):
             if request.full_url.startswith(API_ROOT):
-                raise urllib.error.HTTPError(request.full_url, 302, "Found", _message({"Location": SIGNED}), None)
+                raise urllib.error.HTTPError(request.full_url, 302, "Found", message({"Location": SIGNED}), None)
             return Endless()
 
         with mock.patch("factory.github_api.MAX_DOWNLOAD_BYTES", 1_000_000):
@@ -560,6 +566,33 @@ class DownloadTextTest(unittest.TestCase):
                     self.assertNotIn("sig=", text)
                     self.assertNotIn("logs.example", text)
 
+    def test_a_malformed_location_is_a_github_error_not_another_exception(self):
+        for location in ("https://localhost:1/é", "https://[bad/x", "https:///nohost", "https://"):
+            with self.subTest(location=location):
+                github, _ = client([redirect(location), ("GET", "", 200, {}, "never")])
+                with self.assertRaises(GitHubError) as caught:
+                    github.download_text("/jobs/7/logs", 10)
+                self.assertIn("/jobs/7/logs", caught.exception.message)
+
+    def test_a_value_error_from_the_second_request_is_a_github_error(self):
+        def opener(request, timeout=None):
+            if request.full_url.startswith(API_ROOT):
+                raise urllib.error.HTTPError(request.full_url, 302, "Found", message({"Location": SIGNED}), None)
+            raise ValueError("bad url " + SIGNED)
+
+        with self.assertRaises(GitHubError) as caught:
+            GitHub("o/n", lambda: TOKEN, opener=opener).download_text("/jobs/7/logs", 10)
+        self.assertNotIn("sig=", str(caught.exception))
+
+    def test_a_rate_limit_on_the_first_request_is_raised_as_rate_limited(self):
+        for status, headers in ((429, {"retry-after": "9"}), (403, {"x-ratelimit-remaining": "0"})):
+            with self.subTest(status=status):
+                github, opener = client([("GET", "/jobs/7/logs", status, headers, {})])
+                with self.assertRaises(RateLimited) as caught:
+                    github.download_text("/jobs/7/logs", 10)
+                self.assertEqual(caught.exception.status, status)
+                self.assertEqual(len(opener.requests), 1)
+
     def test_a_read_that_fails_midway_is_a_github_error(self):
         class Broken:
             status = 200
@@ -573,7 +606,7 @@ class DownloadTextTest(unittest.TestCase):
 
         def opener(request, timeout=None):
             if request.full_url.startswith(API_ROOT):
-                raise urllib.error.HTTPError(request.full_url, 302, "Found", _message({"Location": SIGNED}), None)
+                raise urllib.error.HTTPError(request.full_url, 302, "Found", message({"Location": SIGNED}), None)
             return Broken()
 
         with self.assertRaises(GitHubError) as caught:
