@@ -50,9 +50,10 @@ def existing_apps(root: Path) -> list[str]:
 
 
 def changed_paths(root: Path, base: str, head: str) -> list[str]:
+    # NUL-separated, because git quotes a path with non-ASCII characters on a line-based listing.
     output = subprocess.check_output(
-        ["git", "diff", "--name-only", "--no-renames", f"{base}...{head}"], cwd=root, text=True)
-    return output.splitlines()
+        ["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...{head}"], cwd=root)
+    return [name.decode("utf-8") for name in output.split(b"\0") if name]
 
 
 def print_matrix(root: Path, args: argparse.Namespace) -> int:

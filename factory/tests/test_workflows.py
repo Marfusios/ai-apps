@@ -98,6 +98,25 @@ class AppChecksWorkflowTests(unittest.TestCase):
         for script in run_blocks(self.text):
             self.assertNotIn("${{ github.event", script)
 
+    def test_no_script_expands_an_expression_at_all(self) -> None:
+        for script in run_blocks(self.text):
+            self.assertNotIn("${{", script)
+
+    def test_the_app_job_never_runs_the_bare_python_the_app_may_replace(self) -> None:
+        block = jobs(self.text)["app"]
+        for script in run_blocks(block):
+            self.assertNotRegex(script, r"(?<![\w$\"/.-])python3?\b")
+        tools = re.search(r"- uses: actions/setup-python.*?(?=\n      - )", block, re.S).group(0)
+        self.assertIn("id: tools", tools)
+        self.assertIn("update-environment: false", tools)
+        self.assertIn("steps.tools.outputs.python-path", block)
+
+    def test_the_apps_job_reads_both_results_and_accepts_a_skipped_app(self) -> None:
+        block = jobs(self.text)["apps"]
+        self.assertIn("needs.plan.result", block)
+        self.assertIn("needs.app.result", block)
+        self.assertRegex(block, r"success \| skipped\) ;;")
+
     def test_the_apps_job_is_the_single_gate(self) -> None:
         block = jobs(self.text)["apps"]
         self.assertIn("if: always()", block)

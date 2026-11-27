@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from factory import config as factory_config
+from factory.tests import gitrepo
 
 ROOT = Path(__file__).resolve().parents[2]
 HAVE_SH = shutil.which("sh") is not None
@@ -48,6 +49,18 @@ class TouchedAppsTests(unittest.TestCase):
 
     def test_an_app_that_no_longer_exists_is_left_out(self) -> None:
         self.assertEqual(ci_apps.touched_apps(["apps/removed/a.py", "apps/beta/a.py"], self.existing), ["beta"])
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not on PATH")
+class ChangedPathsTests(unittest.TestCase):
+    def test_a_path_with_non_ascii_characters_selects_its_app(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = gitrepo.Repo(Path(tmp))
+            base = repo.commit({"apps/foo/README.md": "x", "README.md": "x"})
+            head = repo.commit({"apps/foo/café.txt": "y"})
+            paths = ci_apps.changed_paths(Path(tmp), base, head)
+        self.assertEqual(paths, ["apps/foo/café.txt"])
+        self.assertEqual(ci_apps.touched_apps(paths, {"foo"}), ["foo"])
 
 
 class TempRepoCase(unittest.TestCase):
@@ -104,6 +117,10 @@ class RunTests(TempRepoCase):
         status, message = self.run_main("run", "broken", "check")
         self.assertNotEqual(status, 0)
         self.assertIn("schema: must be 1", message)
+
+    def test_the_app_name_may_follow_a_double_dash(self) -> None:
+        self.add_app("-odd", VALID_TOML.format(setup="true", check="exit 4"))
+        self.assertEqual(self.run_main("run", "--", "-odd", "check")[0], 4)
 
     def test_an_app_that_does_not_exist_fails(self) -> None:
         status, message = self.run_main("run", "missing", "check")
