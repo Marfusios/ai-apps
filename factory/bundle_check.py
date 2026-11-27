@@ -5,15 +5,16 @@
 1. the bundle is a regular file within the size limit (stop);
 2. it holds exactly one ref, the work branch (stop);
 3. git fetches it into a quarantine ref that names the commit the bundle lists (stop);
-4. the head descends from the base, with 1 to `max_commits` commits on top of it (stop);
+4. the head descends from the base, with 1 to `max_commits` commits on top of it, listed within a cap (stop);
 5. no commit is a merge;
 6. every commit object is small, holds exactly the headers the factory's git writes, with the bot as author and
    committer, and has no hygiene finding;
 7. every changed path is writable and spelled so that no file system reads it as another path;
 8. no added entry is a submodule, has another file mode, is a credential file or has a credential in its name;
-9. no added blob is too large, no link leaves the repository, points into .git or names a credential, no other
-   content has a hygiene finding, and all of it together stays within what the factory scans (stop);
-10. at most 2,000 changed entries over all commits (stop).
+9. no added blob is too large, no link leaves the repository, holds a character a path may not, points into
+   .git or names a credential, no other content has a hygiene finding, and all of it together stays within what
+   the factory scans (stop);
+10. at most 2,000 changed entries over all commits, listed within a cap (stop).
 
 Everything git prints about the bundle is read under a cap, so that a small bundle cannot make the dispatcher
 hold much memory, and git's own failures become problems, so that `check` never raises for a bundle.
@@ -67,7 +68,9 @@ NOT_THE_BRANCH = "the bundle does not hold exactly the work branch"
 UNREADABLE = "the bundle could not be read"
 NOT_ON_BASE = "the commits do not sit on top of the expected base"
 NO_COMMITS = "there are no commits"
+COMMITS_TOO_LONG = "the list of commits is too long to check"
 TOO_MANY_FILES = f"the commits change more than {MAX_ENTRIES:,} files"
+FILES_TOO_LONG = f"{TOO_MANY_FILES}, or their paths are too long to check"  # the cap on git's output says no more
 WITHHELD_PATH = "a path that is not shown"
 
 Problem = tuple[int, str]  # the number of the check that found it, then the sentence
@@ -168,7 +171,8 @@ def _fetch(workrepo: Path, bundle: Path, branch: str, job_id: str, listed: str) 
 def _commits_on_base(workrepo: Path, base: str, head: str, max_commits: int) -> list[tuple[str, list[str]]]:
     """The commits on top of the base, oldest first, each with its parents.
 
-    Stops the check when the head does not descend from the base, or when there are no commits or too many.
+    Stops the check when the head does not descend from the base, or when there are no commits, too many, or a
+    list too long to read: a commit with many parents makes a long line, so an overflow says nothing of the count.
     """
     try:
         run_git(workrepo, "merge-base", "--is-ancestor", base, head)
@@ -176,12 +180,11 @@ def _commits_on_base(workrepo: Path, base: str, head: str, max_commits: int) -> 
         if error.status != ANSWERED_NO:
             raise
         raise _Stop(4, NOT_ON_BASE) from None
-    too_many = _Stop(4, f"there are more than {max_commits} commits")
     try:
         output = run_git(workrepo, "rev-list", "--reverse", "--parents", f"{base}..{head}",
                          max_output=(max_commits + 1) * REV_LIST_LINE)
     except GitOutputTooLarge:
-        raise too_many from None
+        raise _Stop(4, COMMITS_TOO_LONG) from None
     commits = []
     for line in output.decode("ascii", "replace").splitlines():
         shas = line.split(" ")
@@ -191,7 +194,7 @@ def _commits_on_base(workrepo: Path, base: str, head: str, max_commits: int) -> 
     if not commits:
         raise _Stop(4, NO_COMMITS)
     if len(commits) > max_commits:
-        raise too_many
+        raise _Stop(4, f"there are more than {max_commits} commits")
     return commits
 
 
@@ -242,12 +245,15 @@ def _commit_problems(workrepo: Path, sha: str, identity: re.Pattern[bytes]) -> l
 
 
 def _changes(workrepo: Path, parent: str, sha: str) -> list[_Entry]:
-    """The entries a commit changes; shared subtrees can make a tiny commit list millions, hence the cap."""
+    """The entries a commit changes; shared subtrees can make a tiny commit list millions, hence the cap.
+
+    An overflow says too many entries or too long a path, not which, so its sentence names both.
+    """
     try:
         output = run_git(workrepo, "diff-tree", "-r", "--no-renames", "--raw", "-z", "--ignore-submodules=none",
                          parent, sha, max_output=DIFF_LIMIT)
     except GitOutputTooLarge:
-        raise _Stop(10, TOO_MANY_FILES) from None
+        raise _Stop(10, FILES_TOO_LONG) from None
     fields = output.split(b"\x00")
     if fields.pop() != b"" or len(fields) % 2:
         raise _Unreadable
@@ -311,12 +317,14 @@ def _addition_problem(entry: _Entry) -> str | None:
 
 
 def _leaves(path: str, target: str) -> bool:
-    """Whether a link at `path` can reach outside the repository.
+    """Whether a link at `path` can reach outside the repository, or somewhere a file system reads differently.
 
-    `..` may only lead the target: after a name it climbs from wherever that name points, and another link in the
-    tree can point anywhere, so a target such as `up/../../..` escapes even though it reads as staying inside.
+    A target holds no character that a path may not hold: a zero-width joiner or a byte order mark inside `.git`
+    would otherwise hide it from the name test. `..` may only lead the target: after a name it climbs from wherever
+    that name points, and another link in the tree can point anywhere, so a target such as `up/../../..` escapes
+    even though it reads as staying inside.
     """
-    if not target or target.startswith("/") or DRIVE.match(target) or "\\" in target:
+    if not target or target.startswith("/") or DRIVE.match(target) or any(map(_is_odd_character, target)):
         return True
     names = [name for name in target.split("/") if name not in ("", ".")]
     if ".." in itertools.dropwhile(lambda name: name == "..", names):

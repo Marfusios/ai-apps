@@ -1,7 +1,9 @@
 """Tests for the dispatcher's git: the mirror, the work repository, resolving refs and pushing."""
 
 import base64
+import functools
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -18,31 +20,69 @@ BRANCH = "factory/fix-12"
 TOKEN = "token-" + "x" * 20
 URL = "https://example.com/owner/repo.git"
 MEGABYTE = 1024 * 1024
+WATCHDOG_SECONDS = 60
+
+
+def git_for_windows_launcher() -> Path | None:
+    """Git for Windows' `cmd` directory, whose git.exe is a launcher that starts the real git as its child."""
+    found = shutil.which("git")
+    if os.name != "nt" or found is None:
+        return None
+    return next((parent / "cmd" for parent in Path(found).resolve().parents if (parent / "cmd" / "git.exe").is_file()),
+                None)
+
+
+LAUNCHER = git_for_windows_launcher()
+
+
+def watched(test_case: type) -> type:
+    """Run each test of the class in a thread of its own, and fail it after WATCHDOG_SECONDS.
+
+    A hung git then fails one test instead of hanging the whole suite.
+    """
+    for name in [name for name in vars(test_case) if name.startswith("test_")]:
+        setattr(test_case, name, _watched(getattr(test_case, name)))
+    return test_case
+
+
+def _watched(test):
+    @functools.wraps(test)
+    def bounded(self):
+        raised = []
+
+        def body():
+            try:
+                test(self)
+            except BaseException as error:  # handed back to the test runner's own thread below
+                raised.append(error)
+
+        thread = threading.Thread(target=body, daemon=True)
+        thread.start()
+        thread.join(WATCHDOG_SECONDS)
+        if thread.is_alive():
+            self.fail(f"still running after {WATCHDOG_SECONDS} seconds")
+        if raised:
+            raise raised[0]
+
+    return bounded
 
 
 class FakeProcess:
-    """Stands in for `subprocess.Popen`: a git that prints nothing and succeeds, or one that hangs until stopped."""
+    """Stands in for `subprocess.Popen`: a git that prints nothing and succeeds."""
 
-    def __init__(self, *, hangs: bool = False) -> None:
+    returncode = 0
+
+    def __init__(self) -> None:
         self.stdin = None
         self.stdout = self
-        self.returncode: int | None = None
-        self.killed = threading.Event()
-        self._hangs = hangs
 
     def read(self, size: int = -1) -> bytes:
-        if self._hangs:
-            self.killed.wait()
         return b""
 
-    def kill(self) -> None:
-        self.killed.set()
+    def close(self) -> None:
+        return None
 
     def wait(self, timeout: float | None = None) -> int:
-        self.returncode = -9 if self.killed.is_set() else 0
-        return self.returncode
-
-    def poll(self) -> int | None:
         return self.returncode
 
     def __enter__(self) -> "FakeProcess":
@@ -52,6 +92,7 @@ class FakeProcess:
         return None
 
 
+@watched
 class GitopsTestCase(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -183,6 +224,7 @@ class GitopsTestCase(unittest.TestCase):
             self.assertEqual((env["GIT_TERMINAL_PROMPT"], env["GIT_CONFIG_NOSYSTEM"], env["GIT_CONFIG_GLOBAL"]),
                              ("0", "1", os.devnull))
             self.assertEqual((options["stdin"], options["stderr"]), (subprocess.DEVNULL, subprocess.DEVNULL))
+            self.assertEqual(argv[2:6], ["-c", "gc.auto=0", "-c", "maintenance.auto=false"])
             if {"fetch", "push"} & set(argv):
                 self.assertEqual((env["GIT_CONFIG_COUNT"], env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]),
                                  ("1", "http.extraHeader", header))
@@ -198,28 +240,35 @@ class GitopsTestCase(unittest.TestCase):
         self.assertEqual(str(error), "git fetch failed: exit status 128")
         self.assertIsNone(error.__context__)
 
-    def test_a_git_that_hangs_is_stopped_at_its_timeout(self):
-        hanging = FakeProcess(hangs=True)
+    @unittest.skipUnless(shutil.which("sh"), "needs sh to run a git alias whose child keeps git's output open")
+    def test_the_timeout_holds_when_a_child_of_git_keeps_the_pipe_open(self):
         started = time.monotonic()
-        with (mock.patch("factory.gitops.subprocess.Popen", return_value=hanging),
-              self.assertRaises(GitError) as raised):
-            gitops.run_git(self.tmp / "repo.git", "push", "--", URL, token=TOKEN, timeout=1)
-        self.assertLess(time.monotonic() - started, 30)
-        self.assertTrue(hanging.killed.is_set())
-        self.assertEqual(str(raised.exception), "git push failed: timeout")
+        with self.assertRaises(GitError) as raised:
+            gitops.run_git(self.upstream.path / ".git", "-c", "alias.wait=!sleep 15", "wait", timeout=1)
+        self.assertLess(time.monotonic() - started, 6)
+        self.assertEqual(str(raised.exception), "git wait failed: timeout")
         self.assertIsNone(raised.exception.__cause__)
         self.assertTrue(raised.exception.__suppress_context__)
 
-    def test_output_past_the_limit_stops_git_promptly(self):
+    def assert_output_past_the_limit_stops_git_promptly(self) -> None:
         gitdir = self.upstream.path / ".git"
         blob = self.upstream.blob(b"x" * MEGABYTE)
         requests = f"{blob}\n".encode() * 10_000  # ten gigabytes of answers if nothing stopped git
         started = time.monotonic()
         with self.assertRaises(GitOutputTooLarge) as raised:
             gitops.run_git(gitdir, "cat-file", "--batch", input=requests, max_output=100_000)
-        self.assertLess(time.monotonic() - started, 30)
+        self.assertLess(time.monotonic() - started, 10)
         self.assertIsInstance(raised.exception, GitError)
         self.assertEqual(str(raised.exception), "git cat-file failed: more than 100000 bytes of output")
+
+    def test_output_past_the_limit_stops_git_promptly(self):
+        self.assert_output_past_the_limit_stops_git_promptly()
+
+    @unittest.skipUnless(LAUNCHER, "needs Git for Windows' cmd launcher, which runs the real git as its child")
+    def test_output_past_the_limit_stops_git_promptly_through_the_launcher(self):
+        with mock.patch.dict(os.environ, {"PATH": f"{LAUNCHER}{os.pathsep}{os.environ['PATH']}"}):
+            self.assertEqual(Path(shutil.which("git")).parent, LAUNCHER)
+            self.assert_output_past_the_limit_stops_git_promptly()
 
     def test_output_within_the_limit_is_returned_whole(self):
         gitdir = self.upstream.path / ".git"

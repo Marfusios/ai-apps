@@ -14,7 +14,7 @@ from unittest import mock
 from factory import bundle_check, gitops
 from factory import config as factory_config
 from factory.snapshot import Bot
-from factory.tests.gitrepo import Repo, Tree
+from factory.tests.gitrepo import Repo, Tree, git
 
 CONFIG = factory_config.load()
 BOT = Bot("factory-test[bot]", 4242)
@@ -27,6 +27,8 @@ MEGABYTE = 1024 * 1024
 NOT_THE_BRANCH = "the bundle does not hold exactly the work branch"
 UNREADABLE = "the bundle could not be read"
 MALFORMED = "the job is malformed"
+TOO_MANY_FILES = "the commits change more than 2,000 files"
+FILES_TOO_LONG = "the commits change more than 2,000 files, or their paths are too long to check"
 BASE_FILES = {"README.md": "# Demo\n", "apps/demo/a.txt": "old\n"}
 BASE_LAYOUT = {"README.md": "# Demo\n", "apps": {"demo": {"a.txt": "old\n"}}}  # the same tree, nested
 
@@ -73,6 +75,10 @@ REJECTED = [  # (name, commits, fragment one problem must contain, options for t
      {"mode": {"apps/demo/hook": LINK}}, {}),
     ("link into .git in another spelling", [{"apps/demo/hook": "../../.GIT./hooks/pre-commit"}], "a link into .git",
      {"mode": {"apps/demo/hook": LINK}}, {}),
+    ("link into .git through a zero-width joiner", [{"apps/demo/hook": "../../.g‌it/hooks/pre-commit"}],
+     "apps/demo/hook: a link that leaves the repository", {"mode": {"apps/demo/hook": LINK}}, {}),
+    ("link into .git through a byte order mark", [{"apps/demo/hook": "../../.git﻿/hooks/pre-commit"}],
+     "apps/demo/hook: a link that leaves the repository", {"mode": {"apps/demo/hook": LINK}}, {}),
     ("credential before an invalid byte", [{"apps/demo/k.bin": KEY.encode() + b"\xff"}],
      "apps/demo/k.bin: line 1: possible provider key", {}, {}),
     ("credential among NUL bytes", [{"apps/demo/k.bin": b"\x00\x01" + KEY.encode() + b"\x00"}],
@@ -119,8 +125,8 @@ FORGED = [  # (name, header lines, message, fragment): commit objects written by
 ]
 # Rows that git 2.46 and later can refuse while fetching, before these checks see them: the fsck that applies
 # then refuses a link into .git, a date that is not a number and a commit without an author.
-GIT_MAY_REFUSE = {"link into .git", "link into .git in another spelling", "an ident with a third bracket",
-                  "no author line"}
+GIT_MAY_REFUSE = {"link into .git", "link into .git in another spelling", "link into .git through a zero-width joiner",
+                  "link into .git through a byte order mark", "an ident with a third bracket", "no author line"}
 
 
 class BundleCheckTestCase(unittest.TestCase):
@@ -131,9 +137,9 @@ class BundleCheckTestCase(unittest.TestCase):
         self.numbers = itertools.count(1)
         self.work = Repo(self.tmp / "work")
         self.base = self.work.commit(BASE_FILES)
-        mirror = self.work.bare_clone(self.tmp / "mirror.git")
+        self.mirror = self.work.bare_clone(self.tmp / "mirror.git")
         self.workrepo = self.tmp / "workrepo.git"
-        gitops.ensure_workrepo(self.workrepo, mirror)
+        gitops.ensure_workrepo(self.workrepo, self.mirror)
 
     def fresh(self, stem: str) -> Path:
         return self.tmp / f"{stem}-{next(self.numbers)}"
@@ -336,7 +342,7 @@ class BundleCheckTestCase(unittest.TestCase):
     def test_more_than_two_thousand_changed_files_are_rejected(self):
         files = {f"apps/demo/many/{number}.txt": "same" for number in range(2001)}
         verdict = self.check(self.bundle_of(files))
-        self.assertEqual(verdict.problems, ("the commits change more than 2,000 files",))
+        self.assertEqual(verdict.problems, (TOO_MANY_FILES,))
 
     def test_a_tiny_bundle_of_shared_trees_with_many_paths_is_rejected_without_reading_them_all(self):
         leaf = self.work.tree({f"f{number}": "x" for number in range(60)})
@@ -350,8 +356,25 @@ class BundleCheckTestCase(unittest.TestCase):
             _, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
-        self.assertEqual(verdict.problems, ("the commits change more than 2,000 files",))
+        self.assertEqual(verdict.problems, (FILES_TOO_LONG,))
         self.assertLess(peak, 20 * MEGABYTE)  # git would print about 27 MB of entries if it were let
+
+    def test_an_octopus_commit_too_long_to_list_is_not_counted_as_many_commits(self):
+        self.work.switch("chain", self.base)
+        chain = [self.base] + [self.bot_commit({"apps/demo/a.txt": f"{number}\n"}) for number in range(6)]
+        git(f"--git-dir={self.mirror}", "fetch", "-q", str(self.work.path), "refs/heads/chain:refs/heads/chain")
+        self.work.switch(BRANCH, chain[-1])
+        self.work.commit_tree(self.work.git("write-tree"), list(reversed(chain)), name=BOT.login, email=BOT.email)
+        bundle = self.work.bundle(chain[-1], BRANCH, self.fresh("bundle"))
+        verdict = self.check(bundle, base_sha=chain[-1], config=limits(max_commits=1))  # one commit, seven parents
+        self.assertEqual(verdict.problems, ("the list of commits is too long to check",))
+
+    def test_a_path_too_long_to_list_is_not_counted_as_many_files(self):
+        verdict = self.check(self.bundle_of_tree({"apps": {"demo": {"x" * (9 * MEGABYTE): "x"}}}))
+        self.assertFalse(verdict.ok)
+        # Newer git may refuse so long a name while fetching; where it does not, the cap on git's output must.
+        if verdict.problems != (UNREADABLE,):
+            self.assertEqual(verdict.problems, (FILES_TOO_LONG,))
 
     def test_content_beyond_what_the_factory_scans_stops_the_check(self):
         bundle = self.bundle_of({"apps/demo/one.txt": "12345678", "apps/demo/two.txt": "abcdefgh"})

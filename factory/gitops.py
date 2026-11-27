@@ -1,22 +1,30 @@
 """The dispatcher's own git: a mirror of GitHub, a work repository that borrows its objects, and pushes.
 
-Every git command runs isolated from inherited settings, under a timeout, with its standard error discarded, and
-with its output read as it comes so that a caller can cap it.
+Every git command runs isolated from inherited settings and without background maintenance, under a timeout that
+holds even when a child of git keeps its pipes open, with its standard error discarded, and with its output read
+as it comes so that a caller can cap it.
 """
 
 import base64
+import contextlib
 import os
 import re
+import signal
 import subprocess
 import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO
 
 WORK_BRANCH = re.compile(r"factory/[a-z0-9][a-z0-9-]{0,60}")
 SHA = re.compile(r"[0-9a-f]{40}")
 TIMEOUT_SECONDS = 300
+LINGER_SECONDS = 2  # how long the threads of a stopped git may take to end before they are abandoned
 ANSWERED_NO = 1  # the exit status of a yes-or-no git command, such as `merge-base --is-ancestor`, for "no"
 CHUNK = 65536
+# Automatic gc and maintenance would start a git that outlives the call and holds its pipes.
+NO_MAINTENANCE = ("-c", "gc.auto=0", "-c", "maintenance.auto=false")
 
 
 class GitError(Exception):
@@ -63,56 +71,103 @@ def _environment(token: str | None) -> dict[str, str]:
     return env
 
 
-def _read(stream: BinaryIO, limit: int | None) -> bytes | None:
-    """Everything the stream holds, or None as soon as it has given more than `limit` bytes."""
-    chunks, size = [], 0
-    while chunk := stream.read(CHUNK):
-        size += len(chunk)
-        if limit is not None and size > limit:
-            return None
-        chunks.append(chunk)
-    return b"".join(chunks)
+class _Output:
+    """Git's standard output, collected up to a limit by a thread that alone reads and closes the pipe."""
+
+    def __init__(self, stream: BinaryIO, limit: int | None) -> None:
+        self._stream = stream
+        self._limit = limit
+        self._chunks: list[bytes] = []
+        self._size = 0
+        self.too_large = False
+        self.broken = False
+
+    def collect(self) -> None:
+        try:
+            while chunk := self._stream.read(CHUNK):
+                self._size += len(chunk)
+                if self._limit is not None and self._size > self._limit:
+                    self.too_large = True
+                    return
+                self._chunks.append(chunk)
+        except OSError:
+            self.broken = True
+        finally:
+            # Closing our end breaks git's: a git that cannot be killed, such as the real git behind Git for
+            # Windows' launcher, then fails on its next write instead of filling the pipe and waiting forever.
+            self._stream.close()
+
+    @property
+    def data(self) -> bytes:
+        return b"".join(self._chunks)
 
 
-def _feed(pipe: BinaryIO, data: bytes) -> None:
-    """Write git's input from a thread of its own, so a git that prints while it reads never waits on us."""
+def _feed(stream: BinaryIO, data: bytes) -> None:
+    """Write git's input, then close it so that git sees its end; the thread doing this alone closes the pipe."""
+    view = memoryview(data)
     try:
-        with pipe:
-            pipe.write(data)
+        while view:
+            view = view[stream.write(view):]
     except OSError:
         pass  # git stopped reading: it finished early, failed or was stopped, and its exit status says which
+    finally:
+        stream.close()
 
 
-def _stop(process: subprocess.Popen, expired: threading.Event) -> None:
-    expired.set()
-    process.kill()
+def _start(target: Callable[..., None], *args: object) -> threading.Thread:
+    thread = threading.Thread(target=target, args=args, daemon=True)  # a stuck one must not keep the program up
+    thread.start()
+    return thread
+
+
+def _exits_by(process: subprocess.Popen, deadline: float) -> bool:
+    try:
+        process.wait(max(deadline - time.monotonic(), 0))
+    except subprocess.TimeoutExpired:
+        return False
+    return True
+
+
+def _kill(process: subprocess.Popen) -> None:
+    """Kill git and, on POSIX, every process in its session, since a child of git can hold its pipes open."""
+    if os.name == "posix":
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+    else:
+        process.kill()
 
 
 def _run(argv: list[str], env: dict[str, str], input: bytes | None, timeout: int,
          limit: int | None) -> tuple[int, bytes | None]:
-    """Run git and return its exit status and output; the output is None when git printed more than `limit`."""
-    expired = threading.Event()
-    with subprocess.Popen(argv, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
-                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env) as process:
-        timer = threading.Timer(timeout, _stop, (process, expired))
-        feeder = None if input is None else threading.Thread(target=_feed, args=(process.stdin, input))
-        timer.start()
-        try:
-            if feeder is not None:
-                feeder.start()
-            output = _read(process.stdout, limit)
-            if output is None:
-                process.kill()
-            process.wait()
-        finally:
-            timer.cancel()
-            if process.poll() is None:  # reading failed: stop git so that the feeder cannot block on it
-                process.kill()
-            if feeder is not None:
-                feeder.join()
-    if expired.is_set():
+    """Run git and return its exit status and output; the output is None when git printed more than `limit`.
+
+    Threads read git's output and write its input, each the only user of its pipe. On an overflow or at the
+    timeout git is killed, and the threads then have LINGER_SECONDS to end before they are abandoned, so a
+    descendant of git that keeps a pipe open cannot keep the call waiting.
+    """
+    deadline = time.monotonic() + timeout
+    with subprocess.Popen(argv, bufsize=0, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+                          start_new_session=os.name == "posix") as process:
+        output = _Output(process.stdout, limit)
+        threads = [_start(output.collect)]
+        if input is not None:
+            threads.append(_start(_feed, process.stdin, input))
+        process.stdout = process.stdin = None  # the threads close these; Popen must not close them under the threads
+        threads[0].join(timeout)
+        exited = not threads[0].is_alive() and not output.too_large and _exits_by(process, deadline)
+        if not exited:
+            _kill(process)
+        linger = time.monotonic() + LINGER_SECONDS
+        for thread in threads:
+            thread.join(max(linger - time.monotonic(), 0))
+    if output.too_large:
+        return -1, None
+    if not exited:
         raise subprocess.TimeoutExpired(argv, timeout)
-    return process.returncode, output
+    if output.broken:
+        raise OSError("git's output could not be read")
+    return process.returncode, output.data
 
 
 def run_git(
@@ -125,7 +180,7 @@ def run_git(
     of it may reach an error message. With `max_output`, git is stopped as soon as it prints more than that many
     bytes, and GitOutputTooLarge is raised, so a caller can bound what a hostile repository makes it hold.
     """
-    argv = ["git", *([f"--git-dir={repo}"] if repo is not None else []), *args]
+    argv = ["git", *([f"--git-dir={repo}"] if repo is not None else []), *NO_MAINTENANCE, *args]
     subcommand = _subcommand(args)
     try:
         status, output = _run(argv, _environment(token), input, timeout, max_output)
