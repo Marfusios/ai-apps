@@ -1,10 +1,24 @@
 """Tests for the GitHub REST client, run against a scripted opener."""
 
+import http.client
 import json
 import unittest
 import urllib.error
+import urllib.request
+from pathlib import Path
+from unittest import mock
 
-from factory.github_api import API_ROOT, MAX_BODY_BYTES, MAX_REMEMBERED, GitHub, GitHubError, RateLimited, post_as_app
+from factory.github_api import (
+    API_ROOT,
+    MAX_BODY_BYTES,
+    MAX_REMEMBERED,
+    GitHub,
+    GitHubError,
+    NoRedirect,
+    RateLimited,
+    post_as_app,
+)
+from factory.github_auth import InstallationToken
 from factory.tests.fakes import FakeGitHub, FakeOpener
 
 TOKEN = "tok-" + "x" * 20
@@ -162,6 +176,101 @@ class TokenRefreshTest(unittest.TestCase):
             github.get("/x")
         self.assertEqual(caught.exception.status, 401)
         self.assertEqual(len(opener.requests), 2)
+
+
+class RealTokenRefreshTest(unittest.TestCase):
+    def test_a_401_mints_exactly_one_new_token_and_the_retry_carries_it(self):
+        posts = []
+
+        def post(path, bearer):
+            posts.append(path)
+            return {"token": f"minted-{len(posts)}", "expires_at": "2099-01-01T00:00:00Z"}
+
+        with mock.patch("factory.github_auth.app_jwt", return_value="jwt"):
+            tokens = InstallationToken("1", "2", Path("key.pem"), post=post)
+            opener = FakeOpener([("GET", "/x", 401, {}, {}), ("GET", "/x", 200, {}, {"ok": 1})])
+            github = GitHub("o/n", tokens.get, opener=opener, refresh=tokens.refresh)
+            self.assertEqual(github.get("/x"), {"ok": 1})
+        self.assertEqual(len(posts), 2)
+        self.assertEqual([r.headers["authorization"] for r in opener.requests], ["Bearer minted-1", "Bearer minted-2"])
+
+    def test_a_401_from_post_as_app_is_one_request(self):
+        opener = FakeOpener([("POST", "/x", 401, {}, {})])
+        with self.assertRaises(GitHubError) as caught:
+            post_as_app("/x", "jwt", opener=opener)
+        self.assertEqual(caught.exception.status, 401)
+        self.assertEqual(len(opener.requests), 1)
+
+
+class SafetyTest(unittest.TestCase):
+    def test_a_redirect_is_an_error_and_is_not_followed(self):
+        github, opener = client([("GET", "/x", 302, {"Location": "https://other.example/x"}, b"")])
+        with self.assertRaises(GitHubError) as caught:
+            github.get("/x")
+        self.assertEqual(caught.exception.status, 302)
+        self.assertEqual(len(opener.requests), 1)
+
+    def test_the_default_opener_refuses_to_build_a_redirect_request(self):
+        request = urllib.request.Request(f"{API_ROOT}/x", headers={"Authorization": "Bearer t"})
+        self.assertIsNone(NoRedirect().redirect_request(request, None, 302, "Found", {}, "https://other.example/"))
+
+    def test_a_path_that_could_change_the_host_or_the_request_is_refused_by_every_method(self):
+        github, opener = client([])
+        for path in ("@other.example/x", "x", "/a b", "/a" + chr(10) + "b", "/a" + chr(9) + "b", "/a" + chr(127) + "b"):
+            for call in (
+                lambda: github.get(path),
+                lambda: github.get_all(path),
+                lambda: github.post(path, {}),
+                lambda: github.patch(path, {}),
+                lambda: github.delete(path),
+                lambda: post_as_app(path, "jwt", opener=opener),
+            ):
+                with self.subTest(path=path), self.assertRaises(GitHubError) as caught:
+                    call()
+                self.assertEqual(caught.exception.status, 0)
+        self.assertEqual(opener.requests, [])
+
+    def test_http_client_exceptions_become_github_errors(self):
+        github, _ = client([
+            ("GET", "/x", http.client.InvalidURL("bad"), {}, b""),
+            ("GET", "/x", http.client.IncompleteRead(b"par"), {}, b""),
+            ("GET", "/x", http.client.BadStatusLine("junk"), {}, b""),
+        ])
+        for _ in range(3):
+            with self.assertRaises(GitHubError) as caught:
+                github.get("/x")
+            self.assertEqual(caught.exception.status, 0)
+
+    def test_a_deeply_nested_body_is_a_github_error(self):
+        github, _ = client([("GET", "/x", 200, {}, b"[" * 100_000)])
+        with self.assertRaises(GitHubError):
+            github.get("/x")
+
+    def test_unusable_retry_hints_fall_back_to_the_default(self):
+        for hint in ("nan", "inf", "-5", "soon", "-inf"):
+            for name in ("retry-after", "x-ratelimit-reset"):
+                with self.subTest(hint=hint, name=name):
+                    github, _ = client([("GET", "/x", 429, {name: hint, "x-ratelimit-remaining": "0"}, {})])
+                    with self.assertRaises(RateLimited) as caught:
+                        github.get("/x")
+                    self.assertEqual(caught.exception.retry_at, NOW + 60)
+
+    def test_a_reset_in_the_past_means_retry_now(self):
+        github, _ = client([("GET", "/x", 403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "5"}, {})])
+        with self.assertRaises(RateLimited) as caught:
+            github.get("/x")
+        self.assertEqual(caught.exception.retry_at, NOW)
+
+    def test_an_answer_without_an_etag_forgets_the_old_one(self):
+        github, opener = client([
+            ("GET", "/x", 200, {"ETag": '"a"'}, [1]),
+            ("GET", "/x", 200, {}, [2]),
+            ("GET", "/x", 200, {}, [3]),
+        ])
+        for _ in range(3):
+            github.get("/x")
+        self.assertIn("if-none-match", opener.requests[1].headers)
+        self.assertNotIn("if-none-match", opener.requests[2].headers)
 
 
 class ErrorTest(unittest.TestCase):

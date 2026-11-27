@@ -1,6 +1,8 @@
 """A small GitHub REST client: conditional requests, pagination and typed errors."""
 
+import http.client
 import json
+import math
 import re
 import time
 import urllib.error
@@ -17,7 +19,11 @@ NEXT_LINK = re.compile(r'<([^>]*)>\s*;\s*rel="next"')
 
 
 class GitHubError(Exception):
-    """A request failed; `status` is 0 for a network failure. The message holds no token or body."""
+    """A request failed; the message holds no token, query or response text.
+
+    `status` is 0 when there is no HTTP status: a network failure, or an answer the client refused
+    (not a list where one was expected, a next link off the API host, too many pages, a bad path).
+    """
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(f"GitHub {status}: {message}")
@@ -34,10 +40,28 @@ class RateLimited(GitHubError):
 
 
 def _number(text: str | None) -> float | None:
+    """A finite, non-negative number from a header, else None."""
     try:
-        return float(text) if text is not None else None
+        value = float(text) if text is not None else None
     except ValueError:
         return None
+    return value if value is not None and math.isfinite(value) and value >= 0 else None
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Surfaces a 3xx as an HTTPError, so the token is never sent to the host a redirect names."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_default_opener = urllib.request.build_opener(NoRedirect).open
+
+
+def _check_path(path: str) -> None:
+    """Refuse a path that could change the host or smuggle in another line of the request."""
+    if not path.startswith("/") or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in path):
+        raise GitHubError(0, "the request path is not a plain path starting with a slash")
 
 
 def _label(method: str, url: str) -> str:
@@ -53,11 +77,13 @@ class GitHub:
         repository: str,
         token: Callable[[], str],
         *,
-        opener: Callable = urllib.request.urlopen,
+        opener: Callable = _default_opener,
+        refresh: Callable[[], str] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._repository = repository
         self._token = token
+        self._refresh = refresh or token
         self._opener = opener
         self._clock = clock
         # url -> (etag, body, next page url); insertion order is age order
@@ -68,9 +94,11 @@ class GitHub:
         return f"/repos/{self._repository}"
 
     def get(self, path: str, params: Mapping[str, str] | None = None) -> object:
+        _check_path(path)
         return self._get_page(self._url(path, params))[0]
 
     def get_all(self, path: str, params: Mapping[str, str] | None = None, *, max_pages: int = 10) -> list:
+        _check_path(path)
         url: str | None = self._url(path, params)
         items: list = []
         for _ in range(max_pages):
@@ -91,6 +119,7 @@ class GitHub:
         return self._write("PATCH", path, body)
 
     def delete(self, path: str) -> None:
+        _check_path(path)
         self._send("DELETE", API_ROOT + path, None, None)
 
     @staticmethod
@@ -98,8 +127,10 @@ class GitHub:
         query = urllib.parse.urlencode(sorted((params or {}).items()))
         return f"{API_ROOT}{path}?{query}" if query else f"{API_ROOT}{path}"
 
-    def _write(self, method: str, path: str, body: Mapping) -> object:
-        _, _, data = self._send(method, API_ROOT + path, json.dumps(body).encode("utf-8"), None)
+    def _write(self, method: str, path: str, body: Mapping, *, retry_on_401: bool = True) -> object:
+        _check_path(path)
+        encoded = json.dumps(body).encode("utf-8")
+        _, _, data = self._send(method, API_ROOT + path, encoded, None, retry_on_401=retry_on_401)
         return self._decode(method, API_ROOT + path, data)
 
     def _get_page(self, url: str) -> tuple[object, str | None]:
@@ -114,8 +145,8 @@ class GitHub:
         match = NEXT_LINK.search(headers.get("link") or "")
         next_url = match.group(1) if match else None
         etag = headers.get("etag")
+        self._remembered.pop(url, None)  # an answer without an ETag must not leave a stale one behind
         if etag:
-            self._remembered.pop(url, None)
             self._remembered[url] = (etag, body, next_url)
             if len(self._remembered) > MAX_REMEMBERED:
                 del self._remembered[next(iter(self._remembered))]
@@ -127,14 +158,16 @@ class GitHub:
             return None
         try:
             return json.loads(data)
-        except ValueError:
+        except (ValueError, RecursionError):
             raise GitHubError(0, f"{_label(method, url)} answered a body that is not JSON") from None
 
-    def _send(self, method: str, url: str, data: bytes | None, etag: str | None) -> tuple[int, object, bytes]:
-        """Send a request, once more after a 401 so that a new token is asked for."""
-        status, headers, content = self._exchange(method, url, data, etag)
-        if status == 401:
-            status, headers, content = self._exchange(method, url, data, etag)
+    def _send(
+        self, method: str, url: str, data: bytes | None, etag: str | None, *, retry_on_401: bool = True
+    ) -> tuple[int, object, bytes]:
+        """Send a request, once more after a 401 with a newly minted token."""
+        status, headers, content = self._exchange(method, url, data, etag, self._token)
+        if status == 401 and retry_on_401:
+            status, headers, content = self._exchange(method, url, data, etag, self._refresh)
         label = _label(method, url)
         if status in (403, 429) and ("retry-after" in headers or headers.get("x-ratelimit-remaining") == "0"):
             raise RateLimited(status, f"{label} was rate limited", self._retry_at(headers))
@@ -148,14 +181,16 @@ class GitHub:
         if wait is not None:
             return now + wait
         reset = _number(headers.get("x-ratelimit-reset"))
-        return reset if reset is not None else now + DEFAULT_RETRY_SECONDS
+        return max(reset, now) if reset is not None else now + DEFAULT_RETRY_SECONDS
 
-    def _exchange(self, method: str, url: str, data: bytes | None, etag: str | None) -> tuple[int, object, bytes]:
+    def _exchange(
+        self, method: str, url: str, data: bytes | None, etag: str | None, token: Callable[[], str]
+    ) -> tuple[int, object, bytes]:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "factory-dispatcher",
-            "Authorization": f"Bearer {self._token()}",
+            "Authorization": f"Bearer {token()}",
         }
         if etag:
             headers["If-None-Match"] = etag
@@ -172,16 +207,17 @@ class GitHub:
                 content = response.read(MAX_BODY_BYTES + 1)
             finally:
                 response.close()
-        except OSError as error:  # URLError, timeouts and connection failures are all OSErrors
+        except (OSError, http.client.HTTPException) as error:  # HTTPException is not an OSError
             raise GitHubError(0, f"{label} failed on the network ({type(error).__name__})") from None
         if len(content) > MAX_BODY_BYTES:
             raise GitHubError(0, f"{label} answered more than {MAX_BODY_BYTES} bytes")
         return response.status, response.headers, content
 
 
-def post_as_app(path: str, bearer: str, *, opener: Callable = urllib.request.urlopen) -> dict:
+def post_as_app(path: str, bearer: str, *, opener: Callable = _default_opener) -> dict:
     """POST as the App itself with its JWT; the `post` that InstallationToken needs."""
-    answer = GitHub("", lambda: bearer, opener=opener).post(path, {})
+    # The bearer is a fixed JWT, so repeating a rejected request would only repeat the rejection.
+    answer = GitHub("", lambda: bearer, opener=opener)._write("POST", path, {}, retry_on_401=False)
     if not isinstance(answer, dict):
         raise GitHubError(0, f"POST {path} did not answer with an object")
     return answer

@@ -71,10 +71,11 @@ class InstallationToken:
     def get(self) -> str:
         """Return a token with at least five minutes of life left."""
         if self._expires_at - self._clock() < REFRESH_MARGIN_SECONDS:
-            self._mint()
+            return self.refresh()
         return self._token
 
-    def _mint(self) -> None:
+    def refresh(self) -> str:
+        """Mint a new token whatever the cache holds, for when GitHub rejected the cached one."""
         bearer = app_jwt(self._app_id, self._key_file, int(self._clock()))
         answer = self._post(self._path, bearer)
         token, expires_at = answer.get("token"), answer.get("expires_at")
@@ -85,3 +86,4 @@ class InstallationToken:
         except ValueError:
             raise AuthError("GitHub's token expiry is not a timestamp") from None
         self._token, self._expires_at = token, expiry
+        return token
