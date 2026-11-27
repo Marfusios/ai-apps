@@ -1,13 +1,13 @@
 """The dispatcher's decision function: what GitHub shows and what jobs exist, in; the actions to take, out."""
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from factory.config import Config, is_trusted
-from factory.jobs import choose_app, is_retry
-from factory.snapshot import Bot, Comment, Issue, Marker, Snapshot
+from factory.jobs import choose_app, is_retry, is_revise
+from factory.snapshot import Bot, Comment, Issue, Marker, PullRequest, Snapshot, checks_state
 
 STATUS_PREFIX = "status:"
 BUILDING = "status:building"
@@ -17,6 +17,9 @@ DONE = "status:done"
 PAUSE_LABEL = "factory:pause"
 CLOSE_REASON = "the issue is closed or no longer labelled"
 RETRYABLE = ("failed", "timeout", "crashed", "refused", "rejected")
+PULL_REQUEST_STAGES = ("fix", "revise")  # the stages that work on an existing pull request
+EXHAUSTED_NOTICE = "fix-rounds-exhausted"
+REVIEW_STATES_THAT_ASK = ("changes_requested", "commented")
 RETRY_AT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 
 
@@ -44,9 +47,20 @@ class SetStatus:
 class StartJob:
     issue: int
     app: str
+    stage: str = "fix_issue"
+    round: int = 0  # the automated fix round, 1 and up, for a `fix` run; 0 for any other stage
 
     def describe(self) -> str:
-        return f"issue #{self.issue}: start a fix_issue run for app {self.app}"
+        label = f"{self.stage} run (round {self.round})" if self.round > 0 else f"{self.stage} run"
+        return f"issue #{self.issue}: start a {label} for app {self.app}"
+
+
+@dataclass(frozen=True)
+class HandOff:
+    issue: int
+
+    def describe(self) -> str:
+        return f"issue #{self.issue}: hand the pull request over for review"
 
 
 @dataclass(frozen=True)
@@ -61,7 +75,7 @@ class PublishRun:
 @dataclass(frozen=True)
 class PostNotice:
     issue: int
-    key: str  # "untrusted-author", "needs-app" or "pr-closed"
+    key: str  # "untrusted-author", "needs-app", "pr-closed" or "fix-rounds-exhausted"
 
     def describe(self) -> str:
         return f"issue #{self.issue}: post the {self.key} notice"
@@ -76,7 +90,7 @@ class CloseJob:
         return f"job {self.job_id}: close it ({self.reason})"
 
 
-Action = SetStatus | StartJob | PublishRun | PostNotice | CloseJob
+Action = SetStatus | StartJob | HandOff | PublishRun | PostNotice | CloseJob
 
 
 def _trusted(login: str | None, config: Config) -> bool:
@@ -213,7 +227,173 @@ def _done_rows(issue: Issue) -> list[Action]:
     return [PostNotice(issue.number, "pr-closed"), *_status(issue, NEEDS_HUMAN)]
 
 
-def _after_marker_rows(issue: Issue, marker: Marker, now: datetime, config: Config, bot: Bot) -> list[Action] | None:
+# The pull request's life: the table "How a pull request moves" of docs/factory/plans/03-checks-and-review.md --------
+# Each row returns the actions it calls for, a _Start when the issue wants a run, or None when it does not apply.
+
+
+@dataclass(frozen=True)
+class _Start:
+    """An issue that wants a run of `stage`; the rules for starts (an app, pause, halt, one job at a time) apply."""
+
+    stage: str = "fix_issue"
+    round: int = 0
+
+
+@dataclass(frozen=True)
+class _Situation:
+    """An open pull request with no job, and the last marker of the issue and pull request together."""
+
+    issue: Issue
+    pull: PullRequest
+    marker: Marker
+    now: datetime
+    config: Config
+    bot: Bot
+
+
+PullRequestRow = Callable[[_Situation], "list[Action] | _Start | None"]
+
+
+def _stage(marker: Marker) -> str | None:
+    stage = marker.data.get("stage")
+    return stage if isinstance(stage, str) else None
+
+
+def _stage_to_restart(marker: Marker) -> str | None:
+    """The stage a person's reply or retry starts again; the exhausted notice stands for the fix runs it ended."""
+    if marker.data.get("kind") == "notice" and marker.data.get("key") == EXHAUSTED_NOTICE:
+        return "fix"
+    stage = _stage(marker)
+    return stage if stage in PULL_REQUEST_STAGES else None
+
+
+def _fix_runs_in_a_row(issue: Issue, bot: Bot) -> int:
+    """Run markers of stage `fix` at the end of the stream; a usage limit is skipped, any other marker ends the count."""
+    count = 0
+    for marker in reversed(issue.markers(bot)):
+        if marker.outcome == "usage_limit":
+            continue
+        if _stage(marker) != "fix":
+            break
+        count += 1
+    return count
+
+
+def _again(stage: str, situation: _Situation) -> _Start:
+    """A fresh run of the stage; a fix run is numbered after the fix runs already in a row."""
+    return _Start(stage, _fix_runs_in_a_row(situation.issue, situation.bot) + 1 if stage == "fix" else 0)
+
+
+def _trusted_comments(situation: _Situation) -> list[Comment]:
+    return _trusted_comments_after(situation.issue, situation.marker, situation.config, situation.bot)
+
+
+def _answer_to_a_question(situation: _Situation) -> _Start | None:
+    stage = _stage_to_restart(situation.marker)
+    if stage is not None and situation.marker.outcome == "needs_input" and _trusted_comments(situation):
+        return _again(stage, situation)
+    return None
+
+
+def _retry_after_a_failure(situation: _Situation) -> _Start | None:
+    stage = _stage_to_restart(situation.marker)
+    if stage is not None and situation.marker.outcome in RETRYABLE and any(map(is_retry, _trusted_comments(situation))):
+        return _again(stage, situation)
+    return None
+
+
+def _resume_after_a_usage_limit(situation: _Situation) -> list[Action] | _Start | None:
+    stage = _stage_to_restart(situation.marker)
+    if stage is None or situation.marker.outcome != "usage_limit":
+        return None
+    if _retry_is_ahead(situation.marker, situation.now):
+        return _status(situation.issue, QUEUED)
+    return _again(stage, situation)
+
+
+def _review_asks_for_changes(situation: _Situation) -> _Start | None:
+    """A trusted person's review, submitted after the last marker, that requests changes or comments."""
+    for review in situation.pull.reviews:
+        if (
+            review.state in REVIEW_STATES_THAT_ASK and is_trusted(review.author, situation.config)
+            and review.submitted_at > situation.marker.created_at
+        ):
+            return _Start("revise")
+    return None
+
+
+def _revise_command(situation: _Situation) -> _Start | None:
+    if any(is_revise(comment) is not None for comment in _trusted_comments(situation)):
+        return _Start("revise")
+    return None
+
+
+def _waiting_for_a_person(situation: _Situation) -> list[Action] | None:
+    """A question or a failure of a fix or revise run holds every row about the checks back until a person answers."""
+    waits = situation.marker.outcome == "needs_input" or situation.marker.outcome in RETRYABLE
+    if waits and _stage_to_restart(situation.marker) is not None:
+        return _status(situation.issue, NEEDS_HUMAN)
+    return None
+
+
+def _checks(situation: _Situation) -> str:
+    return checks_state(situation.pull, situation.config.dispatcher.required_checks)
+
+
+def _fix_failed_checks(situation: _Situation) -> _Start | None:
+    runs = _fix_runs_in_a_row(situation.issue, situation.bot)
+    if _checks(situation) == "failed" and runs < situation.config.dispatcher.max_fix_rounds:
+        return _Start("fix", runs + 1)
+    return None
+
+
+def _give_up_on_failed_checks(situation: _Situation) -> list[Action] | None:
+    runs = _fix_runs_in_a_row(situation.issue, situation.bot)
+    if _checks(situation) == "failed" and runs >= situation.config.dispatcher.max_fix_rounds:
+        return [PostNotice(situation.issue.number, EXHAUSTED_NOTICE), *_status(situation.issue, NEEDS_HUMAN)]
+    return None
+
+
+def _hand_off(situation: _Situation) -> list[Action] | None:
+    if _checks(situation) == "passed" and situation.pull.draft:
+        return [HandOff(situation.issue.number)]
+    return None
+
+
+# The order of the table. The rows about the checks apply only after a run that finished (`done`).
+ASKED_ROWS: tuple[PullRequestRow, ...] = (
+    _answer_to_a_question, _retry_after_a_failure, _resume_after_a_usage_limit, _review_asks_for_changes,
+    _revise_command, _waiting_for_a_person,
+)
+CHECK_ROWS: tuple[PullRequestRow, ...] = (_fix_failed_checks, _give_up_on_failed_checks, _hand_off)
+
+
+def _in_the_pull_requests_life(marker: Marker) -> bool:
+    """The table reads markers of its own stages and of a finished run; any other marker keeps today's rows."""
+    return marker.outcome == "done" or _stage_to_restart(marker) is not None
+
+
+def _pull_request_rows(
+    issue: Issue, marker: Marker, now: datetime, config: Config, bot: Bot
+) -> list[Action] | _Start | None:
+    """The first row of the table that applies to the issue's open pull request, or None when none does."""
+    pull = issue.pull_request
+    if pull is None or not pull.open or not _in_the_pull_requests_life(marker):
+        return None
+    situation = _Situation(issue, pull, marker, now, config, bot)
+    for row in (*ASKED_ROWS, *(CHECK_ROWS if marker.outcome == "done" else ())):
+        found = row(situation)
+        if found is not None:
+            return found
+    return None
+
+
+def _after_marker_rows(
+    issue: Issue, marker: Marker, now: datetime, config: Config, bot: Bot
+) -> list[Action] | _Start | None:
+    from_pull_request = _pull_request_rows(issue, marker, now, config, bot)
+    if from_pull_request is not None:
+        return from_pull_request
     trusted_after = _trusted_comments_after(issue, marker, config, bot)
     outcome = marker.outcome
     if outcome == "needs_input":
@@ -229,8 +409,8 @@ def _after_marker_rows(issue: Issue, marker: Marker, now: datetime, config: Conf
 
 def _open_issue_rows(
     issue: Issue, jobs: Sequence[JobView], now: datetime, config: Config, bot: Bot
-) -> list[Action] | None:
-    """What a trusted open issue needs, or None when it wants to start."""
+) -> list[Action] | _Start | None:
+    """What a trusted open issue needs; a _Start, or None for a plain `fix_issue` start, when it wants a run."""
     from_jobs = _job_rows(issue, jobs)
     if from_jobs is not None:
         return from_jobs
@@ -293,15 +473,16 @@ def decide(snapshot: Snapshot, jobs: Sequence[JobView], now: datetime, config: C
             actions += _closed_issue(issue)
 
     pending: list[tuple[Issue, list[Action]]] = []  # trusted open issues, with their actions so far
-    app_of: dict[int, str] = {}  # issues that want to start, in ascending number
+    app_of: dict[int, tuple[str, _Start]] = {}  # issues that want to start, in ascending number
     for issue in ordered:
         if not _is_handled(issue, config):  # rule 3
             continue
         rows = _open_issue_rows(issue, jobs, now, config, bot)
-        if rows is None:
+        if rows is None or isinstance(rows, _Start):
+            wanted = rows or _Start()
             rows, app = _wants_to_start(issue, snapshot, config)
             if app is not None:
-                app_of[issue.number] = app
+                app_of[issue.number] = (app, wanted)
         pending.append((issue, rows))
 
     blocked = _starts_blocked(snapshot, jobs, now, config, bot)
@@ -309,7 +490,8 @@ def decide(snapshot: Snapshot, jobs: Sequence[JobView], now: datetime, config: C
     for issue, rows in pending:
         actions += rows
         if issue.number == first:
-            actions += [*_status(issue, BUILDING), StartJob(issue.number, app_of[issue.number])]
+            app, wanted = app_of[issue.number]
+            actions += [*_status(issue, BUILDING), StartJob(issue.number, app, wanted.stage, wanted.round)]
         elif issue.number in app_of:
             actions += _status(issue, QUEUED)
     return actions

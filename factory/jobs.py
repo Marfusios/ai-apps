@@ -8,7 +8,7 @@ from factory.config import MODEL, PERMISSION_MODES, STAGE_LIMITS, Config, is_tru
 from factory.snapshot import Bot, Comment, Issue
 from factory.spool import JOB_ID
 
-SKILLS = {"fix_issue": "factory-fix-issue"}
+SKILLS = {"fix_issue": "factory-fix-issue", "fix": "factory-fix", "revise": "factory-revise"}
 MAX_CONTEXT_CHARS = 150_000
 MAX_ITEM_CHARS = 20_000
 MAX_TITLE_CHARS = 300
@@ -18,6 +18,7 @@ APP_LINE = re.compile(r"(?i:app):\s*([a-z0-9][a-z0-9-]*)\s*")
 APP_VALUE = re.compile(r"[a-z0-9][a-z0-9-]*")
 APP_HEADING = "### App"
 RETRY_COMMAND = "/factory retry"
+REVISE_COMMAND = "/factory revise"
 APP = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 BRANCH = re.compile(r"factory/[a-z0-9][a-z0-9-]{0,60}")
 BASE_SHA = re.compile(r"[0-9a-f]{40}")
@@ -36,6 +37,18 @@ def is_retry(comment: Comment) -> bool:
         if line.strip():
             return line.strip().lower() == RETRY_COMMAND
     return False
+
+
+def is_revise(comment: Comment) -> str | None:
+    """The instruction after `/factory revise` on the first non-blank line, "" when none, None for any other line."""
+    for line in comment.body.splitlines():
+        text = line.strip()
+        if text:
+            if not text.lower().startswith(REVISE_COMMAND):
+                return None
+            rest = text[len(REVISE_COMMAND):]
+            return rest.strip() if not rest or rest[0].isspace() else None
+    return None
 
 
 def _is_bot(comment: Comment, bot: Bot) -> bool:

@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 from factory import config as factory_config
 from factory import markers
-from factory.decide import CloseJob, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide
-from factory.snapshot import Bot, Comment, Issue, PullRequest, Snapshot
+from factory.decide import CloseJob, HandOff, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide
+from factory.snapshot import Bot, Check, Comment, Issue, PullRequest, Review, Snapshot
 
 CONFIG = factory_config.load()
 BOT = Bot("mk-factory[bot]", 4242)
@@ -369,6 +369,218 @@ class StatusTest(unittest.TestCase):
     def test_a_missing_wanted_label_is_added_and_the_others_removed(self):
         crowded = issue(12, labels=("factory:fix", QUEUED, DONE))
         self.assertEqual(run(crowded), [SetStatus(12, BUILDING, (QUEUED, DONE)), StartJob(12, "demo")])
+
+
+HEAD = "0123456789abcdef0123456789abcdef01234567"
+AFTER = "2026-01-01T10:30:00Z"  # later than the comments of these tests, which carry 10:00:00
+BEFORE = "2026-01-01T09:00:00Z"
+
+
+def checks_pull(state: str, *, draft: bool = False, reviews: tuple[Review, ...] = ()) -> PullRequest:
+    """An open pull request whose required checks all read `state` ("passed", "failed" or "pending")."""
+    checks = tuple(Check(name, state, index) for index, name in enumerate(CONFIG.dispatcher.required_checks))
+    return PullRequest(5, True, False, "https://github.com/owner/repo/pull/5", draft, HEAD, "node", checks, True,
+                       "", "", reviews)
+
+
+def review(state: str, *, author: str = "Marfusios", at: str = AFTER) -> Review:
+    return Review(1, author, state, at, "Please change this.")
+
+
+def stage_comment(id: int, stage: str, outcome: str = "done", **data) -> Comment:
+    return marker_comment(id, outcome, stage=stage, **data)
+
+
+def in_flight(pr: PullRequest, *comments: Comment) -> Issue:
+    return issue(12, comments=comments, pull=pr)
+
+
+def building_issue(pr: PullRequest, *comments: Comment) -> Issue:
+    """The issue as the table leaves it while its pull request is in flight: status building already."""
+    return issue(12, labels=("factory:fix", BUILDING), comments=comments, pull=pr)
+
+
+def start(stage: str, round: int = 0) -> list:
+    return [SetStatus(12, BUILDING, ()), StartJob(12, "demo", stage, round)]
+
+
+class FixRowsTest(unittest.TestCase):
+    def test_failed_checks_start_fix_rounds_one_to_three(self):
+        failed = checks_pull("failed")
+        behind = [(), (stage_comment(3, "fix"),), (stage_comment(3, "fix"), stage_comment(4, "fix"))]
+        for index, comments in enumerate(behind):
+            with self.subTest(fix_runs_behind=index):
+                self.assertEqual(run(in_flight(failed, marker_comment(2, "done"), *comments)), start("fix", index + 1))
+
+    def test_failed_checks_with_three_fix_runs_behind_post_the_notice(self):
+        fixes = (stage_comment(3, "fix"), stage_comment(4, "fix"), stage_comment(5, "fix"))
+        actions = run(in_flight(checks_pull("failed"), *fixes))
+        self.assertEqual(actions, [PostNotice(12, "fix-rounds-exhausted"), SetStatus(12, NEEDS_HUMAN, ())])
+
+    def test_once_the_notice_is_in_the_stream_nothing_more_happens(self):
+        notice = marker_comment(6, "failed", kind="notice", key="fix-rounds-exhausted")
+        fixes = (stage_comment(3, "fix"), stage_comment(4, "fix"), stage_comment(5, "fix"), notice)
+        self.assertEqual(run(in_flight(checks_pull("failed"), *fixes)), HUMAN_12)
+        waiting = issue(12, labels=("factory:fix", NEEDS_HUMAN), comments=fixes, pull=checks_pull("failed"))
+        self.assertEqual(run(waiting), [])
+
+    def test_a_retry_after_the_notice_starts_fix_at_round_one(self):
+        notice = marker_comment(6, "failed", kind="notice", key="fix-rounds-exhausted")
+        fixes = (stage_comment(3, "fix"), stage_comment(4, "fix"), stage_comment(5, "fix"), notice)
+        self.assertEqual(run(in_flight(checks_pull("failed"), *fixes, comment(7, "/factory retry"))), start("fix", 1))
+
+    def test_a_revise_marker_between_fix_markers_restarts_the_count(self):
+        history = (stage_comment(3, "fix"), stage_comment(4, "fix"), stage_comment(5, "revise"), stage_comment(6, "fix"))
+        self.assertEqual(run(in_flight(checks_pull("failed"), *history)), start("fix", 2))
+        ended_by_revise = (stage_comment(3, "fix"), stage_comment(4, "fix"), stage_comment(5, "fix"),
+                           stage_comment(6, "revise"))
+        self.assertEqual(run(in_flight(checks_pull("failed"), *ended_by_revise)), start("fix", 1))
+
+    def test_a_usage_limit_between_fix_runs_does_not_end_the_count(self):
+        history = (stage_comment(3, "fix"), stage_comment(4, "fix", "usage_limit", retry_at=PAST), stage_comment(5, "fix"))
+        self.assertEqual(run(in_flight(checks_pull("failed"), *history)), start("fix", 3))
+
+    def test_a_marker_without_a_stage_ends_the_count(self):
+        history = (stage_comment(3, "fix"), marker_comment(4, "done"))
+        self.assertEqual(run(in_flight(checks_pull("failed"), *history)), start("fix", 1))
+
+    def test_pending_checks_do_nothing(self):
+        self.assertEqual(run(in_flight(checks_pull("pending"), marker_comment(3, "done"))), [SetStatus(12, BUILDING, ())])
+        self.assertEqual(run(building_issue(checks_pull("pending"), stage_comment(3, "fix"))), [])
+
+    def test_checks_of_an_older_head_are_pending_so_nothing_happens(self):
+        stale = dataclasses.replace(checks_pull("failed"), head_sha="abc", checks=())
+        self.assertEqual(run(building_issue(stale, stage_comment(3, "fix"))), [])
+
+
+class HandOffTest(unittest.TestCase):
+    def test_passed_checks_on_a_draft_hand_the_pull_request_over(self):
+        draft = checks_pull("passed", draft=True)
+        self.assertEqual(run(building_issue(draft, marker_comment(3, "done"))), [HandOff(12)])
+        self.assertEqual(run(building_issue(draft, stage_comment(3, "revise"))), [HandOff(12)])
+
+    def test_passed_checks_on_a_ready_pull_request_do_nothing(self):
+        self.assertEqual(run(building_issue(checks_pull("passed"), stage_comment(3, "fix"))), [])
+
+    def test_a_job_in_flight_holds_the_hand_off_back(self):
+        draft = in_flight(checks_pull("passed", draft=True), marker_comment(3, "done"))
+        self.assertEqual(run(draft, jobs=[JobView("j", 12, "running")]), [SetStatus(12, BUILDING, ())])
+
+
+class ReviseRowsTest(unittest.TestCase):
+    def test_a_trusted_review_that_changes_or_comments_starts_revise_even_when_checks_failed(self):
+        for state in ("changes_requested", "commented"):
+            with self.subTest(state=state):
+                pr = checks_pull("failed", reviews=(review(state),))
+                self.assertEqual(run(in_flight(pr, stage_comment(3, "fix"))), start("revise"))
+
+    def test_a_review_that_does_not_count_starts_nothing(self):
+        cases = {
+            "untrusted": review("changes_requested", author="stranger"),
+            "approval": review("approved"),
+            "older than the last marker": review("changes_requested", at=BEFORE),
+            "dismissed": review("dismissed"),
+        }
+        for name, one in cases.items():
+            with self.subTest(name):
+                pr = checks_pull("pending", reviews=(one,))
+                self.assertEqual(run(building_issue(pr, marker_comment(3, "done"))), [])
+
+    def test_a_review_starts_revise_after_a_fix_run_that_needs_input_too(self):
+        pr = checks_pull("failed", reviews=(review("commented"),))
+        self.assertEqual(run(in_flight(pr, stage_comment(3, "fix", "needs_input"))), start("revise"))
+
+    def test_the_revise_command_starts_revise(self):
+        pr = checks_pull("pending")
+        self.assertEqual(run(in_flight(pr, stage_comment(3, "fix"), comment(4, "/factory revise tidy the names"))),
+                         start("revise"))
+        self.assertEqual(run(in_flight(pr, stage_comment(3, "fix"), comment(4, "/Factory Revise"))), start("revise"))
+
+    def test_the_revise_command_must_be_trusted_new_and_exact(self):
+        pr = checks_pull("pending")
+        later_comments = {
+            "stranger": comment(4, "/factory revise now", author="stranger"),
+            "not the first line": comment(4, "hello\n/factory revise"),
+            "another command": comment(4, "/factory revised"),
+        }
+        for name, later in later_comments.items():
+            with self.subTest(name):
+                self.assertEqual(run(building_issue(pr, stage_comment(3, "fix"), later)), [])
+        before = building_issue(pr, comment(2, "/factory revise"), stage_comment(3, "fix"))
+        self.assertEqual(run(before), [])
+
+    def test_needs_input_from_a_revise_run_restarts_revise_on_a_trusted_reply(self):
+        pr = checks_pull("failed")
+        asked = stage_comment(3, "revise", "needs_input")
+        self.assertEqual(run(in_flight(pr, asked)), HUMAN_12)
+        self.assertEqual(run(in_flight(pr, asked, comment(4, "hi", author="stranger"))), HUMAN_12)
+        self.assertEqual(run(in_flight(pr, asked, comment(4, "use the first option"))), start("revise"))
+
+    def test_needs_input_from_a_fix_run_restarts_fix(self):
+        asked = stage_comment(3, "fix", "needs_input")
+        self.assertEqual(run(in_flight(checks_pull("failed"), asked, comment(4, "go on"))), start("fix", 2))
+
+    def test_a_failure_from_fix_or_revise_restarts_that_stage_on_retry(self):
+        pr = checks_pull("failed")
+        for stage, expected in (("fix", start("fix", 2)), ("revise", start("revise"))):
+            for outcome in ("failed", "timeout", "crashed"):
+                with self.subTest(stage=stage, outcome=outcome):
+                    failure = stage_comment(3, stage, outcome)
+                    self.assertEqual(run(in_flight(pr, failure)), HUMAN_12)
+                    self.assertEqual(run(in_flight(pr, failure, comment(4, "thanks"))), HUMAN_12)
+                    self.assertEqual(run(in_flight(pr, failure, comment(4, "/factory retry"))), expected)
+
+    def test_a_usage_limit_from_fix_or_revise_restarts_that_stage_when_its_time_has_come(self):
+        pr = checks_pull("failed")
+        for stage, expected in (("fix", start("fix", 1)), ("revise", start("revise"))):
+            with self.subTest(stage=stage):
+                self.assertEqual(run(in_flight(pr, stage_comment(3, stage, "usage_limit", retry_at=FUTURE))), QUEUED_12)
+                self.assertEqual(run(in_flight(pr, stage_comment(3, stage, "usage_limit", retry_at=PAST))), expected)
+
+
+class PullRequestStartRulesTest(unittest.TestCase):
+    """A start from the pull request's rows goes through the rules of any other start."""
+
+    def failing(self) -> Issue:
+        return in_flight(checks_pull("failed"), stage_comment(3, "fix"))
+
+    def test_pause_queues_instead_of_starting(self):
+        paused = issue(12, labels=("factory:fix", "factory:pause"), comments=(stage_comment(3, "fix"),),
+                       pull=checks_pull("failed"))
+        self.assertEqual(run(paused), QUEUED_12)
+
+    def test_halt_queues_instead_of_starting(self):
+        self.assertEqual(run(self.failing(), halted=True), QUEUED_12)
+
+    def test_a_live_job_of_another_issue_queues_it(self):
+        actions = run(self.failing(), issue(13), jobs=[JobView("j", 13, "running")])
+        self.assertEqual(actions, [*QUEUED_12, SetStatus(13, BUILDING, ())])
+
+    def test_a_usage_limit_ahead_elsewhere_queues_it(self):
+        waiting = with_marker(13, "usage_limit", retry_at=FUTURE)
+        self.assertEqual(run(self.failing(), waiting)[:1], QUEUED_12)
+
+    def test_an_app_must_be_chosen(self):
+        actions = run(self.failing(), apps=("alpha", "beta"))
+        self.assertEqual(actions, [PostNotice(12, "needs-app"), SetStatus(12, NEEDS_HUMAN, ())])
+
+    def test_a_job_and_a_settling_job_come_first(self):
+        self.assertEqual(run(self.failing(), jobs=[JobView("j", 12, "finished")]), [PublishRun("j", 12)])
+        self.assertEqual(run(self.failing(), jobs=[JobView("j", 12, "closed")]), [])
+
+    def test_a_pull_request_that_is_not_open_gets_none_of_the_rows(self):
+        closed = dataclasses.replace(checks_pull("failed"), open=False)
+        self.assertEqual(run(in_flight(closed, stage_comment(3, "fix"))),
+                         [PostNotice(12, "pr-closed"), SetStatus(12, NEEDS_HUMAN, ())])
+
+
+class PullRequestDescribeTest(unittest.TestCase):
+    def test_start_job_names_the_stage_and_a_round_above_zero(self):
+        self.assertEqual(StartJob(12, "demo", "fix", 2).describe(), "issue #12: start a fix run (round 2) for app demo")
+        self.assertEqual(StartJob(12, "demo", "revise").describe(), "issue #12: start a revise run for app demo")
+
+    def test_hand_off_describes_itself(self):
+        self.assertEqual(HandOff(12).describe(), "issue #12: hand the pull request over for review")
 
 
 class DescribeTest(unittest.TestCase):

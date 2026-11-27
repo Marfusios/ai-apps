@@ -188,6 +188,22 @@ class IsRetryTest(unittest.TestCase):
         self.assertFalse(jobs.is_retry(comment("/factory retry now")))
         self.assertFalse(jobs.is_retry(comment("")))
 
+    def test_is_revise_returns_the_instruction_after_the_command(self):
+        self.assertEqual(jobs.is_revise(comment("/factory revise tidy the names")), "tidy the names")
+        self.assertEqual(jobs.is_revise(comment("\n  /Factory REVISE   rename it  \nmore")), "rename it")
+        self.assertEqual(jobs.is_revise(comment("/factory revise")), "")
+        self.assertEqual(jobs.is_revise(comment("/factory revise\tnow")), "now")
+
+    def test_is_revise_is_none_when_the_first_line_is_not_that_command(self):
+        for body in ("", "hello\n/factory revise", "please /factory revise", "/factory revised", "/factory retry",
+                     "/factory"):
+            with self.subTest(body=body):
+                self.assertIsNone(jobs.is_revise(comment(body)))
+
+    def test_fix_and_revise_have_their_skills(self):
+        self.assertEqual(jobs.SKILLS["fix"], "factory-fix")
+        self.assertEqual(jobs.SKILLS["revise"], "factory-revise")
+
 
 class JobFileTest(unittest.TestCase):
     def test_job_file_matches_the_contract(self):
