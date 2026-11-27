@@ -6,7 +6,6 @@ anything in Git history. Diagnostics never include matched credential values.
 """
 
 import ast
-import ipaddress
 from pathlib import Path
 import re
 import subprocess
@@ -17,19 +16,8 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from factory import app_config, config as factory_config  # noqa: E402
-PRIVATE_NETWORKS = tuple(
-    ipaddress.ip_network(network)
-    for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
-)
-IP_ADDRESS = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
-PATTERNS = (
-    ("possible provider key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
-    ("possible GitHub token", re.compile(r"\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}\b")),
-    ("possible Hugging Face token", re.compile(r"\bhf_[A-Za-z0-9]{20,}\b")),
-    ("private key", re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")),
-    ("personal filesystem path", re.compile(r"/(?:home|Users)/[\w.-]+/")),
-)
+from factory import app_config, config as factory_config, hygiene  # noqa: E402
+
 SECRET_VARIABLE = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", re.IGNORECASE)
 ASSIGNMENT = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 MARKDOWN_LINK = re.compile(r"!?\[[^\]\n]*\]\(([^\s)]+)(?:\s+\"[^\"]*\")?\)")
@@ -43,20 +31,6 @@ def repo_files() -> list[Path]:
     return sorted({Path(name.decode("utf-8")) for name in output.split(b"\0") if name})
 
 
-def private_file(path: Path) -> bool:
-    name = path.name.lower()
-    if name.endswith(".env.example"):
-        return False
-    return (
-        name == ".env"
-        or name.startswith(".env.")
-        or name.endswith(".env")
-        or ".env." in name
-        or path.suffix.lower() in {".pem", ".key", ".p12", ".pfx"}
-        or any(part.lower() in {"secrets", "credentials"} for part in path.parts)
-    )
-
-
 def check_file(path: Path, errors: list[str]) -> None:
     absolute = ROOT / path
     if absolute.is_symlink():
@@ -66,7 +40,7 @@ def check_file(path: Path, errors: list[str]) -> None:
     if not absolute.is_file():
         # A tracked deletion is not part of the working tree being checked.
         return
-    if private_file(path):
+    if hygiene.private_file(path):
         errors.append(f"{path}: local credential file must not be tracked or staged")
         return
     raw = absolute.read_bytes()
@@ -78,19 +52,14 @@ def check_file(path: Path, errors: list[str]) -> None:
         return
 
     for number, line in enumerate(content.splitlines(), 1):
-        for label, pattern in PATTERNS:
-            if pattern.search(line):
-                errors.append(f"{path}:{number}: {label}; remove it before committing")
-        # This tool declares the private ranges it checks; allow those declarations.
-        if path != Path("scripts/check_repo.py"):
-            for match in IP_ADDRESS.finditer(line):
-                try:
-                    address = ipaddress.ip_address(match.group())
-                except ValueError:
+        for label in hygiene.line_problems(line):
+            if label == hygiene.PRIVATE_ADDRESS_LABEL:
+                # hygiene.py declares the private ranges it checks; allow those declarations.
+                if path == Path("factory/hygiene.py"):
                     continue
-                if any(address in network for network in PRIVATE_NETWORKS):
-                    errors.append(f"{path}:{number}: private network address; use portable configuration")
-                    break
+                errors.append(f"{path}:{number}: private network address; use portable configuration")
+            else:
+                errors.append(f"{path}:{number}: {label}; remove it before committing")
         if path.name.endswith(".env.example"):
             assignment = ASSIGNMENT.match(line.strip())
             if assignment and SECRET_VARIABLE.search(assignment[1]):
