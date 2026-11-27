@@ -14,7 +14,6 @@ import {
   type ImportSession,
   registerCandidate,
 } from '../../worker/importer/store.js';
-import { publishGeneration } from '../../worker/index/publish.js';
 import { ImportFailure } from '../../worker/importer/contracts.js';
 import { createLedgerSpendGate } from '../../worker/index/spend-gate.js';
 import { createOpenAIEmbedder } from '../../worker/index/embed.js';

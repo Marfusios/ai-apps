@@ -24,7 +24,7 @@ const controls = /\/(\[[^\]]+\])\/u\.test\(question\)/.exec(source);
 if (!quotes || !controls) throw new Error('state guard inline checks changed; update the mutation test');
 const controlAtoms = controls[1]!.slice(1, -1).match(/\\u[0-9a-f]{4}(?:-\\u[0-9a-f]{4})?/gi)!;
 const inlineMutations = [
-  ...[...quotes[1]!.slice(1, -1)].map(character => ({
+  ...Array.from(quotes[1]!.slice(1, -1)).map(character => ({
     name: `quote U+${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
     source: source.replace(quotes[0], () => `/${quotes[1]!.replace(character, '')}${quotes[2]}/u.test(text)`),
   })),

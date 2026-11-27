@@ -103,6 +103,7 @@ export function CaseDrawer({
     if (!focusPending.current || !heading.current) return;
     focusHeading();
     if (query.data) focusPending.current = false;
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- focusHeading is new on every render; focus moves only when the case or its data changes
   }, [query.data, ntsbNo]);
   // Each case starts at the top of the drawer. A layout effect, so it runs before the
   // story's own effect scrolls to the cited passage (‹ › onto a case whose context is cached).

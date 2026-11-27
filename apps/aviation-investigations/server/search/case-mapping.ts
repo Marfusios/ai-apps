@@ -155,7 +155,7 @@ export async function mapCasesToPassages(
   const requests: estypes.SearchRequest[] = [];
 
   const wave = async <T, R>(values: readonly T[], task: (value: T) => Promise<R>): Promise<R[]> => {
-    const answers: R[] = new Array(values.length);
+    const answers = Array.from<R>({ length: values.length });
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(MAPPING_CONCURRENCY, values.length) }, async () => {
       while (next < values.length) {

@@ -78,7 +78,7 @@ async function matches(index: string, filter: Query[]): Promise<Map<string, numb
     query: { bool: { filter } },
     aggs: { cases: { terms: { field: 'ntsb_no', size: 100 } } },
   });
-  const buckets = (res.aggregations?.cases as estypes.AggregationsStringTermsAggregate).buckets as estypes.AggregationsStringTermsBucket[];
+  const buckets = (res.aggregations!.cases as estypes.AggregationsStringTermsAggregate).buckets as estypes.AggregationsStringTermsBucket[];
   return new Map(buckets.map((b) => [String(b.key), b.doc_count]));
 }
 

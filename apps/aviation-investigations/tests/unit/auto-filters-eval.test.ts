@@ -384,7 +384,7 @@ describe('Task 30 frozen inputs and items', () => {
     expect(probeItems(loaded, false)[0]!.scripted).toBeNull();
     const order = seededOrder(items);
     expect(order.map(i => i.id)).toEqual(seededOrder(items).map(i => i.id));
-    expect([...order.map(i => i.id)].sort()).toEqual([...items.map(i => i.id)].sort());
+    expect(order.map(i => i.id).sort()).toEqual(items.map(i => i.id).sort());
     expect(order[0]!.id).not.toBe(items[0]!.id);
     const keys = new Set([attemptKey('l', 'dev-forced', 'i', 1), attemptKey('l', 'dev-e2e', 'i', 1), attemptKey('l', 'dev-forced', 'i', 2),
       attemptKey('m', 'dev-forced', 'i', 1), attemptKey('l', 'retrieval', 'i', 1, 'QH50', 'trackc-dev'), attemptKey('l', 'retrieval', 'i', 1, 'QH50+A', 'trackc-dev')]);

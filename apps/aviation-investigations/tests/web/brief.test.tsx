@@ -17,7 +17,6 @@ import { SignInProvider } from '../../web/src/features/auth/SignInDialog';
 import { AiNoticeBox } from '../../web/src/features/ai/AiNoticeBox';
 import { AskAiButton } from '../../web/src/features/ai/AskAiButton';
 import {
-  FIRST_CHECK_TITLE,
   LATER_CHECK_TITLE,
   TurnstileGate,
   useAiCheck,

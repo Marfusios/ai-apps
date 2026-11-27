@@ -123,7 +123,7 @@ const isWs = (ch: string | undefined): boolean => ch !== undefined && WS.test(ch
 /** Sentence-final punctuation with any closing quotes or brackets. */
 const TERMINAL = /[.!?…]+["'’”)\]]*/gu;
 /** A sentence starts with a capital, a digit or an opening quote or bracket. */
-const SENTENCE_START = /^[\p{Lu}\p{N}"'‘“(\[]/u;
+const SENTENCE_START = /^[\p{Lu}\p{N}"'‘“([]/u;
 const WORD_BEFORE = /([\p{L}\p{N}][\p{L}\p{N}.]*)$/u;
 /**
  * Abbreviations a period does not end a sentence after (when a capital or a digit

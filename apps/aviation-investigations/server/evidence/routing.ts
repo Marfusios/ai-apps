@@ -13,7 +13,7 @@ const comparison = new RegExp(`^(?:please )?(?:compare|contrast|show (?:the )?di
 export function evidenceRoute(question: string): EvidenceRoute {
   const q = question.trim().replace(/\s+/g, ' ');
   // Never treat instructions embedded in data, negations or a compound request as authority.
-  if (/[<>`{}\[\]"“”\n\r;]/.test(question) || /\b(?:ignore|system|developer|instead|pretend|do not|don't|not compare|without comparing)\b/i.test(q)) return { kind: 'search' };
+  if (/[<>`{}[\]"“”\n\r;]/.test(question) || /\b(?:ignore|system|developer|instead|pretend|do not|don't|not compare|without comparing)\b/i.test(q)) return { kind: 'search' };
   const matched = comparison.exec(q);
   if (matched) return { kind: 'case_comparison', numbers: [...new Set(matched.slice(1).filter((id): id is string => !!id).map(id => id.toUpperCase()))] };
   const aviation = /\b(?:aviation|aircraft|airplane|helicopter|flight|engine|pilot|ntsb|accidents?|investigations?)\b/i.test(q);

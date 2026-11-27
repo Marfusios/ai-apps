@@ -10,7 +10,6 @@ import {
   IMPORT_RESULTS,
   IMPORT_REASONS,
   safeLog,
-  safeFailure,
   sourceReminder,
 } from './contracts.js';
 import { readImporterConfig, type ImporterConfig } from './config.js';
@@ -21,7 +20,7 @@ import { workerIdentity } from './application.js';
 import { classify } from './failure.js';
 import { readDevOutcome } from './outcome.js';
 import { hostCleanupStatus } from './host-status.js';
-import { SkipSchema, type Skip } from './recovery.js';
+import { type Skip } from './recovery.js';
 import { FactMessageSchema, readHostFacts } from './facts.js';
 
 /** Includes lock acquisition, recovery, both environments and final daemon cleanup. */
@@ -317,6 +316,7 @@ async function main(args: string[], deadline: number): Promise<number> {
         await recoverExtraction(space);
       } catch (error) {
         await hostCleanupStatus(config, space, environments, startedAt, classify(error));
+        // oxlint-disable-next-line no-unsafe-finally -- a failed extraction recovery is the run's outcome and replaces the run's own result
         throw error;
       }
       await hostCleanupStatus(config, space, environments, startedAt);

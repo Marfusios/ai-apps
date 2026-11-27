@@ -12,7 +12,6 @@ import { certificationClient } from '../../worker/importer/strict-es.js';
 import { runCanary } from '../../worker/importer/probes.js';
 import { unchangedDecision, classify } from '../../worker/importer/run.js';
 import { projectImports } from '../../worker/importer/status.js';
-import type { Comparison } from '../../worker/importer/compare.js';
 import type { Db } from '../../server/db/client.js';
 
 const now = new Date('2026-10-31T12:00:00Z');

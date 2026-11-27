@@ -12,7 +12,7 @@ import { RetrievalFailure, type EmbeddingUsage, type EvidenceQuery } from '../..
 import { createHybridRetriever, retrievalFailureOf } from '../../server/briefs/retriever.js';
 import { exactRrf, uniqueCases } from '../../server/search/case-fusion.js';
 import { MAX_EXACT_CANDIDATES, MAPPING_CONCURRENCY, mapCasesToPassages } from '../../server/search/case-mapping.js';
-import { retrieveCandidatesWith, retrieveCaseCandidates, type CaseRetrievalQuery } from '../../server/search/case-retrieval.js';
+import { retrieveCaseCandidates, type CaseRetrievalQuery } from '../../server/search/case-retrieval.js';
 import { casesChannelFilter } from '../../server/search/cases-channel.js';
 import { compileFilters } from '../../server/search/filters.js';
 import { IncompleteSearchError, RetrievalUnavailableError, fetchAndPack, retrievalParams, type QueryEmbeddingUsage } from '../../server/search/hybrid.js';

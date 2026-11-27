@@ -16,7 +16,7 @@ import { evaluationSettings } from './config.js';
 import { verifyRankingTarget } from './ab-target.js';
 import { AB_MANIFEST_PATH, readABManifest, type ABManifest } from './ab-manifest.js';
 import { ARM_IDS, CORE_ARMS, type Arm, type ArmIdentity } from './ab-types.js';
-import { fileSha, sha, FROZEN_DIR } from './frozen.js';
+import { fileSha, sha } from './frozen.js';
 import { allocationTotals, TaskAllocation, EvaluationError } from './money.js';
 
 async function main() {

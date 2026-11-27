@@ -2576,7 +2576,6 @@ const THROTTLE_CLAIMS: ClaimBatch = {
 
 const WORK_050 = 'the maintenance and modification over several years';
 const CABLES_015 = 'the elevator cable replacement during the annual inspection';
-const TRIM_079 = 'the elevator trim actuator replacement';
 
 const CONTROLS: Composition = {
   outcome: 'answer',

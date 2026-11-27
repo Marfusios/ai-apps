@@ -170,7 +170,7 @@ describe('the pool rule', () => {
   it('unions each version\'s first unique cases, adds lure hard negatives and a seeded near and far tail', () => {
     const p = assemblePool({ family: item(), members: [item()], runs, cohort: COHORT, lure: ['C001XX', 'C039XX', 'C038XX', 'C037XX'], rule: RULE as never });
     const methodCases = p.cases.filter((c) => c.sources.includes('method')).map((c) => c.ntsbNo);
-    expect(methodCases).toEqual([...COHORT.slice(0, 8)]);
+    expect(methodCases).toEqual(COHORT.slice(0, 8));
     expect(p.cases.find((c) => c.ntsbNo === 'C003XX')?.bestRank).toEqual({ 'retrieval.v1': 4, 'retrieval.v2': 1, 'retrieval.v2-nf': null });
     expect(p.cases.filter((c) => c.sources.includes('hard-negative')).map((c) => [c.ntsbNo, c.lureRank])).toEqual([
       ['C038XX', 3],

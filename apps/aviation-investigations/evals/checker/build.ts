@@ -31,7 +31,6 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CheckInputSchema, MAX_CHECK_CLAIMS, type CheckInput } from '../../server/ai/provider.js';
 import { checkForModel, citationsFromModel, compositionFromModel, passageAliases, type PassageAliases } from '../../server/briefs/aliases.js';
-import type { ReadingState } from '../../server/briefs/clarify.js';
 import { CHRONOLOGY_RULES_VERSION, evaluateCase, type CriterionCheck } from '../../server/briefs/criteria.js';
 import { DISPLAY_RULES_VERSION, type DisplayPlan, type StaticAbstention } from '../../server/briefs/display.js';
 import { EXCERPT_CONTEXT_VERSION, excerptVerdict } from '../../server/briefs/excerpts.js';
@@ -140,9 +139,6 @@ export interface CalibrationDataset {
   };
   batches: CalibrationBatch[];
 }
-
-/** The planner's default reading of "shortly" (30 calendar days or 10 flight hours). */
-const DEFAULT_READINGS: ReadingState = { timingWindow: { value: { days: 30, flightHours: 10 }, pinned: false } };
 
 export class BuildError extends Error {}
 

@@ -5,11 +5,11 @@ node = "24"
 
 [commands]
 setup = "corepack enable && pnpm install --frozen-lockfile"
-check = "pnpm typecheck && pnpm test"
-quick = "pnpm typecheck"
+check = "pnpm typecheck && pnpm lint && pnpm test"
+quick = "pnpm typecheck && pnpm lint"
 
 [quality]
 format = "none: no formatter adopted yet; adding one is a follow-up for this app"
-lint = "none: no linter adopted yet; adding one is a follow-up for this app"
+lint = "oxlint"
 types = "tsc"
 tests = "vitest"

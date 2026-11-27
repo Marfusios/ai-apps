@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, constants } from 'node:fs';
+import { constants } from 'node:fs';
 import { lstat, mkdir, open, readdir, readFile, rename, rm, statfs } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { ImportFailure } from './contracts.js';

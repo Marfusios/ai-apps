@@ -11,17 +11,16 @@ import {
   safeLog,
   sameManifest,
 } from '../../worker/importer/contracts.js';
-import { nextCheck, projectImports, inBackupWindow } from '../../worker/importer/status.js';
+import { nextCheck, inBackupWindow } from '../../worker/importer/status.js';
 import {
   strictSearch,
   strictShards,
-  validateDocument,
   certificationClient,
 } from '../../worker/importer/strict-es.js';
 import { mkdtemp, rm, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ManagedSpace, treeBytes, fileDigest } from '../../worker/importer/files.js';
+import { ManagedSpace, fileDigest } from '../../worker/importer/files.js';
 import type { Client } from '@elastic/elasticsearch';
 import { CONSUMED_CODES } from '../../worker/importer/codes.js';
 import { candidateSample } from '../../worker/importer/probes.js';

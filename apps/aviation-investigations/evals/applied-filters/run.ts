@@ -249,7 +249,7 @@ export async function main() {
       const journal = readJournal(join(directory, 'results.jsonl'));
       for (const set of target.sets) {
         try { reportSet(directory, hash, target.identity, summarizeSet(set, journal)); }
-        catch (e) { if (!(e instanceof EvaluationError && /^Incomplete schedule/.test(e.message))) throw e; console.log(JSON.stringify({ event: 'incomplete', set: set.name })); }
+        catch (e) { if (!(e instanceof EvaluationError && e.message.startsWith('Incomplete schedule'))) throw e; console.log(JSON.stringify({ event: 'incomplete', set: set.name })); }
       }
       return;
     }

@@ -621,7 +621,7 @@ export function describeLoadError(err: unknown): string {
   const inner = (pgErr.cause instanceof Error ? pgErr.cause : pgErr) as typeof pgErr;
   let text = inner === pgErr ? pgErr.message : inner.message;
   // A query wrapper's own message lists the statement and its parameters (narrative text).
-  if (/^Failed query:/.test(text)) text = 'database query failed';
+  if (text.startsWith('Failed query:')) text = 'database query failed';
   if (inner.code) {
     text += ` [${inner.code}${inner.table ? ` on ${inner.table}` : ''}${inner.constraint ? ` (${inner.constraint})` : ''}]`;
     if ((inner.code === '23505' || inner.code === '23503') && inner.detail) text += ` ${inner.detail}`;

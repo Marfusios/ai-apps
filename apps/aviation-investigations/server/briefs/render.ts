@@ -34,7 +34,6 @@ import {
   type ComposeCase,
   type ComposeOutput,
   type Criterion,
-  type CriterionDecision,
   type GlyphKind,
   type GroupKind,
   type InterpretationChip,

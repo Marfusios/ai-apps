@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { importerFixture, type ImportFixture } from '../support/importer.js';
 import { importerPair } from '../support/importer-pair.js';

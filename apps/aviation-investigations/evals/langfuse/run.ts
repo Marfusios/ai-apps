@@ -14,7 +14,7 @@ import { evaluationSettings } from '../search-quality/config.js';
 import { verifyRankingTarget } from '../search-quality/ab-target.js';
 import { productionPort } from '../search-quality/ab-production.js';
 import { appendDurable, EvaluationError } from '../search-quality/money.js';
-import { ARM_IDS, type Arm, type ArmIdentity, type SearchObservation, type RankingQuestion } from '../search-quality/ab-types.js';
+import { ARM_IDS, type Arm, type ArmIdentity, type SearchObservation } from '../search-quality/ab-types.js';
 import { EVALUATOR_VERSION, TASK_CAP_MICROS, datasetItem, loadDatasets, itemScores, meanScores, opaqueId, sha256, stable,
   type EvaluationDataset, type ScoreName } from './data.js';
 import { LangfuseApi, LangfuseError, cursorRows, syncDataset, syncScoreConfigs, publishScores, scorePayload } from './api.js';

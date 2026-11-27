@@ -173,7 +173,7 @@ export async function reachableCases(es: Client, passagesIndex: string, filter: 
       transport,
     );
     assertCompleteResponse(res, 'fetch');
-    const buckets = (res.aggregations?.cases as estypes.AggregationsStringTermsAggregate).buckets as estypes.AggregationsStringTermsBucket[];
+    const buckets = (res.aggregations!.cases as estypes.AggregationsStringTermsAggregate).buckets as estypes.AggregationsStringTermsBucket[];
     for (const b of buckets) out.add(String(b.key));
   }
   return out;

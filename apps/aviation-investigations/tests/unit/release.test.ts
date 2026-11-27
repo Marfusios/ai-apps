@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, writeFile, readFile, rm, symlink, chmod, stat, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, symlink, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { atomicPrivateReplace, parseReleaseConfig, privateLogDirectory, readPrivateFile, repin, versionEdit } from '../../scripts/release-config.js';
+import { atomicPrivateReplace, privateLogDirectory, readPrivateFile, repin, versionEdit } from '../../scripts/release-config.js';
 import { childEnvironment, hasStartupWarning, inReleaseQuietWindow, releaseTag, runRelease } from '../../scripts/release-runner.js';
 import { runReleaseChild } from '../../scripts/release-effects.js';
 import { hostLock, journalLine } from '../../worker/importer/host.js';

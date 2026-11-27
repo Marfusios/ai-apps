@@ -1,10 +1,9 @@
 /** Real isolated PostgreSQL/Elasticsearch fixture; only source extraction, app HTTP and provider transport are offline. */
 import { randomBytes, createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rename, rm, writeFile, cp } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sql } from 'drizzle-orm';
 import { vi } from 'vitest';
 import { withScratchEnvironment, localAdminUrl } from '../../scripts/scratch-env.js';
 import { runMigrations } from '../../server/db/migrate.js';

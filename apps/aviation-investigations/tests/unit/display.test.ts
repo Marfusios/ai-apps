@@ -165,7 +165,6 @@ const judged = (claims: readonly ClaimMeta[], by: Verdicts = {}) => ({
   },
 });
 const project = (b: ReturnType<typeof built>, by: Verdicts = {}, mode: DisplayMode = 'claims') => projectDisplay(b.plan, judged(b.claims, by), mode);
-const shownKeys = (b: ReturnType<typeof built>, d: ReturnType<typeof project>) => b.claims.filter((_, i) => d.displayed[i]).map((m) => m.key);
 const removedKeys = (b: ReturnType<typeof built>, d: ReturnType<typeof project>) => b.claims.filter((_, i) => !d.displayed[i]).map((m) => m.key);
 
 function render(b: ReturnType<typeof built>, d: ReturnType<typeof project>) {
