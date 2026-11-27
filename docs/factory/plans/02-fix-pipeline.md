@@ -347,7 +347,7 @@ def test_prune_removes_only_old_closed_jobs(self): ...
   - `post_as_app(path: str, bearer: str, *, opener=urllib.request.urlopen) -> dict`: the `post` for `InstallationToken`
 - Produces `factory.tests.fakes`:
   - `class FakeOpener`: built from a list of `(method, url suffix, status, headers, body)` answers; records each request's method, URL, headers and body; raises `AssertionError` for an unexpected request
-  - `class FakeGitHub`: the same public methods as `GitHub`, answering `get`/`get_all` from a dict keyed by `(path, sorted params)` and recording every `post`, `patch` and `delete` in `calls`; a path listed in `fail` raises `GitHubError`
+  - `class FakeGitHub`: the same public methods as `GitHub`, answering `get`/`get_all` from a dict keyed by `(path, sorted params)` and recording every `post`, `patch` and `delete` in `calls` as `(method, path, body)`; a path listed in `fail` raises `GitHubError`; `posted(path) -> dict` returns the body of the last `post` to that path and fails the test when there was none. Later tasks may extend it (for example so that a created pull request shows up in the next listing)
 
 Every request carries `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `User-Agent: factory-dispatcher` and `Authorization: Bearer <token>`, with a 30 second timeout. A `401` refreshes the token once and repeats the request. A `403` or `429` with `x-ratelimit-remaining: 0` or a `retry-after` header raises `RateLimited`, with `retry_at` from `x-ratelimit-reset` or `retry-after` (60 seconds from now when neither parses). Any other status of 400 or more, a network error, a timeout and a body that is not JSON raise `GitHubError`. No message holds a token or a request body.
 
@@ -649,13 +649,13 @@ REJECTED = [   # (name, commits, fragment the problems must contain)
     ("protected path then reverted", [{".github/workflows/x.yml": "on: push"}, {".github/workflows/x.yml": None}], "outside the writable paths"),
     ("credential then removed", [{"apps/demo/k.txt": "sk-" + "a" * 24}, {"apps/demo/k.txt": None}], "possible provider key"),
     ("credential file name", [{"apps/demo/.env": "A=1"}], "a credential file"),
-    ("git directory", [{"apps/demo/.GIT/config": "x"}], "outside the writable paths"),
-    ("parent traversal", ...),          # built with update-index, path apps/../x
     ("submodule", ...),                 # mode 160000
     ("link out of the repository", ...),# mode 120000, target ../../../etc/hostname
     ("oversized file", ...),            # config with max_file_megabytes=1 and a 1.5 MB file
 ]
 def test_rejections(self): ...          # subTest per row; verdict.ok is False and the fragment is in one problem
+def test_trees_git_itself_would_not_build_are_rejected(self): ...   # a `.GIT` directory under apps/demo and an entry named `..`, written with
+                                                                    # `git mktree`; whichever check catches them first, verdict.ok is False
 def test_a_commit_by_someone_else_is_rejected(self): ...          # author ok, committer foreign; and the reverse
 def test_a_merge_commit_is_rejected(self): ...
 def test_a_bundle_based_elsewhere_is_rejected(self): ...          # commits on an unrelated root
@@ -933,7 +933,7 @@ podman run --rm --pull=never --name <name> --log-driver=none
 | facts: subtype `error_max_turns` | `crashed`, `max_turns` |
 | no result file otherwise | `crashed`, `agent_error` |
 | the bundle container (git's "Refusing to create empty bundle" is not an error: there are no commits) | the run is still `completed`, without a bundle |
-| `spool.finish` with `result.json` and `commits.bundle`, each read through `read_bounded` (200,000 bytes; `max_bundle_megabytes`) from `out` | an oversized or odd file is left out |
+| `result.json` and `commits.bundle` are each read from `out` through `read_bounded` (200,000 bytes; `max_bundle_megabytes`), written to a staging directory of the runner's own, and handed to `spool.finish` from there | an oversized or odd file is left out |
 
 After the agent has run, the runner executes nothing from the checkout on the host: the bundle is made inside a container. The workspace is removed at the end, the transcript stays. `recover()` runs at start-up and finishes every job that is `running` with status `crashed`, reason `internal`: with one runner, nothing can still be running then. `--check` prints whether the host is confined, whether the image exists and matches, and exits 0 only when both hold.
 
@@ -1015,7 +1015,7 @@ RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_
  && chown node:node /usr/local/bin /usr/local/lib/node_modules
 COPY harness /opt/factory/harness
 COPY managed-settings.json /etc/claude-code/managed-settings.json
-RUN chmod -R a-w /opt/factory/harness /etc/claude-code
+RUN chmod -R a+rX,a-w /opt/factory/harness /etc/claude-code
 USER node
 WORKDIR /workspace
 ```
