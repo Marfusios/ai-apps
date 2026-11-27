@@ -72,6 +72,39 @@ Refinements of the spec made in this plan (Task 14 writes them into the spec):
 - **Work is published to GitHub when a run asks a question.** Checked commits of a `needs_input` run are pushed to the work branch without a pull request, so the next run starts from them and nothing depends on the host's disk.
 - **The firewall probe is self-contained.** The runner listens on its own loopback port and connects to it. With the host's rule for the runner user loaded the connection is refused; if it succeeds, no job starts.
 
+## As built
+
+This plan was carried out task by task, each with its own review, then a review of the whole
+branch, one fix wave and a deployment on a real host. The reviews changed a number of details, so
+where a task's text below and the code differ, the code and [the design](../DESIGN.md) are right.
+The task texts are kept as the record of what was planned. The differences that matter:
+
+- **Text rules.** `textsafe.neutralise` has more rules than Task 1 lists: character references,
+  every raw HTML tag, `github.com/` links, footnotes, task-list boxes and line separators are
+  broken too, and closing keywords and `mermaid` are broken wherever they stand.
+- **Spool.** The dispatcher creates both `jobs/` and `runs/`, and the spool's root is not writable
+  by the runner. Runner files are read only through `Spool.read_run_file`. A publication's settled
+  outcome is stored in `jobs/<id>/settled.json` before the first write and reused on a repeat.
+- **GitHub client.** `GitHub` takes a `refresh` callable, refuses redirects and odd paths, never
+  caches a full last page, and mints tokens for this repository only. `snapshot.fetch(github)`
+  takes no configuration and carries an issue GitHub will not give as unreadable.
+- **Decisions.** A job closed moments ago holds its issue still, and every start, until its comment
+  is listed. A failing action skips only the rest of its own issue.
+- **Bundle check.** Commits are judged by their raw headers, every git output the bundle controls
+  is capped, content is scanned binary included, and commit messages may not mention people or
+  other issues.
+- **Posted text.** Agent text sits in block quotes and list items under fixed lead-ins, and
+  `Closes #<issue>` is the first line of a pull request body, not the last.
+- **Publishing.** A push GitHub refuses, a work branch that moved and eight failed attempts each
+  end with a comment instead of an endless retry.
+- **Runner.** One runner per host, held by a lock. The bundle is made in a directory of its own.
+  A workspace is removed by a walk that never follows a link. The runner limits its own CPUs, so
+  the container sees as many as the host allows.
+- **Image.** The CLI and the harness copy are owned by root, the agent's own installs go last on
+  its `PATH`, the guards start with an interpreter that ignores the environment, and `tini` is
+  the first process.
+- **Small changes.** The `factory:fix` track takes a bug fix, a small feature or a chore.
+
 Verified on a real host before this plan was written (2026-11-27): rootless Podman 4.3 with `--userns=keep-id:uid=1000,gid=1000`; Claude Code 2.1.332 from npm in `node:24-bookworm-slim`; `claude -p "/<skill>"` runs a skill marked `disable-model-invocation`; `/etc/claude-code/managed-settings.json` with `allowManagedHooksOnly` replaces the project's hooks; stream output carries `rate_limit_event` objects; a turn limit ends with exit status 1 and result subtype `error_max_turns`; a clone across users needs `safe.directory` in a file named by `GIT_CONFIG_GLOBAL`.
 
 ## How an issue moves
