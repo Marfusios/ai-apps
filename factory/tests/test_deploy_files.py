@@ -7,11 +7,13 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from factory import compose, dispatcher, hygiene, jobs, pod, runner, spool
+from factory.config import load as load_config
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "factory" / "deploy"
 GUIDE = ROOT / "docs" / "factory" / "HOST_SETUP.md"
 DESIGN = ROOT / "docs" / "factory" / "DESIGN.md"
+CONFIG = load_config()
 FORMS = ROOT / ".github" / "ISSUE_TEMPLATE"
 EXAMPLES = ("dispatcher.env.example", "runner.env.example")
 COMMANDS = ("factory.dispatcher", "factory.runner", "factory.image.build")
@@ -167,6 +169,17 @@ class HostGuideTests(unittest.TestCase):
         self.assert_says(self.section(4), "file system of a fixed size", "disk quota", "`FACTORY_WORK_DIR`",
                          "container storage", f"{runner.TRANSCRIPT_CAP // 1_000_000} MB")
 
+    def test_section_4_names_the_cpus_setting_beside_the_slice_cap_it_should_agree_with(self):
+        self.assert_says(self.section(4), "`cpus`", "`[agent]`", f"cpus = {CONFIG.agent.cpus}",
+                         f"CPUQuota={CONFIG.agent.cpus}00%")
+
+    def test_the_check_prints_four_lines_with_the_cpus_the_runner_uses(self):
+        step = self.section(7).partition("\n6. ")[2].partition("\n7. ")[0]
+        self.assert_says(step, "these four lines", f"cpus: {CONFIG.agent.cpus}")
+
+    def test_the_log_shows_each_action_and_the_end_of_each_publication(self):
+        self.assert_says(self.text, "each action it takes", "published as")
+
     def test_section_5_says_where_the_downloaded_key_may_wait_and_deletes_it(self):
         self.assert_says(self.section(5), "only its owner can read", "rm <downloaded-key-file>")
 
@@ -208,6 +221,10 @@ class DesignTests(unittest.TestCase):
     def test_the_resource_cap_names_the_disk(self):
         (line,) = [line for line in self.text.splitlines() if "resource cap" in line]
         self.assertIn("disk", line)
+
+    def test_the_confinement_says_a_run_sees_only_the_cpus_it_may_use(self):
+        confinement = " ".join(self.text.partition("**Confinement on the host.**")[2].partition("**Residual")[0].split())
+        self.assertIn("`cpus` in `factory/config.toml`", confinement)
 
     def test_the_hooks_paragraph_says_how_the_image_starts_them_and_what_it_fixes(self):
         hooks = self.text.partition("**Hooks** (`.claude/hooks/`")[2].partition("### 9.1")[0]

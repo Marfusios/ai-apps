@@ -526,6 +526,10 @@ class Runner:
     def is_confined(self) -> bool:
         return self._confined()
 
+    def cpus(self) -> int:
+        """How many CPUs this runner's jobs use."""
+        return cpus_in_use(self._config.agent.cpus)
+
     def image_ok(self) -> bool:
         """True when the image exists and, if a digest is known, carries a label that equals it."""
         self._work.mkdir(mode=DIRECTORY_MODE, parents=True, exist_ok=True)
@@ -893,8 +897,39 @@ def _record(job_id: str, outcome: Outcome, started: datetime, finished: datetime
     return record
 
 
+def cpus_in_use(cpus: int) -> int:
+    """How many CPUs the runner and its containers use: `cpus`, or every one it may use when there are fewer.
+
+    Where the platform cannot keep a process to some of its CPUs, they are all in use.
+    """
+    if not hasattr(os, "sched_getaffinity"):
+        return os.cpu_count() or 1
+    return min(cpus, len(os.sched_getaffinity(0)))
+
+
+def limit_cpus(cpus: int) -> int | None:
+    """Keep this process, and every program it starts, to the first `cpus` of the CPUs it may use; return how many.
+
+    A container sees the CPUs of the process that starts it, so a test runner inside starts one worker per CPU it
+    is given rather than per CPU of the host, which the slice's processor cap would leave too little time each.
+    None where the platform cannot do this, or when it fails, which is logged and nothing more.
+    """
+    if not (hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity")):
+        return None
+    try:
+        kept = set(sorted(os.sched_getaffinity(0))[:cpus])
+        os.sched_setaffinity(0, kept)
+    except OSError as error:
+        log.error("the runner could not limit itself to %d CPUs: %s", cpus, type(error).__name__)
+        return None
+    return len(kept)
+
+
 def check(runner: Runner, spool: Spool) -> tuple[bool, list[str]]:
-    """What `--check` prints: one line each for confinement, the image and the spool, and whether all hold."""
+    """What `--check` prints: a line each for confinement, the image, the spool and the CPUs, and whether all hold.
+
+    The CPUs line says how many the runner will use; it is information and never a failure.
+    """
     confinement = runner.is_confined()
     image = runner.image_ok()
     try:
@@ -907,6 +942,7 @@ def check(runner: Runner, spool: Spool) -> tuple[bool, list[str]]:
         "image: ok" if image else "image: missing or not the one the harness describes; "
         "python -m factory.image.build rebuilds it",
         spool_line,
+        f"cpus: {runner.cpus()}",
     ]
 
 
@@ -947,6 +983,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    root = logging.getLogger()
+    if root.getEffectiveLevel() > logging.INFO:  # basicConfig sets no level when logging was set up before
+        root.setLevel(logging.INFO)
     try:
         settings = settings_from_env(os.environ)
     except SettingsError as error:
@@ -971,6 +1010,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OSError as error:
         log.error("start-up failed: %s", type(error).__name__)
         return 1
+    limit_cpus(config.agent.cpus)  # before any job: Podman and the containers inherit the limit
     try:
         spool.prepare("runner")
         runner.prune_transcripts()

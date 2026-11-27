@@ -235,6 +235,7 @@ class Dispatcher:
                 continue
             if getattr(action, "issue", None) in failed_issues:
                 continue
+            log.info("%s", action.describe())  # an action's description holds no text from the issue
             try:
                 self._apply(action, issues, now)
             except RateLimited:
@@ -307,14 +308,15 @@ class Dispatcher:
         stored, first_failed_at = self._failed_attempts(action.job_id)
         failed = max(failures, stored)  # the memory counts on when the count could not be stored
         giving_up = failed >= MAX_PUBLISH_ATTEMPTS
+        log.info("%s", action.describe())
         try:
             if giving_up:
                 since = (first_failed_at or now).strftime(TIME_FORMAT)
                 log.warning("job %s: publishing it failed %d times since %s; it is shown as an internal error instead",
                             action.job_id, failed, since)
-                self._publisher.give_up(action.job_id, issue, now)
+                outcome = self._publisher.give_up(action.job_id, issue, now)
             else:
-                self._publisher.publish(action.job_id, issue, now)
+                outcome = self._publisher.publish(action.job_id, issue, now)
         except RateLimited:
             raise
         except (*RECOVERABLE, ValueError) as error:  # ValueError: a value compose or a record refused
@@ -324,6 +326,7 @@ class Dispatcher:
             self._count_failure(action.job_id, failed + 1, first_failed_at or now)
             return
         self._publish_failures.pop(action.job_id, None)
+        log.info("job %s: published as %s", action.job_id, compose.OUTCOME_WORDS.get(outcome, outcome))
 
     def _failed_attempts(self, job_id: str) -> tuple[int, datetime | None]:
         """The count of failed publications stored for the job and the time of the first; (0, None) for none."""
@@ -446,6 +449,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="print what one tick would do; write nothing")
     args = parser.parse_args(argv)
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    root = logging.getLogger()
+    if root.getEffectiveLevel() > logging.INFO:  # basicConfig sets no level when logging was set up before
+        root.setLevel(logging.INFO)
     try:
         settings = settings_from_env(os.environ)
     except SettingsError as error:

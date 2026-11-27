@@ -1,7 +1,9 @@
 """Keep the Claude Code harness files (settings, skills, agents, AGENTS.md) consistent with each other."""
 
 import json
+import os
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -91,6 +93,11 @@ class SettingsTests(unittest.TestCase):
             ("Stop", None, ["finish_check"]),
         ])
 
+    def test_the_projects_settings_switch_the_clis_attribution_off(self) -> None:
+        settings = load_settings()
+        self.assertEqual(settings["attribution"], {"commit": "", "pr": ""})
+        self.assertIs(settings["includeCoAuthoredBy"], False)
+
     def test_permission_rules_do_not_contradict_the_hooks(self) -> None:
         permissions = load_settings()["permissions"]
         # the hook allows a commit whose message merely mentions the flag, so only the leading form is a rule
@@ -138,6 +145,23 @@ class SkillTests(unittest.TestCase):
         for words in ("commit message", "no person", "its own", "host path", "private address", "finish check"):
             with self.subTest(words=words):
                 self.assertIn(words, every)
+
+    def test_the_result_asks_for_a_pull_request_body_without_attribution(self) -> None:
+        text = (CLAUDE / "skills" / "factory-fix-issue" / "SKILL.md").read_text(encoding="utf-8")
+        result = " ".join(text.partition("## Write the result")[2].partition("\n## ")[0].split())
+        self.assertIn("no attribution", result)
+        contract = " ".join((ROOT / "factory" / "AGENT_CONTRACT.md").read_text(encoding="utf-8").split())
+        purpose = contract.partition("- `pull_request`: ")[2].partition("- `thread_replies`")[0]
+        for words in ("no attribution", "generated with", "no signature"):
+            with self.subTest(words=words):
+                self.assertIn(words, purpose)
+
+    def test_the_package_store_pnpm_may_leave_in_a_checkout_is_ignored(self) -> None:
+        env = {**{k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")},
+               "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        checked = subprocess.run(["git", "check-ignore", "--quiet", "--no-index", ".pnpm-store/v10/index/x"],
+                                 cwd=ROOT, env=env, capture_output=True, timeout=60)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
 
     def test_a_chore_that_changes_a_quality_tool_updates_the_apps_commands_with_it(self) -> None:
         text = (CLAUDE / "skills" / "factory-fix-issue" / "SKILL.md").read_text(encoding="utf-8")

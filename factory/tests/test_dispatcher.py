@@ -379,6 +379,12 @@ class TickTest(DispatcherTestCase):
                                          "so it is left as it is"])
         self.assertIn(StartJob(12, "demo"), actions)
 
+    def test_each_action_applied_is_logged_at_info_with_its_description(self):
+        with self.assertLogs("factory.dispatcher", "INFO") as logged:
+            self.dispatcher.tick()
+        self.assertEqual(logged.output, [f"INFO:factory.dispatcher:{SetStatus(12, 'status:building', ()).describe()}",
+                                         f"INFO:factory.dispatcher:{StartJob(12, 'demo').describe()}"])
+
     def test_a_notice_is_posted_for_an_issue_nobody_trusts(self):
         issues = key(f"{self.github.repo}/issues", {"state": "open", "labels": "factory:fix", "per_page": "100"})
         self.github.answers[issues][0]["user"] = {"login": "stranger"}
@@ -447,6 +453,16 @@ class OnceTest(DispatcherTestCase):
     def test_once_returns_zero_after_a_clean_tick(self):
         self.assertEqual(self.run_main("--once"), 0)
         self.assertEqual(len(self.spool.job_ids()), 1)
+
+    def test_main_logs_at_info_even_when_logging_was_set_up_before_it(self):
+        root = logging.getLogger()
+        with self.quiet_logging():
+            root.addHandler(logging.NullHandler())  # basicConfig then leaves the root logger as it is
+            root.setLevel(logging.WARNING)
+            with mock.patch.dict(os.environ, valid_env(self.tmp)), mock.patch.object(Dispatcher, "tick", return_value=[]), \
+                    mock.patch.object(dispatcher_module, "build_dispatcher", return_value=self.dispatcher):
+                self.assertEqual(dispatcher_module.main(["--once"]), 0)
+            self.assertEqual(root.level, logging.INFO)
 
     def test_once_returns_one_when_the_tick_raised_and_logs_what_github_said(self):
         self.github.fail.add(f"{self.github.repo}/issues")
@@ -550,6 +566,13 @@ class PublishTest(DispatcherTestCase):
         job = self.only_job()
         self.runner_finishes(job)
         return job
+
+    def test_the_end_of_a_publication_is_logged_with_the_job_and_its_outcome_word(self):
+        job = self.finished_job()
+        with self.assertLogs("factory.dispatcher", "INFO") as logged:
+            self.dispatcher.tick()
+        self.assertEqual(logged.output, [f"INFO:factory.dispatcher:{PublishRun(job, 12).describe()}",
+                                         f"INFO:factory.dispatcher:job {job}: published as timed out"])
 
     def test_a_publish_that_fails_is_retried_only_after_its_delay(self):
         job = self.finished_job()

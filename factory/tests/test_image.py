@@ -61,9 +61,17 @@ class ManagedSettingsTests(unittest.TestCase):
         project = project_settings()
         project["permissions"]["ask"] = [project["permissions"]["deny"][0], "Bash(gh pr merge *)"]
         managed = managed_settings.build(project)
-        self.assertEqual(set(managed), {"allowManagedHooksOnly", "env", "hooks", "permissions"})
+        self.assertEqual(set(managed), {"allowManagedHooksOnly", "attribution", "env", "hooks", "includeCoAuthoredBy",
+                                        "permissions"})
         self.assertEqual(set(managed["permissions"]), {"deny"})
         self.assertEqual(managed["permissions"]["deny"], project["permissions"]["deny"] + ["Bash(gh pr merge *)"])
+
+    def test_the_clis_attribution_is_switched_off_whatever_the_project_file_says(self):
+        project = {**project_settings(), "attribution": {"commit": "Generated", "pr": "Generated"},
+                   "includeCoAuthoredBy": True}
+        managed = managed_settings.build(project)
+        self.assertEqual(managed["attribution"], {"commit": "", "pr": ""})
+        self.assertIs(managed["includeCoAuthoredBy"], False)
 
     def test_the_factory_variables_are_fixed_as_the_runner_passes_them_so_no_settings_file_can_change_them(self):
         managed = managed_settings.build({**project_settings(), "env": {"FACTORY_RUN": "0"}})

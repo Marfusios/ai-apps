@@ -105,6 +105,8 @@ max_commits = 50
 permission_mode = "auto"
 claude_code_version = "2.1.332"
 base_image = "docker.io/library/node:24-bookworm-slim"
+# The CPUs the runner and its containers use; it should agree with the CPUQuota of the runner's slice.
+cpus = 4
 
 [agent.toolchains]
 node = ["24"]

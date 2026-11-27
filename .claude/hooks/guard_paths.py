@@ -42,7 +42,7 @@ def fallback_config() -> Config:
     # the settings are placeholders: this hook reads only the writable paths
     return Config(trusted_logins=(), writable_paths=FALLBACK_WRITABLE, protected_branches=(), image_registries=(),
                   labels=(), dispatcher=DispatcherSettings(15, 5, 1, 1, 1),
-                  agent=AgentSettings("auto", "0.0.0", "", {}), stages={})
+                  agent=AgentSettings("auto", "0.0.0", "", {}, cpus=1), stages={})
 
 
 def is_credential(parts: list[str]) -> bool:

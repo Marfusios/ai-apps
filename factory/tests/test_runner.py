@@ -166,6 +166,10 @@ class RunnerCase(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN})
         patcher.start()
         self.addCleanup(patcher.stop)
+        if hasattr(os, "sched_setaffinity"):  # `main` limits its own CPUs: a test must not limit the test process's
+            affinity = mock.patch.object(os, "sched_setaffinity")
+            affinity.start()
+            self.addCleanup(affinity.stop)
 
     def clock(self) -> datetime:
         self.ticks += 1
@@ -1330,17 +1334,72 @@ class LockTests(unittest.TestCase):
             runner.acquire_lock(self.work)
 
 
+def allowed_cpus(*cpus: int):
+    """The CPUs this process may use, as `os.sched_getaffinity` answers, also where the platform lacks it."""
+    return mock.patch.object(runner.os, "sched_getaffinity", create=True, return_value=set(cpus))
+
+
+class CpuTests(RunnerCase):
+    def run_main(self, *argv: str, setaffinity: mock.Mock | None = None) -> tuple[int, mock.Mock]:
+        env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
+               "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+        setaffinity = setaffinity or mock.Mock()
+        instance = self.runner()
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                mock.patch.object(runner, "Runner", lambda *_, **__: instance), \
+                mock.patch.object(runner, "acquire_lock", return_value=None), \
+                mock.patch.object(runner, "serve"), mock.patch("sys.stdout", io.StringIO()) as out, \
+                mock.patch.object(runner.os, "sched_setaffinity", setaffinity, create=True):
+            status = runner.main(list(argv))
+        self.output = out.getvalue()
+        return status, setaffinity
+
+    def test_the_runner_keeps_the_first_configured_number_of_the_cpus_it_may_use(self):
+        self.assertEqual(CONFIG.agent.cpus, 4)
+        with allowed_cpus(12, 3, 9, 1, 5, 7):
+            status, setaffinity = self.run_main("--once")
+        self.assertEqual(status, 0)
+        setaffinity.assert_called_once_with(0, {1, 3, 5, 7})
+
+    def test_fewer_cpus_than_configured_are_all_kept(self):
+        with allowed_cpus(6, 2):
+            _, setaffinity = self.run_main("--once")
+        setaffinity.assert_called_once_with(0, {2, 6})
+
+    def test_cpus_that_cannot_be_limited_are_one_log_line_and_the_runner_goes_on(self):
+        with allowed_cpus(*range(16)), self.assertLogs("factory.runner", level="ERROR") as logs:
+            status, _ = self.run_main("--once", setaffinity=mock.Mock(side_effect=PermissionError("not allowed")))
+        self.assertEqual(status, 0)
+        self.assertEqual(logs.output, ["ERROR:factory.runner:the runner could not limit itself to 4 CPUs: "
+                                       "PermissionError"])
+
+    def test_check_prints_the_number_of_cpus_the_runner_will_use_and_limits_nothing(self):
+        for available, expected in ((range(16), "cpus: 4"), (range(2), "cpus: 2")):
+            with self.subTest(expected=expected), allowed_cpus(*available):
+                status, setaffinity = self.run_main("--check")
+            self.assertEqual((status, self.output.splitlines()[-1]), (0, expected))
+            self.assertEqual(len(self.output.splitlines()), 4)
+            setaffinity.assert_not_called()
+
+    @unittest.skipIf(hasattr(os, "sched_setaffinity"), "this platform can limit the CPUs of a process")
+    def test_where_the_platform_cannot_limit_cpus_nothing_is_tried(self):
+        with mock.patch.object(runner.os, "cpu_count", return_value=8):
+            self.assertEqual(runner.cpus_in_use(4), 8)
+            self.assertIsNone(runner.limit_cpus(4))
+
+
 class ProgramTests(RunnerCase):
     def test_check_reports_each_condition_on_its_own_line(self):
-        ok, lines = runner.check(self.runner(), self.spool)
+        with allowed_cpus(*range(8)):
+            ok, lines = runner.check(self.runner(), self.spool)
         self.assertTrue(ok)
-        self.assertEqual(lines, ["confinement: ok", "image: ok", "spool: ok"])
+        self.assertEqual(lines, ["confinement: ok", "image: ok", "spool: ok", "cpus: 4"])
 
     def test_check_fails_when_any_condition_fails(self):
         self.fake.image_status = 1
         ok, lines = runner.check(self.runner(confined=lambda: False), Spool(self.root / "nowhere"))
         self.assertFalse(ok)
-        self.assertEqual([line.split(":")[0] for line in lines], ["confinement", "image", "spool"])
+        self.assertEqual([line.split(":")[0] for line in lines], ["confinement", "image", "spool", "cpus"])
         self.assertFalse(any(line.endswith(": ok") for line in lines))
 
     def test_serve_handles_jobs_until_stopped_and_once_handles_one(self):
@@ -1470,6 +1529,20 @@ class ProgramTests(RunnerCase):
         self.assertNotIn("secret detail", logs.output[0])
         self.assertIsNone(logs.records[0].exc_info)
 
+    def test_main_sets_the_root_logger_to_info_when_it_is_not_already(self):
+        env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
+               "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+        root = logging.getLogger()
+        level = root.level
+        self.addCleanup(root.setLevel, level)
+        root.setLevel(logging.WARNING)
+        instance = self.runner()
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(logging, "basicConfig"), \
+                mock.patch.object(runner, "Runner", lambda *_, **__: instance), \
+                mock.patch("sys.stdout", io.StringIO()):
+            runner.main(["--check"])
+        self.assertEqual(root.level, logging.INFO)
+
     def test_check_does_not_take_the_lock(self):
         env = {"FACTORY_SPOOL_DIR": str(self.root / "spool"), "FACTORY_MIRROR_DIR": str(self.mirror_dir),
                "FACTORY_WORK_DIR": str(self.work), "FACTORY_IMAGE": IMAGE, "CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
@@ -1517,7 +1590,7 @@ class ProgramTests(RunnerCase):
                     mock.patch.object(logging, "basicConfig"), \
                     mock.patch.object(runner, "Runner", lambda *_, **__: instance):
                 self.assertEqual(runner.main(["--check"]), expected)
-            self.assertEqual(len(output.getvalue().splitlines()), 3)
+            self.assertEqual(len(output.getvalue().splitlines()), 4)
 
     def test_main_recovers_jobs_left_running_and_then_handles_one_job(self):
         stuck, queued = self.submit(minutes=1), self.submit(minutes=2)

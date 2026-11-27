@@ -121,7 +121,8 @@ Write the result file at `$FACTORY_RESULT_PATH` as "What you return" in
 
 - `pull_request`: a title that names the change, and a body that says what changed and why (for a
   bug, the problem, its cause and the fix), how it was verified (the reproducing or the new test,
-  or for a chore the `check` command before and after), and each new dependency with its reason;
+  or for a chore the `check` command before and after), and each new dependency with its reason,
+  with no attribution, no "generated with" line and no signature;
 - `verification`: the verifier's commands with their exit codes and summaries, then
   `python3 scripts/check_repo.py`;
 - `follow_ups`: problems you noticed and did not fix, and for a quality tool each rule left out.

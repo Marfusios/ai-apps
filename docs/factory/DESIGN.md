@@ -314,7 +314,9 @@ other reference in the text can act.
 - A resource cap on that user's processes, for memory, processor time, tasks and disk,
   protects the other services on the host. The disk is bounded by a file system of a fixed
   size or a quota for the runner's work directory and container storage, and the runner
-  keeps only the first part of an output that grows without end.
+  keeps only the first part of an output that grows without end. The runner keeps itself
+  and its containers to as many CPUs as `cpus` in `factory/config.toml` names, which agrees
+  with the processor cap, so that tools that start a worker per CPU do not start too many.
 - Temporary databases are service containers in the same pod, declared by the app.
 - The runner fails closed: before each job it opens a listener on the host's loopback
   address and connects to it from its own process, outside any container. The firewall

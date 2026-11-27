@@ -95,7 +95,8 @@ What each field is for:
 - `pull_request`: the title, and a body that says what changed, why, and how it was verified, and
   names each new dependency with its reason. In `fix` and `revise`, give it only to replace the
   existing title and body. Leave follow-ups out of the body: the dispatcher prints them under
-  their own heading.
+  their own heading. The body carries no attribution, no "generated with" line and no
+  signature: the repository allows no attribution of any kind.
 - `thread_replies`: one reply for every review thread in `context.md`, with the `thread_id` given
   there. The body says what you changed, or why you did not. Set `resolved` to `true` when your
   change settles the thread, and to `false` when you explain, disagree, or ask.

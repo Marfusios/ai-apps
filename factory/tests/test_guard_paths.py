@@ -198,6 +198,12 @@ class FallbackConfigTests(unittest.TestCase):
         self.assertIsInstance(config, Config)
         self.assertEqual(config.writable_paths, ("apps/", "packages/"))
 
+    def test_fallback_has_every_field_a_loaded_configuration_has(self):
+        fallback = guard_paths.fallback_config()
+        for part in ("dispatcher", "agent"):
+            with self.subTest(part=part):
+                self.assertEqual(set(vars(getattr(fallback, part))), set(vars(getattr(CONFIG, part))))
+
 
 if __name__ == "__main__":
     unittest.main()

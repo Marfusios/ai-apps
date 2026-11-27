@@ -31,6 +31,7 @@ AGENT = """
 permission_mode = "auto"
 claude_code_version = "2.1.332"
 base_image = "docker.io/library/node:24-bookworm-slim"
+cpus = 4
 
 [agent.toolchains]
 node = ["24"]
@@ -67,6 +68,11 @@ INVALID_SETTINGS = [
     ("version trailing newline", '"2.1.332"', '"2.1.332\\n"', "agent.claude_code_version"),
     ("base image registry", "docker.io/library/node:24-bookworm-slim", "evil.example/node:24", "agent.base_image"),
     ("unknown agent key", "[agent.toolchains]", "extra = 1\n\n[agent.toolchains]", "agent"),
+    ("cpus zero", "cpus = 4", "cpus = 0", "agent.cpus"),
+    ("cpus high", "cpus = 4", "cpus = 257", "agent.cpus"),
+    ("cpus bool", "cpus = 4", "cpus = true", "agent.cpus"),
+    ("cpus string", "cpus = 4", 'cpus = "4"', "agent.cpus"),
+    ("cpus missing", "cpus = 4\n", "", "agent.cpus"),
     ("toolchain name", 'node = ["24"]', 'ruby = ["3"]', "agent.toolchains"),
     ("toolchain empty list", 'node = ["24"]', "node = []", "agent.toolchains.node"),
     ("toolchain non-string", 'node = ["24"]', "node = [24]", "agent.toolchains.node"),
@@ -109,8 +115,8 @@ class ConfigTest(unittest.TestCase):
                           dispatcher.max_bundle_megabytes, dispatcher.max_file_megabytes, dispatcher.max_commits),
                          (45, 30, 50, 5, 50))
         agent = config.agent
-        self.assertEqual((agent.permission_mode, agent.claude_code_version, agent.base_image),
-                         ("auto", "2.1.332", "docker.io/library/node:24-bookworm-slim"))
+        self.assertEqual((agent.permission_mode, agent.claude_code_version, agent.base_image, agent.cpus),
+                         ("auto", "2.1.332", "docker.io/library/node:24-bookworm-slim", 4))
         self.assertEqual(dict(agent.toolchains), {"node": ("24",), "python": ("3.11",)})
         stage = config.stages["fix_issue"]
         self.assertEqual((stage.model, stage.timeout_minutes, stage.max_turns), ("opus", 90, 300))

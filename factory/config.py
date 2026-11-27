@@ -25,7 +25,8 @@ DISPATCHER_LIMITS = {
 STAGE_LIMITS = {"timeout_minutes": (5, 360), "max_turns": (10, 1000)}
 STAGE_KEYS = {"model", *STAGE_LIMITS}
 REQUIRED_STAGE = "fix_issue"  # the stage the dispatcher starts runs in
-AGENT_KEYS = {"permission_mode", "claude_code_version", "base_image", "toolchains"}
+AGENT_LIMITS = {"cpus": (1, 256)}
+AGENT_KEYS = {"permission_mode", "claude_code_version", "base_image", "toolchains", *AGENT_LIMITS}
 PERMISSION_MODES = ("auto", "bypassPermissions")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")  # explicit [0-9]: \d would accept other scripts' digits
 MODEL = re.compile(r"[a-z0-9][a-z0-9.-]{0,63}")
@@ -58,6 +59,7 @@ class AgentSettings:
     claude_code_version: str
     base_image: str
     toolchains: Mapping[str, tuple[str, ...]]
+    cpus: int  # how many CPUs the runner keeps for itself and its containers
 
 
 @dataclass(frozen=True)
@@ -143,7 +145,8 @@ def _agent(raw: object, registries: tuple[str, ...]) -> AgentSettings:
     image = table["base_image"]
     if not isinstance(image, str) or not image.startswith(registries):
         raise ConfigError(f"agent.base_image must start with one of image_registries {registries}")
-    return AgentSettings(table["permission_mode"], version, image, _toolchains(table["toolchains"]))
+    return AgentSettings(table["permission_mode"], version, image, _toolchains(table["toolchains"]),
+                         **_integers(table, "agent", AGENT_LIMITS))
 
 
 def _stage(name: str, raw: object) -> StageSettings:

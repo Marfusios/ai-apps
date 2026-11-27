@@ -244,6 +244,14 @@ of them, and nothing outside the slice. `CPUQuota` takes a share of one core, su
 three cores. `TasksMax` takes a number of processes and threads, such as `2048`. `CPUWeight` and
 `IOWeight` give the runner a smaller share than other users' processes when the host is busy.
 
+The quota caps the time the runner's processes get, but a container still sees every CPU of the
+host, and a test runner inside starts one worker per CPU it sees: under a quota of four cores on a
+host with sixteen, the workers get too little time and the app's tests time out. So the runner
+keeps itself, and every container it starts, to as many CPUs as `cpus` under `[agent]` in
+`factory/config.toml` names, `cpus = 4` as shipped, and to all of them on a host with fewer. Make
+the two agree: `CPUQuota=400%` for `cpus = 4`. A change to `cpus` is a commit to `main`, like any
+change to that file.
+
 The slice caps no disk. A run writes its checkout, its dependencies and its container's files
 on the runner's disk: the checkout in the work directory (`FACTORY_WORK_DIR`), the rest in the
 runner's container storage, `~/.local/share/containers`. Put both on a file system of a fixed
@@ -437,17 +445,19 @@ was made; then make a new one, replace the file, and restart the runner.
    (set -a && . ~/.config/factory/runner.env && . ~/.config/factory/claude.env && set +a && python3 -m factory.runner --check)
    ```
 
-   On a healthy host it prints these three lines and exits with status 0:
+   On a healthy host it prints these four lines and exits with status 0:
 
    ```text
    confinement: ok
    image: ok
    spool: ok
+   cpus: 4
    ```
 
-   Any other line names what to fix: the firewall (section 3), the image (step 5), or the spool,
-   which exists once the dispatcher has started (step 4). The check creates the work directory and
-   a temporary file in it, and takes no lock.
+   Any other line among the first three names what to fix: the firewall (section 3), the image
+   (step 5), or the spool, which exists once the dispatcher has started (step 4). The last line
+   names the number of CPUs the runner's jobs use (section 4), and never fails the check. The check
+   creates the work directory and a temporary file in it, limits no CPU and takes no lock.
 
 7. **Start the runner.** As the runner:
 
@@ -604,10 +614,12 @@ least a minute, at most an hour.
 ### Logs, transcripts and job files
 
 - The dispatcher's log, as the dispatcher: `journalctl --user -u factory-dispatcher`, with `-f` to
-  follow it. The runner's, as the runner: `journalctl --user -u factory-runner`. A line names the
-  action or the job and the kind of error, or for a poll that failed GitHub's own message, never a
-  secret. Where a user's journal is not kept apart, root reads the same lines with
-  `journalctl --user-unit factory-runner.service`.
+  follow it. The runner's, as the runner: `journalctl --user -u factory-runner`. The dispatcher
+  logs each action it takes, such as `issue #12: start a fix_issue run for app <app>`, and the end
+  of each publication, as `job <job-id>: published as <outcome word>`. A line names the action or
+  the job and the kind of error, or for a poll that failed GitHub's own message, never a secret
+  and never the text of an issue. Where a user's journal is not kept apart, root reads the same
+  lines with `journalctl --user-unit factory-runner.service`.
 - The transcripts, as the runner: `~/.local/state/factory/transcripts/<job-id>.jsonl`, the Claude
   CLI's stream of JSON events, and `<job-id>.err`, its error output, in `FACTORY_WORK_DIR`. Only
   the runner can read them, and they are deleted after 14 days. They can hold anything the agent
