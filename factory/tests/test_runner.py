@@ -68,6 +68,7 @@ class Call:
     env: dict | None
     cwd: Path | None
     timeout: float | None
+    limits: tuple[int | None, int | None] = (None, None)  # what may be kept of the standard output and error
 
     @property
     def is_agent(self) -> bool:
@@ -107,9 +108,10 @@ class FakePodman:
         self.image_label = DIGEST
         self.bundle_runs = 0
 
-    def __call__(self, argv, *, env=None, cwd=None, stdout=None, stderr=None, timeout=None) -> int:
+    def __call__(self, argv, *, env=None, cwd=None, stdout=None, stderr=None, timeout=None, stdout_limit=None,
+                 stderr_limit=None) -> int:
         argv = list(argv)
-        self.calls.append(Call(argv, None if env is None else dict(env), cwd, timeout))
+        self.calls.append(Call(argv, None if env is None else dict(env), cwd, timeout, (stdout_limit, stderr_limit)))
         if argv[0] == "git":
             return subprocess.run(argv, env=env, cwd=cwd, capture_output=True, check=False).returncode
         if argv[:3] == ["podman", "image", "inspect"]:
@@ -603,6 +605,25 @@ class AgentRunTests(RunnerCase):
         self.assertEqual(self.spool.run_record(job)["reason"], "internal")
         self.assertEqual(self.fake.podman_runs, [])
 
+    def test_a_stop_just_before_a_container_name_is_recorded_starts_no_container_in_either_stage(self):
+        for stage, builder in (("agent", "agent_argv"), ("bundle", "bundle_argv")):
+            with self.subTest(stage=stage):
+                holder = []
+                real = getattr(runner.pod, builder)
+
+                def stopping(*args, real=real, **kwargs):
+                    holder[0].stop()  # no container is recorded yet, so this stop has none to kill
+                    return real(*args, **kwargs)
+
+                holder.append(self.runner())
+                job = self.submit(minutes=len(stage))
+                runs_before = len(self.fake.podman_runs)
+                with mock.patch.object(runner.pod, builder, stopping):
+                    holder[0].run_next()
+                started = self.fake.podman_runs[runs_before:]
+                self.assertEqual(len(started), 0 if stage == "agent" else 1)  # the bundle stage follows an agent
+                self.assertEqual(self.spool.run_record(job)["reason"], "internal")
+
     def test_a_stop_request_while_the_bundle_container_runs_kills_it_and_records_an_internal_crash(self):
         holder = []
 
@@ -694,6 +715,29 @@ class AgentRunTests(RunnerCase):
         after = self.fake.after_agent()
         self.assertTrue(after)
         self.assertTrue(all(call.argv[0] == "podman" for call in after), [call.argv[:2] for call in after])
+
+    def test_the_agents_output_is_kept_only_up_to_its_caps(self):
+        self.handle()
+        (agent,) = [call for call in self.fake.calls if call.is_agent]
+        self.assertEqual(agent.limits, (200_000_000, 10_000_000))
+        self.assertEqual((runner.TRANSCRIPT_CAP, runner.ERROR_OUTPUT_CAP), (200_000_000, 10_000_000))
+
+    def test_a_transcript_or_error_output_that_reached_its_cap_is_named_in_one_log_line_each(self):
+        def chatty(container: Container) -> None:
+            good_script(container)
+            container.stdout.write(b"x" * 600)
+
+        self.fake.agent = chatty
+        job = self.submit()
+        with mock.patch.object(runner, "TRANSCRIPT_CAP", 500), mock.patch.object(runner, "ERROR_OUTPUT_CAP", 0), \
+                self.assertLogs("factory.runner", level="WARNING") as logs:
+            self.runner().run_next()
+        self.assertEqual([line for line in logs.output if "cap" in line], [
+            f"WARNING:factory.runner:job {job}: the transcript reached its cap of 500 bytes; the rest was read and "
+            "not kept",
+            f"WARNING:factory.runner:job {job}: the error output reached its cap of 0 bytes; the rest was read and "
+            "not kept",
+        ])
 
     def test_a_model_name_that_does_not_fit_the_record_is_replaced(self):
         def script(container: Container) -> None:
@@ -816,11 +860,30 @@ class QueueTests(RunnerCase):
         self.assertEqual(self.spool.state(older), "finished")
         self.assertEqual(self.spool.state(newer), "queued")
 
-    def test_a_job_another_runner_claimed_is_skipped(self):
-        taken, free = self.submit(minutes=1), self.submit(minutes=2)
-        self.spool.claim(taken, NOW)
+    def test_a_running_job_this_runner_is_not_working_on_gets_its_crashed_record_at_the_next_poll(self):
+        orphan, free = self.submit(minutes=1), self.submit(minutes=2)
+        self.spool.claim(orphan, NOW)  # the lock is held, so no other runner can be working on it
         self.assertEqual(self.runner().run_next(), free)
-        self.assertEqual(self.spool.state(taken), "running")
+        record = self.spool.run_record(orphan)
+        self.assertEqual((record["status"], record["reason"]), ("crashed", "internal"))
+        self.assertEqual(self.spool.state(free), "finished")
+
+    def test_an_orphans_record_that_cannot_be_written_is_logged_and_the_queue_goes_on(self):
+        orphan, free = self.submit(minutes=1), self.submit(minutes=2)
+        self.spool.claim(orphan, NOW)
+        real = self.spool.finish
+
+        def full_for_the_orphan(job_id, run, files):
+            if job_id == orphan:
+                raise SpoolError("run.json cannot be written: No space left on device")
+            real(job_id, run, files)
+
+        with mock.patch.object(self.spool, "finish", full_for_the_orphan), \
+                self.assertLogs("factory.runner", level="ERROR") as logs:
+            self.assertEqual(self.runner().run_next(), free)
+        self.assertEqual(self.spool.state(orphan), "running")
+        self.assertEqual(logs.output, [f"ERROR:factory.runner:job {orphan}: its crashed record cannot be written: "
+                                       "run.json cannot be written: No space left on device"])
 
     def test_a_lost_claim_race_returns_none(self):
         self.submit()
@@ -863,6 +926,39 @@ class QueueTests(RunnerCase):
         self.assertFalse((self.work / stuck).exists())
         self.assertFalse((self.work / finished).exists())
         self.assertFalse((self.work / "staging" / finished).exists())
+
+    def test_recover_frees_the_disk_of_every_leftover_before_it_writes_a_record(self):
+        stuck, other = self.submit(minutes=1), self.submit(minutes=2)
+        self.spool.claim(stuck, NOW)
+        for path in (self.work / stuck / "checkout", self.work / "staging" / stuck, self.work / other / "checkout"):
+            path.mkdir(parents=True)
+        real = self.spool.finish
+        seen = []
+
+        def finish(job_id, run, files):
+            removed = [call.argv[-1] for call in self.fake.calls if call.argv[:2] == ["podman", "rm"]]
+            seen.append((job_id, removed, sorted(path.name for path in self.work.rglob("*") if path.is_dir())))
+            real(job_id, run, files)
+
+        with mock.patch.object(self.spool, "finish", finish):
+            self.assertEqual(self.runner().recover(), [stuck])
+        self.assertEqual(seen, [(stuck, [f"factory-{stuck}", f"factory-{stuck}-bundle", f"factory-{other}",
+                                         f"factory-{other}-bundle"], ["staging"])])
+
+    def test_a_record_that_cannot_be_written_at_start_up_is_logged_and_written_at_the_next_poll(self):
+        stuck = self.submit()
+        self.spool.claim(stuck, NOW)
+        (self.work / stuck / "checkout").mkdir(parents=True)
+        instance = self.runner()
+        full = SpoolError("run.json cannot be written: No space left on device")
+        with mock.patch.object(self.spool, "finish", side_effect=full), \
+                self.assertLogs("factory.runner", level="ERROR") as logs:
+            self.assertEqual(instance.recover(), [])
+        self.assertEqual(logs.output, [f"ERROR:factory.runner:job {stuck}: its crashed record cannot be written: "
+                                       "run.json cannot be written: No space left on device"])
+        self.assertFalse((self.work / stuck).exists())
+        self.assertIsNone(instance.run_next())
+        self.assertEqual(self.spool.run_record(stuck)["reason"], "internal")
 
     def test_a_container_that_cannot_be_removed_does_not_stop_recovery(self):
         stuck = self.submit()
@@ -1102,6 +1198,38 @@ class FileHelperTests(unittest.TestCase):
             resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
         self.assertTrue(removed)
         self.assertFalse((self.root / "w").exists())
+
+    @unittest.skipUnless(runner.DESCRIPTOR_WALK, "the walk by descriptors needs POSIX directory descriptors")
+    def test_remove_tree_climbs_out_of_a_deep_tree_in_linear_time(self):
+        self.nest(self.root / "w", 4000)
+        real = os.open
+        opened = []
+
+        def counting(*args, **kwargs):
+            opened.append(args[0])
+            return real(*args, **kwargs)
+
+        with mock.patch.object(os, "open", counting):
+            self.assertTrue(runner.remove_tree(self.root / "w"))
+        self.assertFalse((self.root / "w").exists())
+        self.assertLess(len(opened), 40_000)  # reopening the chain from the top at each climb takes about 250,000
+
+    @unittest.skipUnless(runner.DESCRIPTOR_WALK, "the walk by descriptors needs POSIX directory descriptors")
+    def test_remove_tree_opens_the_chain_from_the_top_when_a_parent_is_not_the_one_it_came_through(self):
+        self.nest(self.root / "w", 100)
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        real = os.open
+
+        def misleading(path, flags, *args, **kwargs):
+            if path == "..":  # as if the directory had been moved under another one
+                return real(elsewhere, flags)
+            return real(path, flags, *args, **kwargs)
+
+        with mock.patch.object(os, "open", misleading):
+            self.assertTrue(runner.remove_tree(self.root / "w"))
+        self.assertFalse((self.root / "w").exists())
+        self.assertTrue(elsewhere.is_dir())
 
     def test_remove_tree_removes_a_branching_tree_by_either_walk(self):
         for descriptors in sorted({runner.DESCRIPTOR_WALK, False}):
@@ -1441,6 +1569,32 @@ class RunProgramTests(unittest.TestCase):
     def test_a_program_that_outlives_its_timeout_raises(self):
         with self.assertRaises(subprocess.TimeoutExpired):
             runner.run_program([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.5)
+
+    def test_output_past_its_cap_is_read_to_the_end_and_not_kept(self):
+        # far more than a pipe holds: a program whose output nobody read would block and time out
+        script = "import sys; sys.stdout.buffer.write(b'o' * 1_000_000); sys.stderr.buffer.write(b'e' * 500_000)"
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            status = runner.run_program([sys.executable, "-c", script], stdout=out, stderr=err, timeout=60,
+                                        stdout_limit=1000, stderr_limit=10)
+            out.seek(0)
+            err.seek(0)
+            self.assertEqual((status, out.read(), err.read()), (0, b"o" * 1000, b"e" * 10))
+
+    def test_a_capped_program_that_outlives_its_timeout_still_raises(self):
+        started = time.monotonic()
+        with tempfile.TemporaryFile() as out, self.assertRaises(subprocess.TimeoutExpired):
+            runner.run_program([sys.executable, "-c", "print('x', flush=True); import time; time.sleep(30)"],
+                               stdout=out, timeout=1, stdout_limit=1000)
+        self.assertLess(time.monotonic() - started, 20)
+
+    def test_a_cap_on_one_stream_leaves_the_other_as_it_is(self):
+        script = "import sys; print('out'); print('err', file=sys.stderr); sys.exit(4)"
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            status = runner.run_program([sys.executable, "-c", script], stdout=out, stderr=err, timeout=60,
+                                        stderr_limit=1)
+            out.seek(0)
+            err.seek(0)
+            self.assertEqual((status, out.read().strip(), err.read()), (4, b"out", b"e"))
 
 
 if __name__ == "__main__":

@@ -51,6 +51,11 @@ TRANSCRIPT_KEEP_SECONDS = 14 * 24 * 3600
 MAX_TRANSCRIPT_LINE = 1_000_000
 MAX_JOB_FILE_BYTES = 1_000_000
 MAX_STDERR_BYTES = 100_000
+# What is kept of the agent container's output: a process in it can write to the CLI's output, which the disk holds.
+TRANSCRIPT_CAP = 200_000_000
+ERROR_OUTPUT_CAP = 10_000_000
+COPY_LINGER_SECONDS = 10
+CHUNK = 65536
 IMAGE_CHECK_SECONDS = 60
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CLONE_SECONDS = 300
@@ -70,18 +75,73 @@ class Run(Protocol):
     """Starts a program and returns its exit status; raises `subprocess.TimeoutExpired` when `timeout` passes.
 
     `stdout` and `stderr` are open binary files, or None to discard the output; `env` None means the runner's own.
+    A limit for a stream keeps at most that many of its bytes in the file and reads the rest to its end unkept.
     """
 
     def __call__(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None, cwd: Path | None = None,
-                 stdout: BinaryIO | None = None, stderr: BinaryIO | None = None,
-                 timeout: float | None = None) -> int: ...
+                 stdout: BinaryIO | None = None, stderr: BinaryIO | None = None, timeout: float | None = None,
+                 stdout_limit: int | None = None, stderr_limit: int | None = None) -> int: ...
 
 
 def run_program(argv: Sequence[str], *, env: Mapping[str, str] | None = None, cwd: Path | None = None,
-                stdout: BinaryIO | None = None, stderr: BinaryIO | None = None, timeout: float | None = None) -> int:
-    return subprocess.run(list(argv), env=env, cwd=cwd, stdin=subprocess.DEVNULL,
-                          stdout=stdout or subprocess.DEVNULL, stderr=stderr or subprocess.DEVNULL,
-                          timeout=timeout, check=False).returncode
+                stdout: BinaryIO | None = None, stderr: BinaryIO | None = None, timeout: float | None = None,
+                stdout_limit: int | None = None, stderr_limit: int | None = None) -> int:
+    if stdout_limit is None and stderr_limit is None:
+        return subprocess.run(list(argv), env=env, cwd=cwd, stdin=subprocess.DEVNULL,
+                              stdout=stdout or subprocess.DEVNULL, stderr=stderr or subprocess.DEVNULL,
+                              timeout=timeout, check=False).returncode
+    return _run_capped(list(argv), env, cwd, ((stdout, stdout_limit), (stderr, stderr_limit)), timeout)
+
+
+def _run_capped(argv: list[str], env: Mapping[str, str] | None, cwd: Path | None,
+                streams: tuple[tuple[BinaryIO | None, int | None], ...], timeout: float | None) -> int:
+    """Run a program whose capped streams go through pipes that a thread each copies into the files.
+
+    A thread reads its pipe to the end whatever it keeps, so the program never waits on a full pipe. Once the
+    program has ended the threads have COPY_LINGER_SECONDS to finish: a child that kept a pipe open cannot keep the
+    runner waiting, and what it writes later is not kept.
+    """
+    def target(output: BinaryIO | None, limit: int | None) -> object:
+        return subprocess.PIPE if limit is not None else (output or subprocess.DEVNULL)
+
+    (stdout, stdout_limit), (stderr, stderr_limit) = streams
+    with subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=target(stdout, stdout_limit),
+                          stderr=target(stderr, stderr_limit)) as process:
+        copies = []
+        for pipe, (output, limit) in zip((process.stdout, process.stderr), streams):
+            if limit is not None:
+                copies.append(threading.Thread(target=_copy_capped, args=(pipe, output, limit), daemon=True))
+                copies[-1].start()
+        process.stdout = process.stderr = None  # the threads close these; Popen must not close them under the threads
+        try:
+            status = process.wait(timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise
+        finally:
+            linger = time.monotonic() + COPY_LINGER_SECONDS
+            for copy in copies:
+                copy.join(max(linger - time.monotonic(), 0))
+    return status
+
+
+def _copy_capped(source: BinaryIO, output: BinaryIO | None, limit: int) -> None:
+    """Copy at most `limit` bytes of the pipe into the file, and read the rest to its end without keeping it."""
+    kept = 0
+    try:
+        while chunk := source.read(CHUNK):
+            if output is not None and kept < limit:
+                part = chunk[:limit - kept]
+                kept += len(part)
+                try:
+                    output.write(part)
+                except (OSError, ValueError):  # a full disk, or a file already closed: the rest is read, not kept
+                    kept = limit
+    except OSError:
+        pass  # the program's end of the pipe broke; its exit status says how it ended
+    finally:
+        source.close()
 
 
 class SettingsError(ValueError):
@@ -258,17 +318,29 @@ def _empty_directory(directory: int) -> list[str]:
     return subdirectories
 
 
+def _identity(descriptor: int) -> tuple[int, int] | None:
+    """The device and inode of an open directory, or None when they cannot be read."""
+    try:
+        info = os.fstat(descriptor)
+    except OSError:
+        return None
+    return info.st_dev, info.st_ino
+
+
 class _DescriptorWalk:
     """Empty and remove everything below an open directory while holding a bounded number of descriptors.
 
-    The chain of directories being emptied is kept as names; a descriptor is held for each of the deepest
-    OPEN_DIRECTORIES of them only. When the walk climbs above those it opens the chain again from the root, one name
-    at a time, so a tree thousands of levels deep never needs thousands of descriptors.
+    The chain of directories being emptied is kept as names, with the identity each had when it was opened; a
+    descriptor is held for each of the deepest OPEN_DIRECTORIES of them only. When the walk climbs above those it
+    opens `..` from the directory it leaves and keeps it when it is the directory the walk came through; only when
+    it is not, because something moved, is the chain opened again from the root, one name at a time. So a tree
+    thousands of levels deep never needs thousands of descriptors, and each level is opened about twice.
     """
 
     def __init__(self, root: int) -> None:
         self._root = root
         self._names: list[str] = []  # the directories being emptied, from the one below the root down
+        self._identities: list[tuple[int, int] | None] = []  # of each of those, as it was opened
         self._pending: list[list[str]] = []  # per level, root first: subdirectories not visited yet
         self._held: list[int] = []  # descriptors of the deepest directories of the chain, the deepest last
 
@@ -321,6 +393,7 @@ class _DescriptorWalk:
                 pass
             return
         self._names.append(name)
+        self._identities.append(_identity(descriptor))
         self._held.append(descriptor)
         if len(self._held) > OPEN_DIRECTORIES:
             os.close(self._held.pop(0))
@@ -328,11 +401,31 @@ class _DescriptorWalk:
 
     def _remove_deepest(self) -> None:
         name = self._names.pop()
-        os.close(self._held.pop())
+        self._identities.pop()
+        deepest = self._held.pop()
+        try:
+            if self._names and not self._held:
+                self._climb(deepest)
+        finally:
+            os.close(deepest)
         try:
             os.rmdir(name, dir_fd=self._current())
         except OSError:
             pass
+
+    def _climb(self, child: int) -> None:
+        """Hold the directory above `child` again, by its `..` when that is the one the walk came through."""
+        try:
+            parent = os.open("..", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=child)
+        except OSError:
+            self._reopen()
+            return
+        recorded = self._identities[-1]
+        if recorded is not None and _identity(parent) == recorded:
+            self._held = [parent]
+        else:  # moved, or unknown: the chain is opened again by its names from the root
+            os.close(parent)
+            self._reopen()
 
 
 def _unlink(path: str, info: os.stat_result) -> None:
@@ -479,30 +572,34 @@ class Runner:
             log.error("housekeeping failed: %s", type(error).__name__)
 
     def recover(self) -> list[str]:
-        """Finish every job still `running` as crashed and clear leftovers.
+        """Clear what earlier runs left, then finish every job still `running` as crashed; return those finished.
 
         With one runner (the lock sees to it) nothing can still be running at start-up, so a container found for
-        such a job is an orphan: it is removed before its workspace. Workspaces of every other job are removed
-        too, each after the containers of its job: a run that could not remove them left its workspace for here.
+        such a job is an orphan. For each job left running, and each job a workspace is left of, the containers are
+        removed, then the workspace: a run that could not remove them left its workspace for here. Only then are
+        the records written, so that a full disk is freed first; a record that cannot be written is logged, and the
+        next poll writes it (`run_next`).
         """
-        recovered = []
-        handled: set[str] = set()
-        for job_id in self._spool.job_ids():
-            if self._spool.state(job_id) != "running":
-                continue
-            self._remove_containers(job_id)
-            handled.add(job_id)
-            now = self._clock()
-            self._spool.finish(job_id, _record(job_id, CRASHED, now, now), {})
-            recovered.append(job_id)
+        running = [job_id for job_id in self._spool.job_ids() if self._spool.state(job_id) == "running"]
+        leftovers = dict.fromkeys(running)
         for parent in (self._work, self._work / "staging"):
-            for entry in parent.iterdir() if parent.is_dir() else ():
+            for entry in sorted(parent.iterdir()) if parent.is_dir() else ():
                 if JOB_ID.fullmatch(entry.name):
-                    if entry.name not in handled:
-                        self._remove_containers(entry.name)
-                        handled.add(entry.name)
-                    self._clean(entry.name)
-        return recovered
+                    leftovers[entry.name] = None
+        for job_id in leftovers:
+            self._remove_containers(job_id)
+            self._clean(job_id)
+        return [job_id for job_id in running if self._finish_orphan(job_id)]
+
+    def _finish_orphan(self, job_id: str) -> bool:
+        """Record a job left `running` by no run of this process as an internal crash; False when it cannot be."""
+        now = self._clock()
+        try:
+            self._spool.finish(job_id, _record(job_id, CRASHED, now, now), {})
+        except SpoolError as error:  # the spool's messages name no host path
+            log.error("job %s: its crashed record cannot be written: %s", job_id, error)
+            return False
+        return True
 
     def prune_transcripts(self) -> list[str]:
         """Delete transcripts older than 14 days; return their file names."""
@@ -520,12 +617,17 @@ class Runner:
     def run_next(self) -> str | None:
         """Handle the oldest queued job nobody else has claimed; return its id, or None when there was none.
 
-        Once a stop is pending nothing is claimed: a job left queued is picked up by the next start.
+        Once a stop is pending nothing is claimed: a job left queued is picked up by the next start. A job that is
+        `running` here, between two jobs of this process that holds the lock, is an orphan whose record could not be
+        written before, at start-up or at the end of its run: it is written now.
         """
         if self._stopping:
             return None
         for job_id in self._spool.job_ids():
-            if self._spool.state(job_id) == "queued" and self._spool.claim(job_id, self._clock()):
+            state = self._spool.state(job_id)
+            if state == "running":
+                self._finish_orphan(job_id)
+            elif state == "queued" and self._spool.claim(job_id, self._clock()):
                 self._handle(job_id)
                 return job_id
         return None
@@ -634,21 +736,25 @@ class Runner:
 
     def _agent(self, job_id: str, request: Mapping, mounts: pod.Mounts, staging: Path) -> Outcome:
         name = f"factory-{job_id}"
-        if self._stopping:
-            return CRASHED
         transcripts = self._work / "transcripts"
         transcripts.mkdir(mode=DIRECTORY_MODE, parents=True, exist_ok=True)
-        transcript = transcripts / f"{job_id}.jsonl"
+        transcript, errors = transcripts / f"{job_id}.jsonl", transcripts / f"{job_id}.err"
         argv = pod.agent_argv(request, mounts, self._settings.image, name)
         seconds = request["timeout_minutes"] * 60
         self._container, self._deadline = name, time.monotonic() + seconds
         try:
-            with _private_file(transcript) as stdout, _private_file(transcripts / f"{job_id}.err") as stderr:
+            if self._stopping:  # a stop that came before the name was recorded found no container to kill
+                return CRASHED
+            with _private_file(transcript) as stdout, _private_file(errors) as stderr:
                 try:
-                    status = self._run(argv, cwd=self._work, stdout=stdout, stderr=stderr, timeout=seconds)
+                    status = self._run(argv, cwd=self._work, stdout=stdout, stderr=stderr, timeout=seconds,
+                                       stdout_limit=TRANSCRIPT_CAP, stderr_limit=ERROR_OUTPUT_CAP)
                 except subprocess.TimeoutExpired:
                     self._remove_containers(job_id, agent_only=True)
                     return Outcome("timeout")
+                finally:
+                    _log_cut(job_id, "the transcript", stdout, TRANSCRIPT_CAP)
+                    _log_cut(job_id, "the error output", stderr, ERROR_OUTPUT_CAP)
         finally:
             self._container = None
         if self._stopping:
@@ -684,6 +790,8 @@ class Runner:
         errors = staging / "bundle.err"
         self._container, self._deadline = name, time.monotonic() + BUNDLE_SECONDS
         try:
+            if self._stopping:  # as in the agent's stage; the caller then records the internal crash
+                return None
             with _private_file(errors) as stderr:
                 try:
                     status = self._run(argv, cwd=self._work, stderr=stderr, timeout=BUNDLE_SECONDS)
@@ -731,6 +839,20 @@ class Runner:
 def _private_file(path: Path) -> BinaryIO:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), PRIVATE_MODE)
     return os.fdopen(descriptor, "wb")
+
+
+def _log_cut(job_id: str, what: str, output: BinaryIO, cap: int) -> None:
+    """One log line when an output file holds as much as its cap allows: what came after was not kept.
+
+    It never raises: a file that cannot be flushed or measured, on a full disk, must not change how the run ended.
+    """
+    try:
+        output.flush()
+        size = os.fstat(output.fileno()).st_size
+    except OSError:
+        return
+    if size >= cap:
+        log.warning("job %s: %s reached its cap of %d bytes; the rest was read and not kept", job_id, what, cap)
 
 
 def _take(source: Path, limit: int, target: Path) -> Path | None:
