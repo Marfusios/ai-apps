@@ -258,11 +258,13 @@ class Dispatcher:
                 log.error("pruning the spool failed: %s", type(error).__name__)
         if self._last_gc is None or now - self._last_gc >= GC_EVERY:
             try:
-                if self._is_idle():
-                    self._last_gc = now
-                    self._collect_garbage()
+                idle = self._is_idle()
             except RECOVERABLE as error:
-                log.error("git maintenance failed: %s", type(error).__name__)
+                log.error("the idle check failed: %s", type(error).__name__)
+            else:
+                if idle:
+                    self._last_gc = now
+                    self._collect_garbage()  # logs its own failures
 
     def _collect_garbage(self) -> None:
         for repository in (self._settings.mirror, self._settings.workrepo):

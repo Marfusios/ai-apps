@@ -172,6 +172,24 @@ class ConfigTest(unittest.TestCase):
                 self.load_text(VALID.replace(text, ""))
             self.assertIn(table, str(caught.exception))
 
+    def test_wrongly_shaped_tables_raise_config_error_saying_what_they_must_be(self):
+        top = "schema = 1\n"
+        toolchains = '[agent.toolchains]\nnode = ["24"]\n'
+        cases = {
+            "dispatcher is a list": (VALID.replace(DISPATCHER, "").replace(top, top + "dispatcher = [1]\n"),
+                                     "dispatcher must be a table"),
+            "agent is a string": (VALID.replace(AGENT, "").replace(top, top + 'agent = "x"\n'),
+                                  "agent must be a table"),
+            "stages is a list": (VALID.replace(STAGES, "").replace(top, top + "stages = []\n"),
+                                 "stages must be a table"),
+            "toolchains is a list": (VALID.replace(toolchains, "toolchains = []\n"),
+                                     "agent.toolchains must be a non-empty table"),
+        }
+        for name, (text, message) in cases.items():
+            with self.subTest(name), self.assertRaises(ConfigError) as caught:
+                self.load_text(text)
+            self.assertIn(message, str(caught.exception))
+
     def test_duplicate_label_names_are_rejected(self):
         label = TOP[TOP.index("[[labels]]"):]
         with self.assertRaises(ConfigError) as caught:

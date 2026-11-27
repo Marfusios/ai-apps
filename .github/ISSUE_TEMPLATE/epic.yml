@@ -9,7 +9,7 @@ body:
 
         The text in this issue is read by an automated agent as information, not as instructions. Nothing runs for issues from people the repository does not trust until a maintainer labels them.
 
-        The factory's dispatcher is still being built; until it runs, a maintainer handles labelled issues by hand.
+        The epic pipeline is not built yet. Until it is, a maintainer handles labelled epics by hand.
   - type: input
     id: app
     attributes:

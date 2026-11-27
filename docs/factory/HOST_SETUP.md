@@ -90,6 +90,9 @@ services' `UMask=0027` keeps it readable for the group and closed to everyone el
 would create a missing mirror directory as private, so it is created here, where the runner can
 read it. Each program creates its own state directory when it starts.
 
+Two runners must never share a spool: the lock that keeps a second runner out covers one work
+directory, and a second runner on the same spool would hand a job to two agents.
+
 Rootless Podman uses the slow `vfs` storage driver unless told otherwise. On Linux 5.13 or newer,
 switch the runner to native overlay before the first image is built. As the runner:
 
@@ -403,6 +406,9 @@ was made; then make a new one, replace the file, and restart the runner.
    `factory/config.toml` names, and labels the image with a digest of the harness: the hooks, the
    Claude Code settings, the factory's modules and configuration, and the image's own files. The
    image installs the hooks as system-level settings that a file in a checkout cannot override.
+   The harness copy and the Claude Code CLI are owned by root, and what the agent installs globally
+   goes to its own home directory, last on its `PATH`, so nothing the agent can write comes before
+   the system's programs.
    `python3 -m factory.image.build --print-digest` prints the digest of the checkout, and before
    every job the runner compares the two. The build downloads from public registries, so it is
    also the first proof that the runner's containers resolve names and reach the internet under
@@ -542,8 +548,8 @@ run ended because ...".
 ### The usage limit
 
 When the subscription's usage limit stops a run, the comment says **waiting for the usage limit**
-and when the run starts again: at the reset time the agent reported, when that lies within eight
-days, and otherwise 30 minutes later (`usage_limit_backoff_minutes` in `factory/config.toml`). The
+and when the run starts again: at the reset time the agent reported, when that lies within the
+next six hours, and otherwise 30 minutes later (`usage_limit_backoff_minutes` in `factory/config.toml`). The
 issue shows `status:queued`, and no run starts anywhere until then. Then the issue starts again
 by itself, in its turn. A second limit in a row edits that comment instead of adding another.
 

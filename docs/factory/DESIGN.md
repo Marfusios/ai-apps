@@ -102,7 +102,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | GitHub | n/a | the state | Issues, labels, pull requests, reviews and checks are the single source of truth. |
 | Dispatcher | host user 1 | GitHub App key | Polls GitHub, decides what to do next, writes job files, validates results, pushes branches, opens and updates pull requests, posts comments, creates step issues. Never runs agent-written code. |
-| Runner | host user 2 | Claude sign-in token | Takes one job at a time, starts a pod (agent container plus declared services), collects the result. |
+| Runner | host user 2 | Claude sign-in token | Takes one job at a time, runs the agent in a rootless container, then bundles its commits in a second container without network, and collects the result. |
 | Agent | inside the container | nothing for GitHub | Reads the job context, edits and commits in a working copy, returns a structured result. Cannot push. |
 | Hosted workflows | GitHub-hosted runners | provider API keys | Repository checks, per-app checks, the second-model review. |
 
@@ -532,8 +532,9 @@ and the person decides which become issues. This gives an honest agent somewhere
   context; nothing depends on an agent remembering an earlier run. Each stage has a time
   limit and a turn limit.
 - **Running an agent:** the runner clones from a read-only mirror the dispatcher keeps,
-  starts the pod, and runs the CLI headlessly with the stage's skill. The agent's final
-  answer is a structured result: outcome, summary, questions, pull request title and
+  runs the CLI headlessly with the stage's skill in a rootless container, and then makes a
+  bundle of the agent's commits in a second container that has no network and no token. The
+  agent's final answer is a structured result: outcome, summary, questions, pull request title and
   body, replies to review threads, the verification it ran, and follow-ups it noticed.
 - **Configuration:** `factory/config.toml` in the repository holds the trusted logins,
   labels, limits, models per stage, and writable paths. The dispatcher reads it from

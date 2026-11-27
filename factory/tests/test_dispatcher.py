@@ -302,7 +302,7 @@ class TickTest(DispatcherTestCase):
         self.assertEqual(self.spool.job_ids(), [])
         self.assertEqual(self.github.calls, [])
 
-    def test_an_action_that_fails_ends_the_tick(self):
+    def test_a_failed_status_change_starts_no_job_and_is_logged_once(self):
         self.github.fail.add(("POST", self.labels))
         with self.assertLogs("factory.dispatcher", "ERROR") as logged:
             actions = self.dispatcher.tick()
@@ -601,7 +601,7 @@ class HousekeepingTest(DispatcherTestCase):
                 self.assertLogs("factory.dispatcher", "ERROR") as logged:
             self.dispatcher.housekeeping()
         self.assertEqual([record.getMessage() for record in logged.records],
-                         ["pruning the spool failed: OSError", "git maintenance failed: OSError"])
+                         ["pruning the spool failed: OSError", "the idle check failed: OSError"])
 
     def test_the_spool_is_pruned_hourly(self):
         self.now = NOW + timedelta(minutes=61)

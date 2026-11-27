@@ -186,6 +186,13 @@ class IssueFormTests(unittest.TestCase):
             self.assertIn("restates the request in a comment", text, name)
             self.assertNotIn("still being built", text, name)
 
+    def test_the_epic_form_says_the_epic_pipeline_is_not_built_and_a_maintainer_handles_epics_by_hand(self):
+        text = read(FORMS / "epic.yml")
+        self.assertIn("The epic pipeline is not built yet.", text)
+        self.assertIn("a maintainer handles labelled epics by hand", text)
+        self.assertNotIn("dispatcher", text)
+        self.assertNotIn("still being built", text)
+
 
 if __name__ == "__main__":
     unittest.main()
