@@ -24,7 +24,10 @@ SKIPPED = re.compile(r"\b(?:describe|it|test)\.skip\(|" + NOT_AN_ATTRIBUTE + r"x
                      r"@Disabled\b|@Ignore\b")
 SUPPRESSION = re.compile(r"eslint-disable|@ts-ignore|@ts-expect-error|@ts-nocheck|biome-ignore|#\s*noqa|"
                          r"#\s*type:\s*ignore|#\s*pylint:\s*disable|#\s*pyright:\s*ignore|//\s*nolint|#!?\[allow\([^)]*\)\]?|"
-                         r"@SuppressWarnings|istanbul ignore|c8 ignore|v8 ignore|pragma: no cover", re.IGNORECASE)
+                         r"@SuppressWarnings|istanbul ignore|c8 ignore|v8 ignore|pragma: no cover|"
+                         r"#\s*ruff\s*:\s*noqa|#\s*mypy\s*:\s*ignore-errors|oxlint-disable|deno-lint-ignore|"
+                         r"rubocop\s*:\s*disable|phpcs\s*:\s*ignore|@Suppress(?=\()|#\s*pragma\s+warning\s+disable",
+                         re.IGNORECASE)
 # What may stand between a marker and its reason: an attached rule (":errcheck"), a bracket group, a rule id such as
 # "no-console" or "E501", and the position words of the coverage markers.
 RULE_LIST = re.compile(r"[:=]\S+|[\[(][^\])]*[\])]|[\w./@-]*[\d_./-][\w./@-]*|(?:next|start|stop|file|if|else)\b")

@@ -19,6 +19,8 @@ WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 CREDENTIAL_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 CREDENTIAL_PARTS = {"secrets", "credentials"}
 ON_WINDOWS = os.name == "nt"
+GIT_REFUSAL = ("Writing inside .git is refused: it holds the repository's own files, hooks included. "
+               "Use git commands, and ask the person if a hook needs to change.")
 
 
 def fallback_config() -> Config:
@@ -40,6 +42,9 @@ def is_credential(parts: list[str]) -> bool:
 def decide(file_path: str, *, project: Path, cwd: Path, factory_run: bool, config: Config) -> Decision:
     """Allow, ask about or deny a write to file_path, which may be relative to cwd."""
     real = Path(os.path.realpath(Path(cwd) / file_path))
+    # before the outside-the-project allow: in a linked worktree the real git directory lies outside the project
+    if any(part.lower() == ".git" if ON_WINDOWS else part == ".git" for part in real.parts):
+        return Decision("deny", GIT_REFUSAL)
     try:
         relative = real.relative_to(os.path.realpath(project))
     except ValueError:
@@ -50,9 +55,6 @@ def decide(file_path: str, *, project: Path, cwd: Path, factory_run: bool, confi
         return Decision("allow")
     if ON_WINDOWS:
         text, parts = text.lower(), [part.lower() for part in parts]
-    if ".git" in parts:
-        return Decision("deny", "Writing inside .git is refused: it holds the repository's own files, hooks included. "
-                                "Use git commands, and ask the person if a hook needs to change.")
     if is_credential(parts):
         if factory_run:
             return Decision("deny", "Writing credential files is refused in a factory run. Document the variable "

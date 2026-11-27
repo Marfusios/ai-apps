@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell",
+        "matcher": "Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",
@@ -51,7 +51,6 @@
       "Bash(git push --delete *)",
       "Bash(git push * --delete *)",
       "Bash(git commit --no-verify*)",
-      "Bash(git commit * --no-verify*)",
       "Bash(git push --no-verify*)",
       "Bash(git push * --no-verify*)",
       "Bash(git filter-branch *)",
@@ -68,8 +67,10 @@
       "Bash(gh pr merge *)",
       "Bash(gh repo edit *)",
       "Bash(gh repo delete *)",
-      "Bash(gh secret *)",
-      "Bash(gh variable *)",
+      "Bash(gh secret set *)",
+      "Bash(gh secret delete *)",
+      "Bash(gh variable set *)",
+      "Bash(gh variable delete *)",
       "Bash(gh workflow disable *)",
       "Bash(gh workflow enable *)"
     ]

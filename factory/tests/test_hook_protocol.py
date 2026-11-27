@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -53,6 +54,33 @@ class HookProtocolTests(unittest.TestCase):
 
     def test_unknown_hook_name_exits_2(self) -> None:
         self.assertEqual(self.run_hook("no_such_hook", "{}").returncode, 2)
+
+    def run_without_python(self, name: str, factory_run: bool) -> subprocess.CompletedProcess[str]:
+        """Run the launcher by the absolute path of sh with a PATH that holds nothing at all."""
+        with tempfile.TemporaryDirectory() as empty:
+            env = {k: v for k, v in os.environ.items() if k not in ("FACTORY_RUN", "PATH", "Path")}
+            env.update({"PATH": empty, "CLAUDE_PROJECT_DIR": str(ROOT)})
+            if factory_run:
+                env["FACTORY_RUN"] = "1"
+            sh = shutil.which("sh")
+            probe = subprocess.run([sh, "-c", "command -v python3 python py"], capture_output=True, text=True, env=env,
+                                   cwd=ROOT, timeout=60)
+            if probe.stdout.strip():
+                self.skipTest("a Python is still found with an empty PATH on this machine")
+            return subprocess.run([sh, LAUNCHER, name], input="{}", capture_output=True, text=True, cwd=ROOT, env=env,
+                                  timeout=60)
+
+    def test_stop_hook_without_python_lets_an_interactive_session_stop(self) -> None:
+        result = self.run_without_python("finish_check", factory_run=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+
+    def test_stop_hook_without_python_still_blocks_a_factory_run(self) -> None:
+        result = self.run_without_python("finish_check", factory_run=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("no Python 3.11 or newer", result.stderr)
+
+    def test_other_hooks_without_python_still_exit_2_in_an_interactive_session(self) -> None:
+        self.assertEqual(self.run_without_python("guard_git", factory_run=False).returncode, 2)
 
 
 if __name__ == "__main__":

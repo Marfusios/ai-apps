@@ -86,6 +86,27 @@ class FindViolationsTests(unittest.TestCase):
                     "f() // NOLINT:errcheck best effort cleanup on exit", "f() //nolint:errcheck best effort cleanup",
                     "// ESLINT-DISABLE-NEXT-LINE no-console -- the CLI prints its result here")
 
+    def test_more_suppression_markers_need_a_reason(self):
+        self.flagged("# ruff: noqa", "# ruff: noqa: F401", "#RUFF:NOQA", "# mypy: ignore-errors", "#mypy:ignore-errors",
+                     "// oxlint-disable", "// oxlint-disable-next-line no-console", "/* OXLINT-DISABLE-LINE */",
+                     "// deno-lint-ignore no-explicit-any", "// deno-lint-ignore-file", "x = f # rubocop:disable Metrics/AbcSize",
+                     "x = f # RuboCop : Disable Style/Foo", "$x = f(); // phpcs:ignore",
+                     "$x = f(); // phpcs:ignore Generic.Files.LineLength", "// PHPCS : IGNORE",
+                     '@Suppress("UNCHECKED_CAST")', '@Suppress("UNCHECKED_CAST", "UNUSED_PARAMETER")', "@SUPPRESS(foo)",
+                     "#pragma warning disable", "#pragma warning disable CS0168", "# PRAGMA  WARNING  DISABLE CS0168")
+
+    def test_more_suppression_markers_pass_with_a_reason(self):
+        self.passes("# ruff: noqa: F401 the package re-exports these names", "# ruff: noqa the generated file is not linted",
+                    "# mypy: ignore-errors the vendored stubs are incomplete",
+                    "// oxlint-disable-next-line no-console -- the CLI prints its result here",
+                    "// oxlint-disable the generated file is not linted",
+                    "// deno-lint-ignore no-explicit-any the payload is untyped by design",
+                    "x = f # rubocop:disable Metrics/AbcSize mirrors the upstream algorithm",
+                    "$x = f(); // phpcs:ignore Generic.Files.LineLength the URL cannot be split",
+                    '@Suppress("UNCHECKED_CAST") // the cast is checked above',
+                    "#pragma warning disable CS0168 // the variable is used by reflection",
+                    "#pragma warning restore CS0168", "@SuppressedBy(x)")
+
     def test_a_reason_needs_two_words_of_three_letters(self):
         self.flagged("// @ts-ignore ok", "// @ts-ignore it is", "x = f()  # noqa: E501 a b",
                      "// eslint-disable-next-line no-console -- ok")

@@ -5,8 +5,9 @@ import json
 import subprocess
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
-from factory.config import Label, load
+from factory.config import ConfigError, Label, load
 from factory.labels import main, plan
 
 WANTED = Label("factory:epic", "5319e7", "Run it", "person")
@@ -134,6 +135,12 @@ class MainTest(unittest.TestCase):
                 self.assertTrue(err.startswith("Cannot list labels"))
                 self.assertEqual(len(err.splitlines()), 1)
                 self.assertEqual(len(fake.calls), 1)
+
+    def test_unreadable_configuration_exits_one_with_a_single_line(self):
+        with mock.patch("factory.labels.load", side_effect=ConfigError("schema must be 1")):
+            code, out, err = run_main(FakeGh(), "--apply")
+        self.assertEqual((code, out), (1, ""))
+        self.assertEqual(err, "Cannot load the factory configuration: schema must be 1\n")
 
     def test_apply_exits_non_zero_when_a_call_fails(self):
         code, _, err = run_main(FakeGh(create_code=1), "--apply")

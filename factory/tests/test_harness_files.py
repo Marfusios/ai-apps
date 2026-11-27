@@ -79,6 +79,29 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(hook_files - registered, set())
 
 
+    def test_hooks_are_registered_under_the_expected_event_and_matcher(self) -> None:
+        registered = []
+        for event, entries in load_settings()["hooks"].items():
+            for entry in entries:
+                names = [HOOK_COMMAND.match(hook["command"]).group(1) for hook in entry["hooks"]]
+                registered.append((event, entry.get("matcher"), names))
+        self.assertEqual(registered, [
+            ("PreToolUse", "Bash|PowerShell|Monitor", ["guard_git"]),
+            ("PreToolUse", "Edit|Write|MultiEdit|NotebookEdit", ["guard_paths", "guard_quality"]),
+            ("Stop", None, ["finish_check"]),
+        ])
+
+    def test_permission_rules_do_not_contradict_the_hooks(self) -> None:
+        permissions = load_settings()["permissions"]
+        # the hook allows a commit whose message merely mentions the flag, so only the leading form is a rule
+        self.assertIn("Bash(git commit --no-verify*)", permissions["deny"])
+        self.assertNotIn("Bash(git commit * --no-verify*)", permissions["deny"])
+        # listing and reading secrets and variables is allowed by the hook
+        self.assertEqual([rule for rule in permissions["ask"] if rule.startswith(("Bash(gh secret", "Bash(gh variable"))],
+                         ["Bash(gh secret set *)", "Bash(gh secret delete *)", "Bash(gh variable set *)",
+                          "Bash(gh variable delete *)"])
+
+
 class SkillTests(unittest.TestCase):
     def test_skills_have_valid_frontmatter(self) -> None:
         for path in sorted(CLAUDE.glob("skills/*/SKILL.md")):
@@ -111,8 +134,6 @@ class AgentTests(unittest.TestCase):
 
 class AgentsMdTests(unittest.TestCase):
     def test_agents_md_is_short(self) -> None:
-        if not (ROOT / "docs" / "engineering.md").is_file():
-            self.skipTest("docs/engineering.md does not exist yet")
         text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertLessEqual(len(text.splitlines()), 150)
         self.assertIn("docs/engineering.md", text)

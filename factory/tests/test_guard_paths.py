@@ -79,9 +79,15 @@ class DecideTests(unittest.TestCase):
 
     def test_paths_outside_the_project_are_allowed(self):
         outside = str(self.holder / "sibling.txt")
-        self.check({outside: "allow", str(self.holder / "project-other" / ".git" / "config"): "allow"},
-                   factory_run=False)
+        self.check({outside: "allow"}, factory_run=False)
         self.check({outside: "allow"}, factory_run=True)
+
+    def test_git_internals_are_denied_even_outside_the_project(self):
+        # in a linked worktree the real git directory lies outside the project
+        hook = str(self.holder / "main-checkout" / ".git" / "hooks" / "pre-commit")
+        for factory_run in (False, True):
+            self.check({hook: "deny", str(self.holder / "project-other" / ".git" / "config"): "deny"},
+                       factory_run=factory_run)
 
     def test_sibling_sharing_a_name_prefix_is_outside_the_project(self):
         self.check({str(self.holder / "project2" / "AGENTS.md"): "allow"}, factory_run=True)

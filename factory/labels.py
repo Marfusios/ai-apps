@@ -6,7 +6,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 
-from factory.config import Label, load
+from factory.config import ConfigError, Label, load
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
 
@@ -58,7 +58,12 @@ def main(argv: Sequence[str] | None = None, run: Runner = run_gh) -> int:
     existing = _list_labels(run)
     if existing is None:
         return 1
-    actions = plan(load().labels, existing)
+    try:
+        labels = load().labels
+    except ConfigError as error:
+        print(f"Cannot load the factory configuration: {error}", file=sys.stderr)
+        return 1
+    actions = plan(labels, existing)
     if not actions:
         print("Labels are up to date.")
     status = 0

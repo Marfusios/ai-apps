@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -16,8 +17,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GIT_TIMEOUT = 120
 KILL_GRACE = 5
 DEFAULT_QUICK_TIMEOUT = 600
+MAX_QUICK_TIMEOUT = 600
+# Below the 900 seconds of the Stop hook in settings.json: a hook that times out does not block.
+DEADLINE_SECONDS = 840
 OUTPUT_TAIL_LINES = 40
 NO_COMMIT_STAGES = ("revise", "fix")
+# The stages whose runs install the app's dependencies; the others write documents only.
+QUICK_STAGES = ("step", "fix", "revise", "fix_issue")
 REQUIRED_VARIABLES = ("FACTORY_STAGE", "FACTORY_RESULT_PATH", "FACTORY_BASE_SHA")
 
 Run = Callable[[Sequence[str], Path, int], tuple[int, str]]
@@ -32,7 +38,7 @@ def quick_timeout(env: Mapping[str, str]) -> int:
         seconds = int(float(env.get("FACTORY_QUICK_TIMEOUT", "")))
     except (ValueError, OverflowError):
         return DEFAULT_QUICK_TIMEOUT
-    return seconds if seconds > 0 else DEFAULT_QUICK_TIMEOUT
+    return min(seconds, MAX_QUICK_TIMEOUT) if seconds > 0 else DEFAULT_QUICK_TIMEOUT
 
 
 def touched_apps(changed: Sequence[str]) -> list[str]:
@@ -40,15 +46,34 @@ def touched_apps(changed: Sequence[str]) -> list[str]:
     return sorted({p[1] for p in parts if len(p) >= 3 and p[0] == "apps" and p[1]})
 
 
-def git(run: Run, repo: Path, *args: str) -> tuple[str | None, str]:
-    """Run a git command; return its output, or None and the problem when it fails."""
-    code, output = run(["git", *args], repo, GIT_TIMEOUT)
+class Budget:
+    """Runs commands against one overall deadline and notes the checks it had no time left to start."""
+
+    def __init__(self, run: Run, now: Callable[[], float], seconds: int = DEADLINE_SECONDS):
+        self._run, self._now = run, now
+        self._deadline = now() + seconds
+        self.skipped: list[str] = []
+
+    def __call__(self, label: str, argv: Sequence[str], cwd: Path, timeout: int) -> tuple[int, str] | None:
+        left = self._deadline - self._now()
+        if left <= 0:
+            self.skipped.append(label)
+            return None
+        return self._run(argv, cwd, max(1, int(min(timeout, left))))
+
+
+def git(budget: Budget, repo: Path, label: str, *args: str) -> tuple[str | None, str]:
+    """Run a git command; return its output, or None and the problem when it fails or was not started."""
+    ran = budget(label, ["git", *args], repo, GIT_TIMEOUT)
+    if ran is None:
+        return None, ""
+    code, output = ran
     if code != 0:
         return None, f"`git {' '.join(args)}` failed, so the finish check cannot tell whether your work is ready: {tail(output)}"
     return output, ""
 
 
-def check_app(app: str, repo: Path, env: Mapping[str, str], run: Run, registries: Sequence[str]) -> list[str]:
+def check_app(app: str, repo: Path, env: Mapping[str, str], budget: Budget, registries: Sequence[str]) -> list[str]:
     from factory import app_config
 
     app_dir = repo / "apps" / app
@@ -60,15 +85,18 @@ def check_app(app: str, repo: Path, env: Mapping[str, str], run: Run, registries
         return [f"apps/{app}/factory.toml does not load; fix it: " + "; ".join(error.problems)]
     if not quick:
         return []
-    seconds = quick_timeout(env)
-    code, output = run(["sh", "-c", quick], app_dir, seconds)
+    ran = budget(f"the quick command of apps/{app}", ["sh", "-c", quick], app_dir, quick_timeout(env))
+    if ran is None:
+        return []
+    code, output = ran
     if code == 0:
         return []
     return [f"The quick command of apps/{app} (`{quick}`) failed with exit code {code}; fix what it reports. "
             f"Last lines of its output:\n{tail(output)}"]
 
 
-def evaluate(env: Mapping[str, str], repo: Path, run: Run) -> list[str]:
+def evaluate(env: Mapping[str, str], repo: Path, run: Run, *,
+             now: Callable[[], float] = time.monotonic) -> list[str]:
     """Return what keeps this run from ending; an empty list means it may stop."""
     if not hooklib.is_factory_run(env):
         return []
@@ -81,29 +109,46 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run) -> list[str]:
 
     stage, result_path, base = env["FACTORY_STAGE"], Path(env["FACTORY_RESULT_PATH"]), env["FACTORY_BASE_SHA"]
     try:
+        result_path.open("rb").close()
+    except FileNotFoundError:
+        return ["No result file yet. Write it at the path in FACTORY_RESULT_PATH, in the shape "
+                "factory/AGENT_CONTRACT.md describes."]
+    except OSError as error:
+        return [f"The result file cannot be read ({type(error).__name__})."]
+    try:
         outcome = result.load(result_path, stage)["outcome"]
     except result.ResultError as error:
         return [f"The result file at {result_path} is not valid; write it again: {problem}" for problem in error.problems]
     if outcome != "done":
         return []
 
+    budget = Budget(run, now)
     problems: list[str] = []
-    status, problem = git(run, repo, "status", "--porcelain")
+    status, problem = git(budget, repo, "git status", "status", "--porcelain")
     if status is None:
-        problems.append(problem)
+        if problem:
+            problems.append(problem)
     elif status.strip():
         problems.append("There is uncommitted work; commit it, or remove files that do not belong:\n" + tail(status))
+    ancestry = budget("git merge-base", ["git", "merge-base", "--is-ancestor", base, "HEAD"], repo, GIT_TIMEOUT)
+    if ancestry is not None and ancestry[0] != 0:
+        problems.append("History below the base commit was rewritten: it is no longer an ancestor of HEAD. "
+                        "Restore the base commit and put your work back on top of it.")
     if stage not in NO_COMMIT_STAGES:
-        count, problem = git(run, repo, "rev-list", "--count", f"{base}..HEAD")
+        count, problem = git(budget, repo, "git rev-list", "rev-list", "--count", f"{base}..HEAD")
         if count is None:
-            problems.append(problem)
+            if problem:
+                problems.append(problem)
         elif not count.strip().isdigit() or int(count) < 1:
             problems.append("There are no commits on top of the base; commit your work.")
-    # core.quotePath=false keeps non-ASCII names readable instead of octal-escaped and quoted
-    diff, problem = git(run, repo, "-c", "core.quotePath=false", "diff", "--name-only", f"{base}...HEAD")
+    # core.quotePath=false keeps non-ASCII names readable instead of octal-escaped and quoted; --no-renames
+    # lists the old path of a move too, so a protected file cannot be moved out of its place unseen
+    diff, problem = git(budget, repo, "git diff, with the path and touched-app checks that depend on it",
+                        "-c", "core.quotePath=false", "diff", "--no-renames", "--name-only", f"{base}...HEAD")
     changed: list[str] = []
     if diff is None:
-        problems.append(problem)
+        if problem:
+            problems.append(problem)
     else:
         changed = [line.strip() for line in diff.splitlines() if line.strip()]
     try:
@@ -116,11 +161,16 @@ def evaluate(env: Mapping[str, str], repo: Path, run: Run) -> list[str]:
         for path in changed:
             if not factory_config.is_writable(path, settings):
                 problems.append(f"{path} is in a path that factory runs may not write; move the change out of it.")
-    code, output = run([sys.executable, "scripts/check_repo.py"], repo, GIT_TIMEOUT)
-    if code != 0:
-        problems.append("The repository checks (scripts/check_repo.py) fail; fix what they report:\n" + tail(output))
-    for app in touched_apps(changed) if settings else []:
-        problems.extend(check_app(app, repo, env, run, settings.image_registries))
+    checked = budget("scripts/check_repo.py", [sys.executable, "scripts/check_repo.py"], repo, GIT_TIMEOUT)
+    if checked is not None and checked[0] != 0:
+        problems.append("The repository checks (scripts/check_repo.py) fail; fix what they report:\n"
+                        + tail(checked[1]))
+    if stage in QUICK_STAGES:
+        for app in touched_apps(changed) if settings else []:
+            problems.extend(check_app(app, repo, env, budget, settings.image_registries))
+    if budget.skipped:
+        problems.append(f"The finish check ran out of time (it has {DEADLINE_SECONDS} seconds in total), so these "
+                        f"checks did not run: {'; '.join(budget.skipped)}. Touch fewer apps in one run, then stop again.")
     return problems
 
 

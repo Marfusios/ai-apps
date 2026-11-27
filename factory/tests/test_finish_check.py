@@ -31,17 +31,30 @@ types = "mypy"
 tests = "pytest"
 """
 QUICK_LINE = 'quick = "make quick"'
+DIFF_ARGV = ("git", "-c", "core.quotePath=false", "diff", "--no-renames", "--name-only", f"{BASE}...HEAD")
+
+
+class Clock:
+    """A clock the tests move by hand."""
+
+    def __init__(self) -> None:
+        self.seconds = 0.0
+
+    def __call__(self) -> float:
+        return self.seconds
 
 
 class FakeRun:
     """Stands in for the subprocess runner: answers each command from a table and records the calls."""
 
     def __init__(self, status: str = "", count: str = "1", diff: str = "apps/x/a.ts\n",
-                 checker: tuple[int, str] = (0, ""), quick: tuple[int, str] = (0, "")):
+                 checker: tuple[int, str] = (0, ""), quick: tuple[int, str] = (0, ""),
+                 ancestor: tuple[int, str] = (0, "")):
         self.answers = {
             ("git", "status", "--porcelain"): (0, status),
+            ("git", "merge-base", "--is-ancestor", BASE, "HEAD"): ancestor,
             ("git", "rev-list", "--count", f"{BASE}..HEAD"): (0, count),
-            ("git", "-c", "core.quotePath=false", "diff", "--name-only", f"{BASE}...HEAD"): (0, diff),
+            DIFF_ARGV: (0, diff),
             ("checker",): checker,
             ("sh", "-c", "make quick"): quick,
         }
@@ -54,6 +67,19 @@ class FakeRun:
 
     def commands(self) -> list[tuple[str, ...]]:
         return [call[0] for call in self.calls]
+
+
+class SlowRun(FakeRun):
+    """A FakeRun whose commands advance a Clock by a fixed number of seconds each."""
+
+    def __init__(self, clock: Clock, step: float, **kwargs):
+        super().__init__(**kwargs)
+        self.clock, self.step = clock, step
+
+    def __call__(self, argv: Sequence[str], cwd: Path, timeout: int) -> tuple[int, str]:
+        result = super().__call__(argv, cwd, timeout)
+        self.clock.seconds += self.step
+        return result
 
 
 class EvaluateTests(unittest.TestCase):
@@ -108,9 +134,17 @@ class EvaluateTests(unittest.TestCase):
     def test_missing_result_file_blocks(self) -> None:
         run = FakeRun()
         problems = self.evaluate(run)
+        self.assertEqual(problems, ["No result file yet. Write it at the path in FACTORY_RESULT_PATH, "
+                                    "in the shape factory/AGENT_CONTRACT.md describes."])
+        self.assertEqual(run.calls, [])
+
+    def test_unreadable_result_file_is_named_by_error_type_without_the_path(self) -> None:
+        self.result_path.mkdir()  # a directory cannot be read as a file, whatever the platform says about it
+        run = FakeRun()
+        problems = self.evaluate(run)
         self.assertEqual(len(problems), 1)
-        self.assertIn(str(self.result_path), problems[0])
-        self.assertIn("cannot read", problems[0])
+        self.assertRegex(problems[0], r"^The result file cannot be read \(\w+\)\.$")
+        self.assertNotIn(str(self.result_path), problems[0])
         self.assertEqual(run.calls, [])
 
     def test_invalid_result_blocks_with_its_problems_only(self) -> None:
@@ -165,6 +199,17 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("AGENTS.md", problems[0])
         self.assertIn("may not write", problems[0])
+
+    def test_a_protected_file_moved_into_an_app_is_still_refused(self) -> None:
+        # with renames detected git would list only the new name; the command asks for both
+        self.write_result()
+        self.write_app()
+        run = FakeRun(diff="AGENTS.md\napps/x/notes.md\n")
+        problems = self.evaluate(run)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("AGENTS.md", problems[0])
+        self.assertIn("may not write", problems[0])
+        self.assertIn(DIFF_ARGV, run.commands())
 
     def test_failing_repository_checker_blocks(self) -> None:
         self.write_result()
@@ -249,7 +294,7 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("apps/x", problems[0])
         diff_calls = [argv for argv in run.commands() if "diff" in argv]
-        self.assertEqual(diff_calls, [("git", "-c", "core.quotePath=false", "diff", "--name-only", f"{BASE}...HEAD")])
+        self.assertEqual(diff_calls, [DIFF_ARGV])
 
     def test_unreadable_factory_config_keeps_the_problems_already_found(self) -> None:
         from factory import config as factory_config
@@ -267,6 +312,91 @@ class EvaluateTests(unittest.TestCase):
         self.assertIn(broken.name, problems[1])
         self.assertIn("scripts/check_repo.py", problems[2])
         self.assertNotIn(("sh", "-c", "make quick"), run.commands())
+
+    def test_quick_command_runs_only_for_stages_that_install_dependencies(self) -> None:
+        for stage, runs in (("design", False), ("plan", False), ("step", True), ("fix", True), ("revise", True),
+                            ("fix_issue", True)):
+            with self.subTest(stage=stage):
+                self.write_result(stage=stage)
+                self.write_app()
+                run = FakeRun(quick=(1, "boom"))
+                problems = self.evaluate(run, stage=stage)
+                self.assertEqual(("sh", "-c", "make quick") in run.commands(), runs)
+                self.assertEqual(len(problems), 1 if runs else 0, problems)
+
+    def test_history_rewritten_below_the_base_blocks(self) -> None:
+        self.write_result()
+        self.write_app()
+        run = FakeRun(ancestor=(1, ""))
+        problems = self.evaluate(run)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("rewritten", problems[0])
+        self.assertIn("Restore the base commit", problems[0])
+        commands = run.commands()
+        self.assertLess(commands.index(("git", "status", "--porcelain")),
+                        commands.index(("git", "merge-base", "--is-ancestor", BASE, "HEAD")))
+
+    def test_base_that_is_an_ancestor_adds_no_problem(self) -> None:
+        self.write_result()
+        self.write_app()
+        run = FakeRun(ancestor=(0, ""))
+        self.assertEqual(self.evaluate(run), [])
+        self.assertIn(("git", "merge-base", "--is-ancestor", BASE, "HEAD"), run.commands())
+
+    def test_quick_timeout_above_the_ceiling_is_clamped(self) -> None:
+        self.write_result()
+        self.write_app()
+        run = FakeRun()
+        self.evaluate(run, FACTORY_QUICK_TIMEOUT="5000")
+        self.assertEqual([call[2] for call in run.calls if call[0][0] == "sh"], [600])
+
+    def test_deadline_reached_before_the_quick_command_skips_it_and_says_so(self) -> None:
+        self.write_result()
+        self.write_app()
+        clock = Clock()
+        run = SlowRun(clock, 300)  # the deadline passes while the git calls run, before the checker and the quick command
+        problems = finish_check.evaluate(self.env(), self.repo, run, now=clock)
+        self.assertNotIn(("sh", "-c", "make quick"), run.commands())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ran out of time", problems[0])
+        self.assertIn("840", problems[0])
+        self.assertIn("did not run", problems[0])
+
+    def test_deadline_names_the_quick_command_that_did_not_run(self) -> None:
+        self.write_result()
+        self.write_app()
+        clock = Clock()
+
+        class Late(FakeRun):
+            def __call__(self, argv, cwd, timeout):
+                result = super().__call__(argv, cwd, timeout)
+                if argv[-1].endswith("check_repo.py"):
+                    clock.seconds = 840
+                return result
+
+        run = Late()
+        problems = finish_check.evaluate(self.env(), self.repo, run, now=clock)
+        self.assertNotIn(("sh", "-c", "make quick"), run.commands())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("apps/x", problems[0])
+        self.assertIn("ran out of time", problems[0])
+
+    def test_every_call_gets_the_smaller_of_its_timeout_and_the_time_left(self) -> None:
+        self.write_result()
+        self.write_app()
+        clock = Clock()
+
+        class AfterStatus(FakeRun):
+            def __call__(self, argv, cwd, timeout):
+                result = super().__call__(argv, cwd, timeout)
+                if tuple(argv) == ("git", "status", "--porcelain"):
+                    clock.seconds = 740  # leaves 100 seconds
+                return result
+
+        run = AfterStatus()
+        self.assertEqual(finish_check.evaluate(self.env(), self.repo, run, now=clock), [])
+        self.assertEqual(run.calls[0][2], 120)  # the first call still had the whole budget
+        self.assertEqual([call[2] for call in run.calls[1:]], [100, 100, 100, 100, 100])
 
     def test_touched_apps_ignores_files_outside_an_app(self) -> None:
         paths = ["apps/README.md", "apps/x/a", "apps/x/b/c", "docs/apps/y/z", "apps/w/q"]

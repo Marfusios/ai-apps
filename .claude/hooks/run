@@ -16,6 +16,11 @@ if [ ! -f "$dir/$hook.py" ]; then
     exit 2
 fi
 shift
+# The Stop hook treats exit 2 as "keep going", so an interactive session without a suitable Python would never
+# be able to end. Outside a factory run that hook has nothing to do anyway.
+if [ "$hook" = finish_check ] && [ "${FACTORY_RUN-}" != 1 ]; then
+    exit 0
+fi
 check='import sys; sys.exit(sys.version_info < (3, 11))'
 python=
 for candidate in python3 python; do
