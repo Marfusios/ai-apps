@@ -1,0 +1,92 @@
+name: App checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-checks-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: List the apps this change touches
+        id: matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            matrix=$(python scripts/ci_apps.py matrix --base "$BASE_SHA" --head "$HEAD_SHA")
+          else
+            matrix=$(python scripts/ci_apps.py matrix --all)
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  app:
+    needs: plan
+    if: needs.plan.outputs.matrix != '[]'
+    name: app (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.node != ''
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Set up the app's Python
+        if: matrix.python != ''
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Set up the app
+        env:
+          APP: ${{ matrix.app }}
+        run: python scripts/ci_apps.py run "$APP" setup
+      - name: Check the app
+        env:
+          APP: ${{ matrix.app }}
+        run: python scripts/ci_apps.py run "$APP" check
+
+  apps:
+    needs: [plan, app]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every app check to have passed or been skipped
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          APP_RESULT: ${{ needs.app.result }}
+        run: |
+          [ "$PLAN_RESULT" = "success" ] || { echo "plan: $PLAN_RESULT"; exit 1; }
+          case "$APP_RESULT" in
+            success | skipped) ;;
+            *) echo "app: $APP_RESULT"; exit 1 ;;
+          esac
