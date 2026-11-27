@@ -119,7 +119,6 @@ import {
   tierOf,
   verifyPoolFile,
   withFingerprints,
-  type FamilyPool,
   type PoolFile,
   type Stage,
 } from './pool.js';
@@ -1525,7 +1524,7 @@ export async function reportCommand(opts: { outDir: string; pools?: string; judg
     const comparisons: Record<string, Record<string, unknown>> = {};
     for (const [key, list] of diffs) {
       const [pair, metric] = key.split('|') as [string, string];
-      comparisons[pair] = { ...(comparisons[pair] ?? {}), [metric]: { ...compareMethods(list, (member) => groups.get(member) ?? member, boot), perQuestion: list } };
+      comparisons[pair] = { ...comparisons[pair], [metric]: { ...compareMethods(list, (member) => groups.get(member) ?? member, boot), perQuestion: list } };
     }
     const flagged = (k: 'noPositivePossible' | 'abstention') => values.filter((v) => v[k]).map((v) => ({ member: v.member, method: v.method }));
     const units = {

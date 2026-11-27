@@ -125,7 +125,7 @@ describe('complete case evidence', () => {
       expect(e.sections.length).toBeGreaterThan(0);
       expect(e.sections.map((s) => s.alias)).toEqual(e.sections.map((_, i) => `S${i + 1}`));
       const order = { factual: 0, analysis: 1, probable_cause: 2 };
-      expect(e.sections.map((s) => order[s.kind])).toEqual([...e.sections.map((s) => order[s.kind])].sort());
+      expect(e.sections.map((s) => order[s.kind])).toEqual(e.sections.map((s) => order[s.kind]).sort());
       for (const s of e.sections) expect(sha256(s.text)).toBe(s.sha256);
       for (const f of e.findings) expect(f.description ?? '').not.toMatch(/\s-\s[CF]\s*$/);
       if (e.aircraft.length > 1) expect(e.sections.every((s) => s.scope === 'event')).toBe(true);

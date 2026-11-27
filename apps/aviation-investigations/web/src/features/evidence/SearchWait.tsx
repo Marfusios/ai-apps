@@ -16,6 +16,7 @@ const load = () =>
   import('./SearchChecklist').then((module) => {
     if (!ready) {
       ready = true;
+      // oxlint-disable-next-line unicorn/no-useless-spread -- the copy keeps a listener that unsubscribes or subscribes while it runs out of this loop
       for (const listener of [...readyListeners]) listener();
     }
     return module;

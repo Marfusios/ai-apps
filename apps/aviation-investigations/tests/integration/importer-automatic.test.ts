@@ -30,8 +30,6 @@ it('automatically imports a verified candidate and records changes and success w
     });
   }));
 
-import { writeFile, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
   type ImportFixture,
   OLD_OBSERVATION,
@@ -44,11 +42,8 @@ import {
   startAttempt,
   latestCanary,
 } from '../../worker/importer/store.js';
-import { classify } from '../../worker/importer/failure.js';
 import { digest } from '../../worker/importer/provenance.js';
 import { editTable } from '../support/extract-dir.js';
-import { retainDatabase } from '../../worker/importer/retention.js';
-import { deleteUnusedIndices } from '../../worker/index/publications.js';
 import type { FaultPoint } from '../../worker/importer/runtime.js';
 const fail =
   (

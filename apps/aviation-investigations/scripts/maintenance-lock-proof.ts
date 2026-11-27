@@ -47,7 +47,7 @@ export async function proveMaintenanceLock(): Promise<void> {
     try {
       await new Promise<void>((done, reject) => {
         const timer = setTimeout(() => reject(new ProofFailure('scratch backup did not acquire the lock')), 5000);
-        const finish = (error?: Error) => { clearTimeout(timer); error ? reject(error) : done(); };
+        const finish = (error?: Error) => { clearTimeout(timer); if (error) reject(error); else done(); };
         child.once('error', () => finish(new ProofFailure('scratch backup could not start')));
         child.once('close', () => finish(new ProofFailure('scratch backup exited before the probe')));
         child.stdout.once('data', (b: Buffer) => finish(b.toString() === 'LOCK_HELD\n' ? undefined : new ProofFailure('unexpected scratch output')));

@@ -72,7 +72,7 @@ export function productionPort(settings: EvaluationSettings, db: Db, es: Client,
       // and for a Task 30 question search the automatic filters its policy applied.
       const automatic = execution?.automaticFilters ?? null;
       if (automatic && (request.edited || policy.version === 'none')) throw new EvaluationError('Unexpected automatic filters');
-      if (filterIdentity(args[1].filters) !== filterIdentity({ ...request.filters, ...(automatic ?? {}) })) throw new EvaluationError('Unexpected filters reached execution');
+      if (filterIdentity(args[1].filters) !== filterIdentity({ ...request.filters, ...automatic })) throw new EvaluationError('Unexpected filters reached execution');
       const report = args[3];
       const found = await baseRetriever.search(args[0], args[1], args[2], u => { embedReported = true; report(u); }, args[4]);
       fused = found.ranking.map(r => r.ntsbNo);

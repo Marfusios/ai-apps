@@ -208,7 +208,7 @@ export function decodeEmbeddingResponse(body: unknown, count: number, dims: numb
   const items = (body as { data?: unknown } | null)?.data;
   if (typeof body !== 'object' || body === null || !Array.isArray(items)) throw new ResponseShapeError('invalid_response_shape');
   if (items.length !== count) throw new ResponseShapeError('count_mismatch');
-  const vectors = new Array<Float32Array>(count);
+  const vectors = Array.from<Float32Array>({ length: count });
   for (const item of items as unknown[]) {
     if (typeof item !== 'object' || item === null) throw new ResponseShapeError('invalid_response_shape');
     const index = (item as { index?: unknown }).index;

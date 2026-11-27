@@ -633,7 +633,7 @@ describe('Search again is free only for the one undo of what AirCase added (serv
     // Never "free" beside the notice, not even for a moment.
     const shown = labels.stop();
     expect(shown.length).toBeGreaterThan(0);
-    expect(shown.filter((label) => /free$/.test(label))).toEqual([]);
+    expect(shown.filter((label) => label.endsWith('free'))).toEqual([]);
   });
 
   it('the server’s word stands: an undo it counted, though read as free right before sending, says it used one, on the search it made and aloud', async () => {
@@ -732,7 +732,7 @@ describe('Search again is free only for the one undo of what AirCase added (serv
     // Not even for a moment.
     const shown = labels.stop();
     expect(shown.length).toBeGreaterThan(0);
-    expect(shown.filter((label) => /free$/.test(label))).toEqual([]);
+    expect(shown.filter((label) => label.endsWith('free'))).toEqual([]);
   });
 
   it('a failed free undo is shown as using one until the search is read again, and free again when the read says so', async () => {

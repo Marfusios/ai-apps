@@ -205,7 +205,7 @@ function reference(f: RetrievalFilters, qualification: boolean): string[] {
 
 async function caseSet(index: string, filter: Query[]): Promise<string[]> {
   const res = await es.search({ index, size: 0, query: { bool: { filter } }, aggs: { n: { terms: { field: 'ntsb_no', size: 1_000 } } } });
-  const buckets = (res.aggregations?.n as estypes.AggregationsStringTermsAggregate).buckets as estypes.AggregationsStringTermsBucket[];
+  const buckets = (res.aggregations!.n as estypes.AggregationsStringTermsAggregate).buckets as estypes.AggregationsStringTermsBucket[];
   return buckets.map((b) => String(b.key)).sort();
 }
 

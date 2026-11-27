@@ -158,7 +158,7 @@ const meanBounds = (bs: readonly Bounds[]): Bounds => ({ lower: meanOf(bs.map((b
 export function questionValues(pool: FamilyPool, runs: readonly RunScore[]): QuestionValue[] {
   const out: QuestionValue[] = [];
   for (const member of pool.members) {
-    for (const method of [...new Set(runs.map((r) => r.method))]) {
+    for (const method of new Set(runs.map((r) => r.method))) {
       const mine = runs.filter((r) => r.member === member && r.method === method);
       if (mine.length === 0) continue;
       const recalls = mine.map((r) => r.protocol.recall);
@@ -864,8 +864,6 @@ export interface RegressionDiagnosticReport {
     admitted: Record<string, RegressionBundleCase[]>;
   }[];
 }
-
-const metricOf = (v: QuestionValue, m: string): Bounds | null => (m === 'ndcg6' ? v.ndcg6 : m === 'p6' ? v.p6 : m === 'supported' ? v.supported : null);
 
 /** One regression diagnostic under its frozen comparison rules (module section comment; `NarrativeDiagnosticSchema`). */
 export function regressionDiagnostic(pool: FamilyPool, family: NarrativeItem, labels: ReadonlyMap<string, Label>, answerability: ReadonlyMap<string, Label>): RegressionDiagnosticReport {

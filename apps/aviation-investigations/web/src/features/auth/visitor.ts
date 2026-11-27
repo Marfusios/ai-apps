@@ -207,6 +207,7 @@ function forgetHere(): void {
   forgetAllUnsettled();
   forgetUndos();
   forgetRatings();
+  // oxlint-disable-next-line unicorn/no-useless-spread -- the copy keeps a listener that unsubscribes or subscribes while it runs out of this loop
   for (const listener of [...listeners]) {
     try {
       listener();

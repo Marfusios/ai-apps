@@ -222,7 +222,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
           stopped = error instanceof RankingStopped;
           const outcome = rankingFailureOutcome(error, input.signal);
           const line = usage.findLast(l => l.stage === 'attribution');
-          span.setAttrs({ ...(line?.tokens ?? {}), usd: line?.usd ?? 0, outcome });
+          span.setAttrs({ ...line?.tokens, usd: line?.usd ?? 0, outcome });
           if (stopped) span.markStopped();
           return outcome;
         }
@@ -313,7 +313,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
               rerankOutcome = rankingFailureOutcome(error, input.signal);
               fallback('rerank', rerankOutcome);
               const line = usage.findLast(l => l.stage === 'rerank');
-              span.setAttrs({ ...(line?.tokens ?? {}), usd: line?.usd ?? 0, outcome: rerankOutcome }); return result!;
+              span.setAttrs({ ...line?.tokens, usd: line?.usd ?? 0, outcome: rerankOutcome }); return result!;
             }
           });
         } catch (error) { if (error instanceof RankingFailure) throw error; throw new RankingFailure('rerank', [...usage]); }

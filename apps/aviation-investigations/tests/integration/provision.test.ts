@@ -183,7 +183,7 @@ describe('provision-shared on the local services', () => {
       }
       const migratorDbPrivileges = await a.query(
         `SELECT count(*)::int AS n FROM pg_database d, aclexplode(d.datacl) x
-         WHERE d.datname LIKE 'aviation\_%' AND x.grantee IN ('aviation_migrator'::regrole, 'aviation_ingest'::regrole, 'aviation_app'::regrole)`,
+         WHERE d.datname LIKE 'aviation_%' AND x.grantee IN ('aviation_migrator'::regrole, 'aviation_ingest'::regrole, 'aviation_app'::regrole)`,
       );
       expect(migratorDbPrivileges.rows[0].n).toBe(0);
     } finally {
@@ -291,7 +291,7 @@ describe('provision-shared on the local services', () => {
       await expect(provisionPostgres({ env: 'ci9', adminUrl: url, log: () => undefined })).rejects.toThrow(
         /must connect as a superuser/,
       );
-      const created = await c.query(`SELECT count(*)::int AS n FROM pg_roles WHERE rolname LIKE 'aviation\_ci9\_%'`);
+      const created = await c.query(`SELECT count(*)::int AS n FROM pg_roles WHERE rolname LIKE 'aviation_ci9_%'`);
       expect(created.rows[0].n).toBe(0);
     } finally {
       await c.query(`DROP ROLE IF EXISTS aviation_ci_notsuper`);

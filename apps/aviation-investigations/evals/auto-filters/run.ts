@@ -28,7 +28,7 @@ import { appendDurable, EvaluationError } from '../search-quality/money.js';
 import { ARM_IDS, type Arm, type ArmIdentity, type RankingQuestion, type SearchObservation, type SearchRequest } from '../search-quality/ab-types.js';
 import { CappedAllocation, prefixTotals, taskTotals } from '../langfuse/money.js';
 import { sha256, stable } from '../langfuse/data.js';
-import { assertTarget, codeIdentity, freezeFile, readJournal, verifyTarget, type QuestionSet } from '../applied-filters/run.js';
+import { assertTarget, codeIdentity, readJournal, verifyTarget, type QuestionSet } from '../applied-filters/run.js';
 import { compareNarrowR20, fallbackRates, filterMatch, rowScores, type RowRanking } from '../applied-filters/plan.js';
 import { probeWarnings, type LoadedProbes } from './probes.js';
 import { attemptKey, partData, seededOrder, type PartData, type PartItem } from './inputs.js';
@@ -320,7 +320,7 @@ export function partEvidence(dir: string, part: AttributionPart, label: string):
     return { part, label, status: 'valid', manifestSha256: r.hash, policy: autoFilterIdentity(r.policy), fields: [...automaticFieldsOf(r.policy)], summary: r.summary };
   } catch (e) {
     if (!(e instanceof EvaluationError)) throw e;
-    return { part, label, status: /^Incomplete schedule/.test(e.message) ? 'incomplete' : 'invalid', reason: e.message };
+    return { part, label, status: e.message.startsWith('Incomplete schedule') ? 'incomplete' : 'invalid', reason: e.message };
   }
 }
 /**
@@ -719,7 +719,7 @@ export function summarizePart(dir: string, part: PartName, label: string, devDir
         const done: RetrievalSetSummary[] = [];
         for (const set of sets) {
           try { done.push(summarizeRetrievalSet(set, journal, label, policy)); }
-          catch (e) { if (!(e instanceof EvaluationError && /^Incomplete schedule/.test(e.message))) throw e; console.log(JSON.stringify({ event: 'incomplete', part, set: set.name })); }
+          catch (e) { if (!(e instanceof EvaluationError && e.message.startsWith('Incomplete schedule'))) throw e; console.log(JSON.stringify({ event: 'incomplete', part, set: set.name })); }
         }
         if (done.length) writeSummary(dir, part, manifest, hash, { sets: done });
       } else {
@@ -728,7 +728,7 @@ export function summarizePart(dir: string, part: PartName, label: string, devDir
     } catch (e) {
       // An incomplete or failed part is reported, never scored.
       if (!(e instanceof EvaluationError)) throw e;
-      const unfinished = /^Incomplete schedule/.test(e.message);
+      const unfinished = e.message.startsWith('Incomplete schedule');
       if (!unfinished) rmSync(join(dir, `summary-${part}.json`), { force: true });
       console.log(JSON.stringify({ event: 'not_scored', part, reason: e.message, ...(unfinished ? {} : { summaryRemoved: true }) }));
       return false;

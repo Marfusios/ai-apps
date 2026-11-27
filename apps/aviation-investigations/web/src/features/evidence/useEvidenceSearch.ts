@@ -201,7 +201,7 @@ export function useEvidenceSearch() {
         for (const one of shown) hide(one);
       }
     },
-    [cases, navigate, queryClient, run],
+    [cases, navigate, queryClient, run, setNotice],
   );
 
   const ask = useCallback(

@@ -217,8 +217,8 @@ describe('the baseline is production, byte for byte', () => {
     // And the production body shapes: 50 passages per channel, num_candidates 200, the passages-v2 filter.
     const [kw, vec] = exp.calls;
     expect(kw?.size).toBe(50);
-    expect((vec?.knn as estypes.KnnSearch).num_candidates).toBe(200);
-    expect((kw?.query as { bool: { filter: Query[] } }).bool.filter).toEqual(compileFilters(FILTERS, { eventAircraftQualification: true }).bool.filter);
+    expect((vec!.knn as estypes.KnnSearch).num_candidates).toBe(200);
+    expect((kw!.query as { bool: { filter: Query[] } }).bool.filter).toEqual(compileFilters(FILTERS, { eventAircraftQualification: true }).bool.filter);
   });
 
   it('depth, num_candidates and the RRF constant are the production parameters', async () => {
@@ -230,7 +230,7 @@ describe('the baseline is production, byte for byte', () => {
     const run = await runVariant(exp.es, embedder, { dataset: DATASET, casesIndex: CASES_INDEX, question: 'carburetor ice', filters: { state: ['MI'] } }, experimentConfig(over));
     expect(exp.calls).toEqual(prod.calls);
     expect(run.packed.cases).toEqual(reference.cases);
-    expect((exp.calls[1]?.knn as estypes.KnnSearch).num_candidates).toBe(1_000);
+    expect((exp.calls[1]!.knn as estypes.KnnSearch).num_candidates).toBe(1_000);
   });
 
   it('the scope keyword text replaces the question in BM25 only; the vector channel embeds the question', async () => {
@@ -745,7 +745,7 @@ describe('miss classification', () => {
       ['OUT', { bm25: 50, cosine: 0.1, findings: 0 }],
       ['FIN', { bm25: 0, cosine: 0.1, findings: 9 }],
     ]);
-    const ranking = [...Array.from({ length: 22 }, (_, i) => (i === 1 ? 'DEL' : i === 2 ? 'LOST' : i === 9 ? 'BEY' : i === 21 ? 'LOW' : `X${i}`))];
+    const ranking = Array.from({ length: 22 }, (_, i) => (i === 1 ? 'DEL' : i === 2 ? 'LOST' : i === 9 ? 'BEY' : i === 21 ? 'LOW' : `X${i}`));
     const out = classify(
       ['GONE', 'ABS', 'OUT', 'FIN', 'LOW', 'DEL', 'LOST', 'BEY'],
       { ranking, channels: { keyword: ['DEL', 'LOW'], vector: ['LOST', 'BEY'] }, bundle: ['X0', 'DEL'], skipped: [{ ntsbNo: 'LOST', reason: 'over_budget' }] },

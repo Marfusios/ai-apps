@@ -51,7 +51,7 @@ function ipv6Groups(address: string): number[] | null {
     const rest = parse(text.slice(double + 2));
     const fill = 8 - head.length - rest.length;
     if (fill < 1) return null;
-    groups = [...head, ...new Array<number>(fill).fill(0), ...rest];
+    groups = [...head, ...Array.from({ length: fill }, () => 0), ...rest];
   } else {
     groups = parse(text);
   }

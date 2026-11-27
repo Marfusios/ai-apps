@@ -433,7 +433,7 @@ test('the anonymous daily limit: the tenth search is the last of the day, the bo
   }, DUMMY_TOKEN);
   expect(eleventh).toMatchObject({ status: 429, body: { error: 'trial_used' } });
   // Only that refusal is logged by the browser.
-  expect(problems.filter((p) => !/status of 429 \(Too Many Requests\): \/api\/evidence$/.test(p))).toEqual([]);
+  expect(problems.filter((p) => !p.endsWith('status of 429 (Too Many Requests): /api/evidence'))).toEqual([]);
 });
 
 test('the known context-loss examples: the initial card, drawer, Compare and print show the whole paragraph with its antecedent', async ({ page }) => {

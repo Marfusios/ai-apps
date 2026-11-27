@@ -11,6 +11,7 @@ const ratings = new Map<string, EvidenceFeedbackRating>();
 const listeners = new Set<() => void>();
 
 function changed(): void {
+  // oxlint-disable-next-line unicorn/no-useless-spread -- the copy keeps a listener that unsubscribes or subscribes while it runs out of this loop
   for (const listener of [...listeners]) listener();
 }
 

@@ -13,7 +13,6 @@ import { ImportFailure } from '../../worker/importer/contracts.js';
 import {
   artifact,
   control,
-  fenced,
   latestCanary,
   manifest,
   withImportSession,

@@ -84,6 +84,7 @@ export function UsageChart({ days }: { days: readonly AdminUsageDay[] }) {
   let top = 0;
   const rows = USAGE_ROWS.map((row) => {
     const y = top + LABEL_H;
+    // oxlint-disable-next-line react/immutability -- map runs during this render, and top is this render's own running offset
     top = y + row.height + ROW_GAP;
     return { ...row, y, scale: scaleOf(row.shared, row.key), total: days.reduce((sum, d) => sum + d[row.key], 0) };
   });

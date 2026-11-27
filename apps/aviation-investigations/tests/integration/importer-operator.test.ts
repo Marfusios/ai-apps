@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect, it } from 'vitest';
@@ -8,15 +7,10 @@ import { withScratchEnvironment, localAdminUrl } from '../../scripts/scratch-env
 import { createDb, closeDb, type Db } from '../../server/db/client.js';
 import {
   withImportSession,
-  beginRun,
-  updateRun,
-  fenced,
   registerArtifact,
-  type ImportSession,
 } from '../../worker/importer/store.js';
 import { ManagedSpace, FILE_LIMITS } from '../../worker/importer/files.js';
 import { readImportStatus } from '../../server/db/import-status.js';
-import { holdPaidOperations } from '../../server/quota/hold.js';
 import { reserveSpend, settleSpend } from '../../server/quota/spend.js';
 import { budgetRemaining } from '../../worker/importer/store.js';
 

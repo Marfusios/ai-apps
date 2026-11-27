@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { open, readdir, readFile, rename, lstat } from 'node:fs/promises';
+import { open, readdir, rename, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import {

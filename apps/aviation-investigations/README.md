@@ -70,6 +70,7 @@ corepack enable
 pnpm install
 pnpm test            # offline unit and web component tests
 pnpm typecheck       # server/worker and web projects
+pnpm lint            # oxlint, configured in .oxlintrc.json
 ```
 
 `pnpm test:integration` runs the integration project and needs the local

@@ -14,7 +14,6 @@ import { readImportStatus } from '../../server/db/import-status.js';
 import { ImportFailure } from '../../worker/importer/contracts.js';
 import { recordHostCleanup } from '../../worker/importer/host-status.js';
 import { waitingWords } from '../../web/src/features/admin/imports.js';
-import { digest } from '../../worker/importer/provenance.js';
 import { readFile } from 'node:fs/promises';
 import { reserveSpend, settleSpend } from '../../server/quota/index.js';
 import { editTable } from '../support/extract-dir.js';

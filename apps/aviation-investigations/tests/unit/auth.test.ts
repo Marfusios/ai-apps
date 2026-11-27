@@ -103,7 +103,7 @@ describe('the Google ID token', () => {
     ['expired', { exp: NOW / 1000 - 61 }],
     ['expired', { exp: undefined }],
     ['expired', { exp: String(NOW / 1000 + 3600) }],
-    ['expired', { exp: 1e400 }],
+    ['expired', { exp: Infinity }],
     ['issued_at', { iat: undefined }],
     ['issued_at', { iat: String(NOW / 1000) }],
     ['issued_at', { iat: NOW / 1000 + 120 }],

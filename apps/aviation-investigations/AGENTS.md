@@ -55,12 +55,21 @@ Not a clean layering, so do not add to it:
 
 Run from `apps/aviation-investigations` (setup: `corepack enable && pnpm install --frozen-lockfile`).
 
-- `pnpm typecheck`: `tsc` on the server and web projects (the fast check).
+- `pnpm typecheck`: `tsc` on the server and web projects.
+- `pnpm lint`: oxlint over the whole app, with `.oxlintrc.json`: the tool's correctness rules for
+  TypeScript, React and React hooks, and `rules-of-hooks` under `web/` and `tests/web/`. It fails
+  on a warning and on a disable comment that silences nothing. The config says why each switched
+  off rule and each excluded path is left out. A disable comment names the rule and gives its
+  reason after ` -- `, as in `// oxlint-disable-next-line react-hooks/exhaustive-deps -- …`,
+  on the line before the one the diagnostic points at (for hook dependencies, the dependency array).
+  ESLint with typescript-eslint was tried first and set aside: typescript-eslint parses with the
+  compiler's JavaScript API, which TypeScript 7 does not have.
 - `pnpm test`: offline `unit` and `web` Vitest projects.
+- `check` in `factory.toml` runs `typecheck`, `lint`, then `test`; `quick` runs `typecheck` and `lint`.
 - `pnpm test:integration`: the `integration` project. Needs the local services from
   `compose.local-services.yaml`: `pnpm services:up`, `pnpm services:setup`, then `pnpm db:migrate`, which is for these local services only and takes the
   connection variables from the local setup; `pnpm services:down` stops them.
-- There is no linter and no formatter yet.
+- There is no formatter yet.
 
 ## Pitfalls
 

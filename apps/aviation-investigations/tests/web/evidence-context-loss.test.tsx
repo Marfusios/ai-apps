@@ -82,7 +82,7 @@ describe('context-loss counterexamples on the initial surfaces (whole paragraphs
       const excerpt = item?.excerpts[0];
       expect(item?.excerpts).toHaveLength(1);
       // The seed was only the quotation; the excerpt is the paragraph that holds it.
-      expect(excerpt?.seed.end! - excerpt?.seed.start!).toBe(example.quote.length);
+      expect(excerpt!.seed.end - excerpt!.seed.start).toBe(example.quote.length);
       expect(excerpt?.paragraph.start).toBeLessThanOrEqual(excerpt?.seed.start ?? -1);
       expect(excerpt?.paragraph.end).toBeGreaterThanOrEqual(excerpt?.seed.end ?? Infinity);
       expect(excerpt?.text.length).toBeGreaterThan(example.quote.length);

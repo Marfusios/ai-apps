@@ -30,7 +30,6 @@ import { classify } from './failure.js';
 import {
   accountingReport,
   artifact,
-  control,
   fenced,
   manifest,
   updateRun,

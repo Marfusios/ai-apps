@@ -7,7 +7,6 @@ import {
   type ManifestIdentity,
   type SourceObservation,
   type ImportReason,
-  type ImportStep,
 } from './contracts.js';
 import { digest } from './provenance.js';
 import { fenced, manifest, type ImportSession, type AcceptedSnapshot } from './store.js';

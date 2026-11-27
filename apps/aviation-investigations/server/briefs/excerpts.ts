@@ -120,7 +120,7 @@ export function passageSentences(text: string): { start: number; end: number }[]
     while (e > s && /\s/.test(text[e - 1]!)) e -= 1;
     if (e > s) out.push({ start: s, end: e });
   };
-  const boundary = /([.!?]+["')”’\]]*)(\s+)(?=["“‘'(\[]?[A-Z0-9])|\n+/g;
+  const boundary = /([.!?]+["')”’\]]*)(\s+)(?=["“‘'([]?[A-Z0-9])|\n+/g;
   for (const m of text.matchAll(boundary)) {
     const at = m.index ?? 0;
     if (m[0].startsWith('\n')) {
@@ -244,7 +244,7 @@ function wordsOf(text: string): Word[] {
 }
 
 /** The text without opening quotation marks and parentheses. */
-const openingTrimmed = (s: string) => s.replace(/^[\s“"'‘(\[]+/, '');
+const openingTrimmed = (s: string) => s.replace(/^[\s“"'‘([]+/, '');
 
 /** A crude stem: the lower-case word without a plural or past ending ("these cylinders" ← "cylinder"). */
 const stem = (w: string) => w.toLowerCase().replace(/(?:ies|es|s|ed|ing)$/, '').slice(0, 7);

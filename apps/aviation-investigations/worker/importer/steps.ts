@@ -37,7 +37,6 @@ import {
   budgetRemaining,
   fenced,
   control,
-  findContent,
   linkGeneration,
   manifest,
   registerArtifact,

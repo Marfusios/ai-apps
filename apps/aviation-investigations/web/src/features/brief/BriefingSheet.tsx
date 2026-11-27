@@ -77,7 +77,7 @@ export function citationJoiner(segments: readonly SummarySegment[], i: number): 
   const prev = segments[i - 1];
   if (!s || !prev) return '';
   if (s.kind === 'case' && prev.kind === 'case') return ',\u2009';
-  if (s.kind === 'case' && prev.kind === 'text' && !/[\s(\[“"'‘]$/.test(prev.text)) return ' ';
+  if (s.kind === 'case' && prev.kind === 'text' && !/[\s([“"'‘]$/.test(prev.text)) return ' ';
   if (s.kind === 'text' && prev.kind === 'case' && /^[\p{L}\p{N}]/u.test(s.text)) return ' ';
   // A removed-statements marker (Task 16d) stands between whole sentences.
   if (s.kind === 'removed' && !(prev.kind === 'text' && /\s$/.test(prev.text))) return ' ';

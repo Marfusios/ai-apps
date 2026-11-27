@@ -119,7 +119,7 @@ export function createEvidenceServices(retriever: EvidenceRetriever) {
       const p = run(); pending.add(p);
       const done = () => { pending.delete(p); }; p.then(done, done); return p;
     },
-    async settled(): Promise<void> { while (pending.size) await Promise.allSettled([...pending]); },
+    async settled(): Promise<void> { while (pending.size) await Promise.allSettled(pending); },
   };
 }
 export type EvidenceServices = ReturnType<typeof createEvidenceServices>;

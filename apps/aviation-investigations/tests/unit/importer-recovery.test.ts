@@ -38,6 +38,7 @@ describe('real cross-environment matching orchestration', () => {
     await expect(
       matchingDev(config, candidate, facts, async () => 'sha256:' + 'f'.repeat(64), now),
     ).rejects.toMatchObject({ reason: 'dev_failed', fix: false });
+    // oxlint-disable-next-line no-unused-vars -- the loop never passes the state to its stub, so both rounds test the same thing; a follow-up
     for (const unavailable of ['missing', 'stopped']) {
       await expect(
         matchingDev(

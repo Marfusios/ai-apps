@@ -46,6 +46,7 @@ export function SearchChecklist({ pending, className }: SearchChecklistProps) {
     for (const r of spokenCompletions(rows)) said.current.add(r.id);
     setAnnouncement(next);
     // Only a new completion changes what is said.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- rows is new on every render; the effect runs only when the completed rows change
   }, [completed]);
   return (
     <section aria-labelledby={titleId} className={cx('w-full max-w-[640px] text-left', className)} data-search-checklist="" data-print="hide">

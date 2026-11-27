@@ -286,7 +286,7 @@ describe('rebuildPassagesIndex', () => {
       aggs: { cases: { terms: { field: 'ntsb_no', size: 100 } } },
     });
     expect(total(res)).toBe(expected.length);
-    const cases = (res.aggregations?.cases as estypes.AggregationsStringTermsAggregate).buckets as estypes.AggregationsStringTermsBucket[];
+    const cases = (res.aggregations!.cases as estypes.AggregationsStringTermsAggregate).buckets as estypes.AggregationsStringTermsBucket[];
     expect(cases.map((b) => b.key).sort()).toEqual(eligible);
     for (const no of EXCLUDED) expect(eligible).not.toContain(no);
     expect((await es.count({ index: ALIAS, query: { term: { answer_eligible: false } } })).count).toBe(0);

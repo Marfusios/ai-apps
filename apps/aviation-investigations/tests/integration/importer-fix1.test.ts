@@ -1,10 +1,8 @@
 import { expect, it, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { readFile } from 'node:fs/promises';
 import {
   importerFixture,
-  NEW_OBSERVATION,
   type ImportFixture,
 } from '../support/importer.js';
 import { ImportFailure } from '../../worker/importer/contracts.js';

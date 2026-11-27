@@ -220,6 +220,7 @@ function Words({
       returnFocus.current = false;
       opener.current?.focus();
     }
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- opener is a ref read when editing ends; a new ref must not move focus by itself
   }, [editing]);
   const close = (): void => {
     returnFocus.current = true;

@@ -164,7 +164,7 @@ describe('streamCaseRecords', () => {
   it('reads the generation in case-number order, US only, in batches', async () => {
     const all: CaseRecord[] = [];
     for await (const r of streamCaseRecords(ingest, generationId, { batchSize: 4 })) all.push(r);
-    expect(all.map((r) => r.ntsbNo)).toEqual([...all.map((r) => r.ntsbNo)].sort());
+    expect(all.map((r) => r.ntsbNo)).toEqual(all.map((r) => r.ntsbNo).sort());
     expect(all).toHaveLength(US_EVENTS);
     expect(all.every((r) => r.isUs && r.country === 'USA')).toBe(true);
     // The database path assembles exactly what the loader wrote.

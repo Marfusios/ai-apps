@@ -23,7 +23,6 @@ import {
   registerCandidate,
   beginRun,
   updateRun,
-  fenced,
   budgetRemaining,
   resumeArtifact,
 } from '../../worker/importer/store.js';

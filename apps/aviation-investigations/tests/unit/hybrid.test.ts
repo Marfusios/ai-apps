@@ -200,9 +200,9 @@ function corpus(n: number): Doc[] {
 function bodyFilters(calls: estypes.SearchRequest[]): { keyword: Query[]; vector: Query[]; fetch: Query[] } {
   const [kw, vec, fetch] = calls;
   return {
-    keyword: (kw?.query as { bool: { filter: Query[] } }).bool.filter,
-    vector: ((vec?.knn as estypes.KnnSearch).filter as { bool: { filter: Query[] } }).bool.filter,
-    fetch: (fetch?.query as { bool: { filter: Query[] } }).bool.filter.slice(0, -1),
+    keyword: (kw!.query as { bool: { filter: Query[] } }).bool.filter,
+    vector: ((vec!.knn as estypes.KnnSearch).filter as { bool: { filter: Query[] } }).bool.filter,
+    fetch: (fetch!.query as { bool: { filter: Query[] } }).bool.filter.slice(0, -1),
   };
 }
 
@@ -303,8 +303,8 @@ describe('one filter for every retrieval request', () => {
     expect(vec).not.toHaveProperty('sort');
     // No search may return partial results.
     for (const body of [kw, vec, fetch]) expect(body?.allow_partial_search_results).toBe(false);
-    expect((vec?.knn as estypes.KnnSearch).k).toBe(50);
-    expect((vec?.knn as estypes.KnnSearch).num_candidates).toBe(200);
+    expect((vec!.knn as estypes.KnnSearch).k).toBe(50);
+    expect((vec!.knn as estypes.KnnSearch).num_candidates).toBe(200);
     // The recorded bodies are the sent ones, with the vector elided.
     expect(r.requests.keyword).toEqual(JSON.parse(JSON.stringify(kw)));
     expect(JSON.stringify(r.requests.vector)).toContain('16-dimension query vector elided');
@@ -739,7 +739,7 @@ describe('evidence packing', () => {
       ...['A', 'B', 'C', 'D', 'E'].flatMap((c) => [p(c, 'analysis', 1), p(c, 'analysis', 2)]),
       p('CEN13LA249', 'analysis', 1),
     ];
-    const causes = [...['A', 'B', 'C', 'D', 'E'], 'CEN13LA249'].map((c) => p(c, 'probable_cause'));
+    const causes = ['A', 'B', 'C', 'D', 'E', 'CEN13LA249'].map((c) => p(c, 'probable_cause'));
     const r = pack(ranked, causes);
     expect(r.passages).toBe(12);
     const shape = r.cases.find((c) => c.ntsbNo === 'CEN13LA249');
