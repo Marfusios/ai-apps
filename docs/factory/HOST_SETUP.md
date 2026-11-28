@@ -26,15 +26,16 @@ is typed in it; that directory exists once lingering is on (section 2).
 ## What is built and what is not
 
 The ad-hoc pipeline runs end to end: a trusted person labels an issue `factory:fix`, and the factory
-answers with a draft pull request from its bot, or with questions on the issue. These parts of the
-design are not built yet:
+answers with a draft pull request from its bot, or with questions on the issue. Hosted workflows
+then check each pull request and review it with a second model; the factory fixes what fails, for
+up to three rounds, hands the pull request to a person when everything passes, and answers that
+person's review (section 9). These parts of the design are not built yet:
 
-- the per-app checks in CI and the automated second-model review of each pull request;
-- fix rounds started by failed checks or review findings;
-- the hand-off from draft to ready: a pull request stays a draft until a person marks it ready;
-- revise runs started by a person's review, and `/factory revise`;
 - the epic pipeline: the `factory:epic` label starts nothing;
-- service containers: a run for an app that declares services is refused.
+- service containers: a run for an app that declares services is refused;
+- a notice for a pull request whose checks stay pending for good, such as after a cancelled
+  workflow run: the pull request's own page shows it;
+- runs in parallel: one job runs at a time.
 
 ## 1. What the host needs
 
@@ -319,6 +320,21 @@ Three things in the repository belong with the App:
 - The rulesets and Actions settings of design section 8: GitHub refuses a force push to a
   `factory/` branch and a push to `main` whatever the factory's own code does.
 
+The second-model review runs on GitHub, not on the host (design section 11). In the repository's
+settings, under Secrets and variables, Actions:
+
+| Name | Kind | Value |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | Repository secret | An OpenAI API key that may use the review model. Without it the review cannot run: its check passes, and its comment says so. |
+| `FACTORY_REVIEW_MODEL` | Repository variable, optional | The model of the first attempt. Empty or unset, the Codex action picks its default. |
+| `FACTORY_REVIEW_FALLBACK_MODEL` | Repository variable, optional | The model of a second attempt when the first fails. Empty or unset, there is no second attempt. |
+
+The review's comment names the model that answered, or `unknown` when the variable is empty. The
+Codex action runs only for an account with write access to the repository, or for a bot listed in
+its `allow-bot-users` input, and `.github/workflows/review.yml` lists this repository's App there
+by its slug. In a fork, a person puts the slug of the fork's own App there, with a commit to
+`main`.
+
 ## 6. The Claude token
 
 The runner signs the agent in with a long-lived token of the Claude subscription, which
@@ -501,6 +517,10 @@ to use another Python, change `ExecStart=`.
    `factory/config.toml` when it starts.
 6. Remove `factory:halt`.
 
+The update that brings the hosted checks, the review, fix rounds, the hand-off and revise runs
+(build step 3 of the design) adds no environment variable and no other host step: pull, rebuild
+the image, and restart both. The review's secret and variables live on GitHub (section 5).
+
 ## 9. Operating
 
 ### Labels a person applies
@@ -521,8 +541,8 @@ The dispatcher keeps at most one status label on each issue it handles.
 | Label | Means |
 | --- | --- |
 | `status:queued` | The issue waits to start: another run is going on, the issue is paused, the factory is halted, or a usage limit holds. |
-| `status:building` | A run is queued, going on or being published, or its draft pull request is open. |
-| `status:needs-human` | The factory waits for a person: a question, a failure, a notice, or a pull request closed without merging. |
+| `status:building` | A run is queued, going on or being published, or its pull request is open, before and after the hand-off, until it is merged. |
+| `status:needs-human` | The factory waits for a person: a question, a failure, a notice such as the one after the last fix round, or a pull request closed without merging. |
 | `status:done` | The issue's pull request is merged. |
 
 A closed issue whose pull request was not merged loses its status label. `status:design` and
@@ -530,30 +550,91 @@ A closed issue whose pull request was not merged loses its status label. `status
 
 ### Steering
 
-Only comments by people in `trusted_logins` steer. Comments by anyone else are never passed to the
-agent and start nothing.
+Only comments and reviews by people in `trusted_logins` steer. Comments by anyone else are never
+passed to the agent and start nothing. The comments of an issue and of its pull request form one
+stream, so a reply or a command works on either.
 
 | Signal from a trusted person | Effect |
 | --- | --- |
-| A comment after a question, or after a notice that asks for something | The next run starts, with the comment in its context, from the commits the last run left on the work branch. |
-| `/factory retry` as the first line of a comment | After a run that **failed**, **timed out**, **ended without a result**, was **not started** or had its **work not published**, or after the pull request was closed without merging: the run starts again from the work branch. |
+| A comment after a question, or after a notice that asks for something | The next run starts, with the comment in its context, from the commits the last run left on the work branch. After a question from a fix or revise run, that stage starts again, a fix run at round 1. |
+| `/factory retry` as the first line of a comment | After a run that **failed**, **timed out**, **ended without a result**, was **not started** or had its **work not published**, after the notice that the fix rounds are used up, or after the pull request was closed without merging: the run starts again from the work branch. After a fix or revise run, that stage starts again, a fix run at round 1. |
+| A review of the pull request that requests changes or leaves comments | One revise run answers every such review that no revise run has answered yet, with one reply in each of their unresolved threads. A single comment on the diff counts, since GitHub records it as a review that comments. An approval starts nothing. |
+| `/factory revise <instruction>` as the first line of a comment | One revise run, with the rest of that line as its instruction. The whole comment is in the run's context. It needs an open pull request. |
 | A line `app: <name>` in a comment | The run works on the app in `apps/<name>`. The last such line counts, and a name that is no app gets the notice that asks for one. Without such a line, the App field of the issue form counts when the issue's author is trusted, and then the only app, when there is one. |
 
-The factory posts a notice and waits in three cases. When it cannot tell the app, it asks for an
-`app:` line. When the issue's author is outside the trusted list, the agent is never shown the
-issue's title or body, and a trusted person restates the request in a comment; the run starts from
-that comment. When the pull request is closed without merging, `/factory retry` runs again.
+A review or a `/factory revise` written while a run is going on is answered by the next revise run.
+The factory tells what is still to answer by comparing each review's time on GitHub with the time
+the newest revise job was created, by the host's clock, so keep that clock synchronised with
+network time. A host clock behind GitHub's can start one revise run too many. A host clock ahead of
+GitHub's by more than a few seconds can miss a review written in that span after a revise run
+started.
+
+The factory posts a notice on the issue and waits in four cases. When it cannot tell the app, it
+asks for an `app:` line. When the issue's author is outside the trusted list, the agent is never
+shown the issue's title or body, and a trusted person restates the request in a comment; the run
+starts from that comment. When the pull request is closed without merging, `/factory retry` runs
+again. When the fix rounds are used up, it says so (next section).
+
+### Checks, fix rounds and the hand-off
+
+After every run that ends **done** on an open pull request, the factory waits for three checks
+on the pull request's head, the `required_checks` in `factory/config.toml`:
+
+| Check | Workflow | Passes when |
+| --- | --- | --- |
+| `repository` | Repository checks | `scripts/check_repo.py` and the factory's tests pass. |
+| `apps` | App checks | Each app the change touches passes its `setup` and `check` commands from its `factory.toml`, each app in a job of its own named `app (<app>)`, or the change touches no app. |
+| `review` | Review | The second-model review found no blocker and no major finding, or could not run. It posts a comment with what it found, or that it could not run. |
+
+Only check runs that GitHub Actions created count. The checks have failed when one of the three
+ended as failed, timed out or action required. They are pending while one of them is missing,
+queued, running, cancelled or skipped, and have passed when all three succeeded.
+
+- **Failed.** A fix run starts on the pull request's branch. Its context holds the end of each
+  failed job's log and, when the review failed, the review's findings. Its comment's first line
+  names the round. A fix run that ends **done** is followed the same way, so fix runs follow each
+  other until the checks pass, at most `max_fix_rounds` of them in a row
+  (`max_fix_rounds = 3` in `factory/config.toml`). When the checks still fail after the last one,
+  the factory posts this notice on the issue and sets `status:needs-human`:
+
+  > Three automated fix runs in a row did not make the checks pass. Comment `/factory retry` to start again, or a person takes over the pull request.
+
+  Read the run comments and the failed checks' logs. When a passing fault, such as a network
+  failure on the hosted runner, is the cause, rerun the failed jobs on GitHub first. Then either
+  comment `/factory retry`, which starts a fix run at round 1, or take the pull request over: a
+  review or `/factory revise` starts a revise run, and a fix you push yourself starts nothing.
+- **Pending.** Nothing happens until they finish. A check that never finishes, such as one whose
+  workflow run was cancelled, holds the pull request until a person reruns it on GitHub.
+- **Passed.** The factory hands the pull request over. It marks the pull request ready for review
+  when it is a draft, asks the person who labelled the issue for a review, and posts one comment
+  on the pull request. When the review passed, the comment reads:
+
+  > The checks pass and the automated review found nothing blocking. The pull request is ready for a person's review.
+
+  When the review could not run, or left no comment for the head, it reads:
+
+  > The checks pass. The automated review gave no verdict for this commit, so no second model has read it. The pull request is ready for a person's review.
+
+The hand-off happens once for each head, and the issue keeps `status:building` until the pull
+request merges. After it, the pull request is a person's: a check that fails, for example after
+a push of their own, starts no fix run. A review or `/factory revise` starts a revise run. A revise
+run that ends **done** is followed like any finished run: fix runs when its checks fail, and a new
+hand-off, with a new comment and review request, when they pass. A revise run that committed
+nothing leaves the head as it was, and the same head is not handed over twice.
 
 ### Run comments
 
-Every run leaves one comment on its issue. Its first line names the stage, the outcome word, the
-duration and the model; the agent's summary, questions, reason and follow-ups come under fixed
-lead-ins, and a hidden marker at the end names the job and the outcome.
+Every run leaves one comment: a `fix_issue` run on its issue, a `fix` or `revise` run on the pull
+request. Its first line names the stage, for a fix run the round, the outcome word, the duration
+and the model; the agent's summary, questions, reason and follow-ups come under fixed lead-ins, and
+a hidden marker at the end names the job and the outcome. A revise run that ends **done** also
+replies once in each review thread it answers, under the lead-in "The agent replies:", and
+resolves the threads its change settled.
 
 | Outcome word | Marker | What happened | What starts the next run |
 | --- | --- | --- | --- |
-| **done** | `done` | The agent finished, and its commits passed the checks. They are on the work branch `factory/fix-<issue>`, and a draft pull request is open or updated; the comment links it. | Nothing: a person marks the pull request ready, reviews it and merges it. |
-| **needs input** | `needs_input` | The agent asked the numbered questions. Commits that passed the checks are on the work branch, without a pull request. | A comment by a trusted person. |
+| **done** | `done` | The agent finished, and its commits passed the checks. They are on the work branch `factory/fix-<issue>`, and a draft pull request is open or updated; the comment links it. A fix or revise run pushes to the pull request's branch and may have no commit; it replaces the pull request's title and body only when it wrote new ones and the bot opened the pull request. | The hosted checks of the head: a fix run when they fail, the hand-off when they pass (above). |
+| **needs input** | `needs_input` | The agent asked the numbered questions. Commits that passed the checks are on the work branch; a first run opens no pull request for them yet. | A comment by a trusted person. |
 | **failed** | `failed` | The agent could not finish; the comment quotes its reason. | `/factory retry`, once the cause is fixed. |
 | **timed out** | `timeout` | The run reached the stage's `timeout_minutes` in `factory/config.toml`, and its container was stopped. | `/factory retry` |
 | **ended without a result** | `crashed` | The run ended with nothing to publish; a reason says why (below). | `/factory retry` |
@@ -578,7 +659,7 @@ run ended because ...".
 | `services` | not started | the app declares service containers, which this version does not run | Service containers are not built yet. Handle the issue by hand, or remove its label. |
 | `request` | not started | the request for the agent could not be built | The job's `request.json` is missing or not what the runner expects, which happens when the two programs run different versions. Restart both from the same checkout (section 8), then retry. |
 | `clone` | ended without a result | the repository could not be prepared for the agent | The runner could not clone the mirror or check out the work branch in time. Check that the runner can read `/srv/factory/mirror` (section 2) and that its work directory has disk space, then retry. |
-| `max_turns` | ended without a result | the run used all its turns | The agent used the stage's `max_turns`. The issue is probably more than one small change: split it, or make it an epic, or retry. |
+| `max_turns` | ended without a result | the run used all its turns | The agent used the stage's `max_turns`. For a `fix_issue` run the issue is probably more than one small change: split it, or make it an epic, or retry. For a fix or revise run, read the transcript (below), then retry or take the pull request over. |
 | `agent_error` | ended without a result | the agent stopped with an error | The agent ended without a valid result file. Read the transcript (below); a retry often succeeds after a passing error of the service. |
 | `internal` | ended without a result | the factory hit an internal error | The runner failed in an unexpected way, Podman could not start the container, the runner was stopped during the run (a restart or an update ends a run this way), the dispatcher could not read the run's record, or publishing the run failed eight times. Read both logs, then retry. |
 
@@ -607,6 +688,14 @@ least a minute, at most an hour.
   `factory-` while the issue still shows `status:building`. Its job stays running. Restart the runner (`systemctl --user restart factory-runner.service`, as the
   runner): it records the job as **ended without a result** with the reason `internal`, and
   `/factory retry` runs it again.
+- **An open pull request, `status:building`, and no run or hand-off after a done run.** The checks
+  of its head are pending: one of `repository`, `apps` and `review` is missing, cancelled or
+  skipped, and no notice says so yet. The pull request's Checks tab shows which; rerun it there.
+  When the checks pass but no hand-off comment appears, the dispatcher's log names the failed
+  action, `hand the pull request over for review`, which it tries again on every poll.
+- **A review that starts nothing.** Only a review by a trusted person that requests changes or
+  leaves comments counts; an approval does not. A review written while a run is going on waits
+  for that run to be published. A review older than the newest revise job is taken as answered.
 - **A merged pull request on an issue that is still open.** The issue shows `status:done` and the
   factory starts nothing more for it. Close the issue, or open a new issue for more work.
 - **A label applied by someone outside `trusted_logins`.** Nothing happens. A trusted person
@@ -623,8 +712,10 @@ least a minute, at most an hour.
 
 - The dispatcher's log, as the dispatcher: `journalctl --user -u factory-dispatcher`, with `-f` to
   follow it. The runner's, as the runner: `journalctl --user -u factory-runner`. The dispatcher
-  logs each action it takes, such as `issue #12: start a fix_issue run for app <app>`, and the end
-  of each publication, as `job <job-id>: published as <outcome word>`. A line names the action or
+  logs each action it takes, such as `issue #12: start a fix_issue run for app <app>`,
+  `issue #12: start a fix run (round 2) for app <app>` or
+  `issue #12: hand the pull request over for review`, and the end of each publication, as
+  `job <job-id>: published as <outcome word>`. A line names the action or
   the job and the kind of error, or for a poll that failed GitHub's own message, never a secret
   and never the text of an issue. Where a user's journal is not kept apart, root reads the same
   lines with `journalctl --user-unit factory-runner.service`.
@@ -633,14 +724,16 @@ least a minute, at most an hour.
   the runner can read them, and they are deleted after 14 days. They can hold anything the agent
   read, so they stay on the host.
 - The job files: `/srv/factory/spool/jobs/<job-id>/` holds what the dispatcher wrote:
-  `request.json`, `job.json`, `context.md`, and later `settled.json`, the outcome it settled on,
+  `request.json`, `job.json`, `context.md`, for a revise job `threads.json`, the review threads
+  its context shows, and later `settled.json`, the outcome it settled on,
   `attempts.json`, how many publications failed and when the first did, and `closed.json`, when
   and why it closed the job. `/srv/factory/spool/runs/<job-id>/` holds what
   the runner wrote: `claimed.json`, `run.json` (status, reason, duration, model and turns),
   `result.json` and `commits.bundle`. A closed job is deleted after 14 days, its run with it.
-- A job id reads `<start-time>-fix_issue-<issue>-<random>`, such as
-  `20261127T101500Z-fix_issue-12-1a2b3c4d`, and the hidden marker of each run comment names it.
-  `ls /srv/factory/spool/jobs | grep -- '-fix_issue-12-'` lists the jobs of issue 12.
+- A job id reads `<start-time>-<stage>-<issue>-<random>`, such as
+  `20261127T101500Z-fix_issue-12-1a2b3c4d` or `20261127T113000Z-fix-12-5e6f7a8b`, and the hidden
+  marker of each run comment names it. `ls /srv/factory/spool/jobs | grep -- '-12-'` lists the
+  jobs of issue 12.
 
 ### Checks and single steps
 

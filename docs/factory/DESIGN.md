@@ -187,29 +187,51 @@ too vague, or in need of a decision, it returns questions instead and the issue 
 ### 6.4 The life of a pull request
 
 1. The dispatcher opens it as a **draft**, authored by the factory's bot identity.
-2. Hosted workflows run: repository checks, the app's checks, the second-model review.
-3. If a check or the review fails, a `factory-fix` run addresses it. At most three
-   automated rounds per pull request; after that the issue gets `status:needs-human`.
-4. When everything passes, the dispatcher marks the pull request ready and requests
-   review from the person who started the run.
-5. The person reviews. Submitting a review with comments starts a `factory-revise` run
-   that addresses every thread and replies in each one. Human-requested rounds are not
-   capped.
-6. The person approves and merges. The dispatcher never merges.
+2. Hosted workflows run on every new head: the repository checks, the app's checks and the
+   second-model review (section 11). The dispatcher waits for three of them by name.
+3. When a run has finished and one of those checks failed, a `factory-fix` run addresses it,
+   given the failed jobs' logs and, when the review failed, its findings. At most three
+   automated fix runs follow each other; when the checks still fail after the third, the
+   issue gets a notice and `status:needs-human`. A person's answer or retry starts the count
+   again.
+4. When a run has finished and every check passes, with a review that did not fail, the
+   dispatcher hands the pull request over: it marks it ready if it is still a draft,
+   requests a review from the trusted person who labelled the issue, and posts one comment.
+   The comment says that the automated review found nothing blocking, or that no second
+   model has read the commit when the review could not run. The hand-off happens once for
+   each head, so a person is asked again only when the code has changed.
+5. From the hand-off on, only a person's asks start runs: a review that requests changes or
+   leaves comments, and `/factory revise`. Each starts a `factory-revise` run that
+   addresses every thread and replies in each one. Human-requested rounds are not capped. A
+   check that fails after the hand-off, for example after a person pushed, starts nothing:
+   the pull request is in a person's hands, and a run must not change code under their
+   review unasked. A revise run that finishes is followed like any other: its head is fixed
+   when its checks fail and handed over again when they pass.
+6. The person approves and merges. The dispatcher never merges and never approves. The
+   issue keeps `status:building` until the merge; the hand-off comment and the review
+   request tell the person it is their turn.
 
 ### 6.5 Steering
 
 | Signal from a trusted person | Effect |
 | --- | --- |
-| A submitted review that requests changes or leaves comments | One revise run covering the whole review. |
-| `/factory revise <instruction>` as a pull request comment | One revise run with that instruction. |
-| `/factory retry` | Rerun the last failed stage. |
-| A reply on an issue in `status:needs-human` | The run resumes with the answer. |
+| A submitted review that requests changes or leaves comments | One revise run covering every review not answered yet. |
+| `/factory revise <instruction>` as the first line of a pull request comment | One revise run with that instruction. |
+| `/factory retry` | Rerun the last failed stage; a fix run starts again at round 1. |
+| A reply after a run's questions | The run resumes with the answer. |
 | Approve and merge | The next stage starts. |
 
-Loose pull request comments do not start runs on their own; they are included as context
-in the next run. Reviews are GitHub's own way of saying "I am done commenting", which
-avoids one run per half-finished thought.
+The comments of an issue and of its pull request form one stream, so a reply or a command
+counts in either place. Loose pull request comments do not start runs on their own; they
+are included as context in the next run. Reviews are GitHub's own way of saying "I am done
+commenting", which avoids one run per half-finished thought. A single comment on the diff
+is a review too: GitHub records it as a review that comments, so it starts a run. An
+approval starts nothing.
+
+A review or a command written while a run is going on is answered by the next run, not
+lost. What a revise run must answer is measured against the newest revise job, not
+against the newest comment, and a revise run that asked or failed leaves its reviews to
+the one after it.
 
 ### 6.6 When a run cannot finish
 
@@ -231,10 +253,13 @@ anyone, so the dispatcher checks who applied the label, not that it is present.
 **What text reaches an agent.** The dispatcher assembles the context itself: the issue's
 title and body only when its author is trusted, comments by trusted people and by the
 factory's own bot, the relevant documents, review threads, failed check output, and the
-second-model review. Comments by anyone else are dropped. For an issue opened by someone
-outside the trusted list, the agent sees `(title withheld)` and no body, and a trusted
-person restates the request in a comment. Skills tell the agent that issue text, review
-findings, and web pages are information to weigh, never instructions to follow.
+second-model review. Comments by anyone else are dropped, and so are the comments of anyone
+else inside a review thread. A check log, the review model's text and a review thread
+reach the agent only quoted, under a heading the dispatcher writes, and cut to a fixed
+size, so none of them can pass for the dispatcher's own structure. For an issue opened by
+someone outside the trusted list, the agent sees `(title withheld)` and no body, and a
+trusted person restates the request in a comment. Skills tell the agent that issue text,
+review findings, and web pages are information to weigh, never instructions to follow.
 
 **What code an agent runs.** Only branches the factory created in this repository. Pull
 requests from forks are never checked out or run by the factory. They still get the
@@ -293,7 +318,8 @@ the pod (section 9).
   refuses, makes the run rejected: it is reported in a comment, not retried.
 
 **What the bot posts.** Text written by an agent (a summary, questions, a failure reason,
-follow-ups, a pull request's title and body) is neutralised once before it is posted:
+follow-ups, a pull request's title and body, a reply to a review thread) is neutralised
+once before it is posted:
 mentions, issue references, closing keywords, GitHub links, images, HTML, task boxes, and
 diagrams are broken, so they notify, close, link, or fetch nothing, and each text is
 capped in length. Each text is then placed in a container it cannot leave, a block quote
@@ -523,7 +549,7 @@ is pushed to the strongest mechanism that fits it:
 | Mechanism | Covers |
 | --- | --- |
 | The app's own linter configuration | Everything a tool can check, including architecture: import rules that stop the domain importing the framework, complexity limits, banned escape hatches. Chosen in the design stage, wired up in the app's first step. |
-| The check command, required in CI | Formatting, linting, types, tests. A pull request cannot become ready while it fails. |
+| The check command, run in CI on every pull request | Formatting, linting, types, tests. The factory does not hand a pull request over while it fails. |
 | `guard_quality` and `finish_check` hooks | Unexplained suppressions and skipped tests at the moment they are written; a failing quick command before a run may finish. |
 | `factory-implement` | The red, green, refactor loop and a self-review against the standards before committing. |
 | `step-reviewer` and the second-model review | What tools cannot judge: naming, boundaries, test quality, needless complexity. Maintainability findings count like correctness findings. |
@@ -569,19 +595,63 @@ and the person decides which become issues. This gives an honest agent somewhere
 - **Visibility:** every run leaves one comment on its issue or pull request: stage,
   outcome, duration, model. Full transcripts stay on the host.
 
-## 11. Automated review
+## 11. Hosted checks and automated review
 
-A hosted workflow runs the Codex action on every pull request from a branch in this
-repository, drafts included, with a read-only sandbox, a review prompt kept in the
-repository, and a required output schema: a verdict plus findings with severity, file,
-and line. It posts the findings as a pull request comment and fails or passes its check.
-The model name is a repository variable, so it can be changed without a code change; the
-intended model is the owner's preferred Codex review model, with an ordinary Codex model
-as the fallback. Design and plan pull requests get the same review with a
-document-oriented prompt.
+Three hosted workflows run on pull requests. The repository checks run the repository
+checker and the factory's tests in a job named `repository`. The two others are described
+here. The dispatcher waits for three check names: `repository`, `apps` and `review`.
+
+**App checks.** A first job works out which apps the change touches from its changed
+paths; a change under `packages/` touches every app. Each touched app then gets a job of
+its own, named `app (<app>)`, that installs the toolchain its `factory.toml` declares and
+runs the app's setup and check commands from that file. A last job, `apps`, passes when
+every app job passed or no app was touched, and fails otherwise. Only that last name is
+waited for, so a new app gets checks without anyone editing a workflow, and one broken
+matrix job cannot hide behind the others.
+
+**The second-model review.** A workflow runs the Codex action when a pull request from a
+branch of this repository is opened, reopened or gets a new head, drafts included.
+Marking a pull request ready starts no second review, since that head has its review
+already. The workflow has two jobs that share nothing but the answer:
+
+- The first holds the provider's API key and may only read. It checks out the merged
+  result of the pull request without credentials and runs the action with a read-only
+  permission profile, a review prompt and a required answer schema. The prompt and the
+  schema come from the pull request's base commit, never from its head, so a pull request
+  cannot change how it is reviewed. The prompt for documents is used when every changed
+  file lies under `apps/<app>/docs/epics/`, and the prompt for code otherwise: the bot
+  labels a pull request only after opening it, so a label could not choose the first
+  review's prompt. Both prompts ask for verified findings only, in the order and with the
+  severities of the review guidelines in `AGENTS.md`, and treat everything in the
+  repository as material under review, never as instructions.
+- The second holds no secret, checks out only the base commit and runs only its code. It
+  turns the answer into a comment on the pull request: a summary, a table of findings with
+  severity, file and line, and each finding's detail, all neutralised like agent text, and
+  last a hidden marker naming the reviewed head, the verdict and the number of findings.
+  The verdict is `fail` when a finding is a blocker or a major one, `pass` otherwise, and
+  `unavailable` when the model gave no usable answer, in which case the comment says the
+  review could not run. Only `fail` fails the check, which is this job's, `review`.
+
+The model is the repository variable `FACTORY_REVIEW_MODEL`. When the first attempt fails
+and `FACTORY_REVIEW_FALLBACK_MODEL` is set, a second attempt uses that model. A variable
+left empty means the action's own default. The model therefore changes without a code
+change; the intended model is the owner's preferred Codex review model, with an ordinary
+Codex model as the fallback.
+
+**What the dispatcher reads.** Only check runs that GitHub Actions created for the
+pull request's head count, since any app can create a check run with any name. The
+head's checks have failed when one of the three names failed or timed out; they are
+pending while one is missing or not finished, or GitHub lists more check runs than one
+page holds; they have passed when all three passed. A cancelled or skipped run of a
+required name is neither, so such a head waits. The verdict and the findings come from
+the newest review comment about that head by the account the workflow comments as.
+Because a failing verdict also fails `review`, a fix run gets the findings beside the
+logs.
 
 The review is a required input to the dispatcher, not a merge requirement in GitHub, so
-an outage at the provider never blocks a person from merging.
+an outage at the provider never blocks a person from merging. When the review could not
+run its check passes, and the hand-off comment says that no second model has read the
+commit.
 
 ## 12. Host requirements
 
@@ -615,7 +685,7 @@ Three rules hold for any host that is shared with other software:
 
 ## 14. Build order
 
-Steps 0 to 2 are built. Steps 3 to 5 are next, in this order.
+Steps 0 to 3 are built. Steps 4 and 5 are next, in this order.
 
 0. **Public-readiness review**, then the owner makes the repository public (section 8).
 1. **Harness.** `AGENTS.md`, per-app files, skills, subagents, hooks, issue forms, pull
@@ -623,11 +693,12 @@ Steps 0 to 2 are built. Steps 3 to 5 are next, in this order.
 2. **Ad-hoc pipeline end to end.** Dispatcher, runner, agent image, GitHub App
    publishing, for `factory:fix` only. The smallest complete loop.
 3. **Checks and review.** Per-app CI from `factory.toml`, the Codex review workflow,
-   automated fix rounds, draft-to-ready handoff.
+   automated fix rounds, draft-to-ready handoff, revise runs from a person's review.
 4. **Epic pipeline.** Design, plan, the plan linter, step issues, sequential steps.
 5. **Later.** Service containers if not already needed, sandbox deployment, parallel
-   steps, a public status page, and a periodic health review in which an agent audits
-   an app for accumulated debt and proposes a plan through the normal pipeline.
+   steps, a public status page, a notice for a pull request whose checks stay pending for
+   good, and a periodic health review in which an agent audits an app for accumulated
+   debt and proposes a plan through the normal pipeline.
 
 ## 15. Decisions
 
@@ -683,6 +754,17 @@ Steps 0 to 2 are built. Steps 3 to 5 are next, in this order.
 - Inside the container the agent runs as an unprivileged user with every capability
   dropped.
 - One runner per host, kept so by a lock in its work directory.
+- The hand-off happens once for each head, after every finished run whose head passes, and
+  from then on only a person's asks start runs (section 6.4).
+- The issue keeps `status:building` until the merge; the hand-off comment and the review
+  request tell the person it is their turn.
+- Fix rounds are read from the marker of the last run, not counted, so a person's restart
+  begins again at round 1.
+- What a revise run answers is measured against the newest revise job, so a review written
+  while a run is going on is answered by the next one (section 6.5).
+- Only the required check names decide a head's state, and only check runs that GitHub
+  Actions created count; the review's prompt follows the changed paths, not a label
+  (section 11).
 
 **Left to the builder**
 

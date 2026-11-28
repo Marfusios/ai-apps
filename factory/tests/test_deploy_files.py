@@ -15,6 +15,7 @@ GUIDE = ROOT / "docs" / "factory" / "HOST_SETUP.md"
 DESIGN = ROOT / "docs" / "factory" / "DESIGN.md"
 CONFIG = load_config()
 FORMS = ROOT / ".github" / "ISSUE_TEMPLATE"
+REVIEW_WORKFLOW = ROOT / ".github" / "workflows" / "review.yml"
 EXAMPLES = ("dispatcher.env.example", "runner.env.example")
 COMMANDS = ("factory.dispatcher", "factory.runner", "factory.image.build")
 MISSING = re.compile(r"([A-Z][A-Z0-9_]*) is missing")
@@ -58,6 +59,21 @@ def unit_entries(name: str) -> list[tuple[str, str, str]]:
             raise ValueError(f"{name}: not a setting: {line}")
         entries.append((section, key.strip(), value.strip()))
     return entries
+
+
+def review_settings(kind: str) -> list[str]:
+    """The names of the repository's `secrets` or `vars` that the review workflow reads, sorted."""
+    return sorted(set(re.findall(rf"\b{kind}\.([A-Z][A-Z0-9_]*)", read(REVIEW_WORKFLOW))))
+
+
+def notice_text(key: str) -> str:
+    """The text a person reads in the fixed notice `key`, without its hidden marker."""
+    return compose.notice(key).partition("\n\n<!--")[0]
+
+
+def flowing(text: str) -> str:
+    """The text with every run of white space as one space, so a line break inside a phrase is a space."""
+    return " ".join(text.split())
 
 
 def assignments(name: str) -> dict[str, str]:
@@ -202,6 +218,28 @@ class HostGuideTests(unittest.TestCase):
         self.assert_says(self.text, "the work branch changed on GitHub", "GitHub refused the push",
                          "eight times", "`attempts.json`")
 
+    def operating(self) -> str:
+        return self.section(9)
+
+    def test_the_operating_section_names_each_check_the_factory_waits_for_and_the_round_limit(self):
+        checks = CONFIG.dispatcher.required_checks
+        self.assertTrue(checks)
+        self.assert_says(self.operating(), *(f"`{name}`" for name in checks), "`max_fix_rounds`",
+                         f"`max_fix_rounds = {CONFIG.dispatcher.max_fix_rounds}`")
+
+    def test_the_operating_section_spells_the_commands_a_person_writes_on_a_pull_request(self):
+        self.assert_says(self.operating(), f"`{jobs.REVISE_COMMAND} <instruction>`", f"`{jobs.RETRY_COMMAND}`")
+
+    def test_the_operating_section_quotes_the_exhausted_notice_and_each_hand_off_comment(self):
+        for text in (notice_text("fix-rounds-exhausted"), *compose.HANDOFF_TEXTS.values()):
+            with self.subTest(text=text):
+                self.assertIn(flowing(text), flowing(self.operating()))
+
+    def test_section_5_names_the_secret_and_the_variables_the_review_reads(self):
+        secrets, variables = review_settings("secrets"), review_settings("vars")
+        self.assertTrue(secrets and variables)
+        self.assert_says(self.section(5), *(f"`{name}`" for name in (*secrets, *variables)))
+
 
 class DesignTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -231,6 +269,13 @@ class DesignTests(unittest.TestCase):
         for words in ("`-E -s`", "user site directory", "`FACTORY_RUN`", "managed settings"):
             with self.subTest(words=words):
                 self.assertIn(words, hooks)
+
+    def test_the_automated_review_names_the_variables_it_reads_and_the_checks_the_factory_waits_for(self):
+        review = flowing(self.text.partition("\n## 11. ")[2].partition("\n## ")[0])
+        for words in (*(f"`{name}`" for name in review_settings("vars")),
+                      *(f"`{name}`" for name in CONFIG.dispatcher.required_checks)):
+            with self.subTest(words=words):
+                self.assertIn(words, review)
 
 
 class IssueFormTests(unittest.TestCase):

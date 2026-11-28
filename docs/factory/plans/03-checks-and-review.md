@@ -323,3 +323,71 @@ What must be true afterwards: the design's build order marks step 3 as built and
 3. Set the repository variables for the review model after a first run shows which model the key can use.
 4. Redeploy on the host (pull, rebuild the image, restart both).
 5. A rehearsal on a real issue: checks and review on the bot's pull request, at least one automatic fix round or a hand-off, and one revise run from a review.
+
+---
+
+## As built
+
+This plan was carried out task by task, each with its own review and fix rounds, then a review of
+the whole branch. The reviews changed a number of details, so where a task's text above and the
+code differ, the code and [the design](../DESIGN.md) are right. The task texts are kept as the
+record of what was planned. The rulings that changed how a pull request moves are in
+[How a pull request moves](#how-a-pull-request-moves) and the list after it; they are not repeated
+here. The other differences that matter:
+
+- **App checks.** The script runs under a Python 3.11 that the workflow keeps off `PATH` and calls
+  by its path, so an app's own Python cannot replace it, and `run` takes `--` before the app's
+  name. Changed paths are read NUL-separated, so a file name with non-ASCII characters still
+  selects its app.
+- **The review workflow.** The prompts read the standards as they are at the base commit. Until
+  the base commit holds the prompts, the schema and the report, as it does not for the pull
+  request that adds them, no model is called and nothing is posted. The Codex CLI version is
+  pinned, each model call has its own time limit so the report still runs, an answer over
+  100,000 bytes is passed on as none, and the comment is cut by construction to stay within
+  GitHub's size limit.
+- **GitHub client.** A redirect to a malformed location is refused, a rate limit on the first
+  request of a download raises `RateLimited`, and a GraphQL answer that reports errors raises
+  `GraphQLRefused`, which tells an object that does not exist from other refusals.
+- **Snapshot.** A check run that ended asking for an action counts as failed, and the newest run
+  of each name replaces earlier ones. The newest review comment for a head decides even when its
+  verdict is not a known one, and then there is no verdict. Reviews and comments are read for
+  every open pull request; check runs and the verdict only when its head is a full commit id.
+- **Job files.** `revise_sections` takes every review to answer as `(time, body)` rather than one
+  body, puts the instruction first so it is the last to be left out, and bounds each heading.
+  `Thread` carries the id of its first comment, which replies attach to, and `thread_index` lists
+  exactly the threads the context shows. A log loses its line times, colour sequences and control
+  characters before its tail is cut.
+- **Publishing.** A fix or revise run never recreates a deleted work branch, and replaces the pull
+  request's text only when the bot opened the pull request. A reply that GitHub answers with 404
+  or 422 is skipped and leaves its thread open, a resolve is skipped only when the thread does not
+  exist, and any other refusal is tried again. The hand-off asks only a trusted person for a
+  review and writes nothing beside a failing verdict. Thread replies are scanned for hygiene
+  findings by the finish check as well as the dispatcher.
+- **Dispatcher.** Review threads are read in their own module, `factory/threads.py`, in one query
+  of at most 100 threads with 50 comments each; a thread whose first comment is odd is left out,
+  since replies attach to it. The dispatcher checks for an open pull request with a full head
+  before it fetches anything, and writes `context.md` with replacement for text UTF-8 cannot hold.
+- **Skills.** The `factory-fix` skill returns `failed` rather than `done` without a commit,
+  because an unchanged head keeps its failing checks and would start the next round on them. The
+  `factory-revise` skill asks in a thread's reply where it can, because replies are posted only
+  with `done`.
+
+Known limits, each a candidate for later work:
+
+- Checks that stay pending for good, after a cancelled workflow run or one that never started, get
+  no notice. The pull request's own page shows them. The same holds for a commit with more than
+  100 check runs, which reads as pending.
+- More than 100 review threads on a pull request, or more than 50 comments in one thread, are not
+  all read; the dispatcher logs the first case. With more than about 140 sections, the last
+  sections of a context are left out with a count.
+- The host's clock must agree with GitHub's. A host clock behind GitHub's costs one extra revise
+  run, as the rulings say. A host clock ahead of it by more than the seconds between a poll's
+  clock reading and its read of the reviews can miss a review written in that span, because the
+  job is stamped with the earlier reading.
+- A hand-off that keeps failing, such as a mark-ready that GitHub refuses, is tried again on every
+  poll, without a delay or a count. The log names it. A hand-off is also made while
+  `factory:halt` or `factory:pause` holds, like a notice or a status label: those stop runs only.
+- The `fix-rounds-exhausted` notice says "Three automated fix runs" whatever `max_fix_rounds`
+  holds.
+- A thread reply with nothing but white space, marked resolved, resolves its thread with no reply;
+  the agent contract warns against it.
