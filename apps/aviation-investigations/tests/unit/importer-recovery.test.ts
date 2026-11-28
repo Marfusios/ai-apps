@@ -1,5 +1,5 @@
 import { promisify } from 'node:util';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { matchingDev } from '../../worker/importer/facts.js';
 import { classify } from '../../worker/importer/failure.js';
 import { SpendRefusedError } from '../../worker/index/spend-gate.js';
@@ -58,6 +58,11 @@ const canary = {
 const now = new Date(canary.checkedAt);
 
 describe('real cross-environment matching orchestration', () => {
+  // Every test starts from a running container with nothing inspected, whatever ran before it.
+  afterEach(() => {
+    docker.state = 'running';
+    docker.inspected = [];
+  });
   it('requires both observed dev image checks to equal the certificate and intended live image', async () => {
     const facts = {
       canary: vi.fn(async () => ({ canary, current: publication, observedImage: image })),
@@ -75,9 +80,7 @@ describe('real cross-environment matching orchestration', () => {
         canary: vi.fn(async () => ({ canary, current: publication, observedImage: image })),
         retention: async () => [],
       };
-      docker.inspected = [];
       // A running container passes first, so the refusal below comes from the state alone.
-      docker.state = 'running';
       expect(await matchingDev(config, candidate, facts, undefined, now)).toEqual(canary);
       docker.state = state;
       await expect(matchingDev(config, candidate, facts, undefined, now)).rejects.toMatchObject({
