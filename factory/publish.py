@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from factory import bundle_check, compose, gitops, hygiene, jobs, result, snapshot
+from factory import bundle_check, compose, gitops, hygiene, jobs, markers, result, snapshot
 from factory.bundle_check import Verdict
 from factory.config import Config, is_trusted
 from factory.decide import BUILDING, NEEDS_HUMAN, QUEUED, STATUS_PREFIX
@@ -20,12 +20,17 @@ from factory.spool import Spool, SpoolError, SpoolMissing
 RESULT_FILE = "result.json"
 BUNDLE_FILE = "commits.bundle"
 SETTLED_FILE = "settled.json"
+THREADS_FILE = "threads.json"
+MAX_THREADS_BYTES = 1_000_000
+MAX_REPLIES = 100  # the thread replies of one run that are kept: a run is not to answer without end
 # The bound rests on the per-field character limits of `factory.result.validate`: a summary of 4,000, twenty
-# questions of 2,000, a failure reason of 4,000, ten follow-ups of 120 and 1,000, and a pull request title of 120
-# and body of 20,000 characters. JSON may spend 12 bytes on one character (a surrogate pair, escaped), and the
-# record's keys, indentation and problems take far less than the 100,000 bytes added for them.
-MAX_SETTLED_CHARACTERS = 4_000 + 20 * 2_000 + 4_000 + 10 * (120 + 1_000) + 120 + 20_000
-MAX_SETTLED_BYTES = 12 * MAX_SETTLED_CHARACTERS + 100_000
+# questions of 2,000, a failure reason of 4,000, ten follow-ups of 120 and 1,000, a pull request title of 120 and
+# body of 20,000 characters, and the replies kept, each of 4,000. JSON may spend 12 bytes on one character (a
+# surrogate pair, escaped), and the record's keys, indentation and problems take far less than the 100,000 bytes
+# added for them and 400 more for each reply's keys.
+MAX_SETTLED_CHARACTERS = 4_000 + 20 * 2_000 + 4_000 + 10 * (120 + 1_000) + 120 + 20_000 + MAX_REPLIES * 4_000
+MAX_SETTLED_BYTES = 12 * MAX_SETTLED_CHARACTERS + 100_000 + MAX_REPLIES * 400
+PULL_REQUEST_STAGES = ("fix", "revise")  # the stages that work on a pull request that already exists
 BASE_BRANCH = "main"
 STAGE_LABEL = "stage:fix"
 NOT_FOUND = 404
@@ -37,6 +42,10 @@ NOT_KEPT = "the work so far was not kept"
 REFUSED_PUSH = "GitHub refused the push of the checked commits"
 BRANCH_MOVED = "the work branch changed on GitHub while the run was going"
 STATUS_AFTER = {"done": BUILDING, "usage_limit": QUEUED}  # every other outcome waits for a person
+HAND_OFF_CHANGED = 422  # GitHub's answer to a review request for the pull request's own author, among others
+READY_FOR_REVIEW = ("mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) "
+                    "{ clientMutationId } }")
+RESOLVE_THREAD = "mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { clientMutationId } }"
 
 
 def _is_count(value: object) -> bool:
@@ -45,6 +54,13 @@ def _is_count(value: object) -> bool:
 
 def _is_texts(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _is_reply(value: object) -> bool:
+    return (isinstance(value, dict) and set(value) == {"thread", "comment_id", "text", "resolved"}
+            and isinstance(value["thread"], str) and jobs.THREAD_ID.fullmatch(value["thread"]) is not None
+            and _is_number(value["comment_id"]) and isinstance(value["text"], str)
+            and isinstance(value["resolved"], bool))
 
 
 def _is_pair(value: object, keys: tuple[str, str]) -> bool:
@@ -68,6 +84,7 @@ _RECORD_SHAPES: Mapping[str, Callable[[object], bool]] = {
     "failure_reason": lambda value: isinstance(value, str),
     "follow_ups": lambda value: isinstance(value, list) and all(_is_pair(item, ("title", "reason")) for item in value),
     "pull_request": lambda value: value is None or _is_pair(value, ("title", "body")),
+    "replies": lambda value: isinstance(value, list) and len(value) <= MAX_REPLIES and all(map(_is_reply, value)),
 }
 
 
@@ -77,6 +94,9 @@ class _Settled:
 
     The texts are the result's own, kept only from a valid result without a hygiene finding; compose neutralises
     them when it builds what is posted. `head_sha` and `commits` describe checked commits that are to be pushed.
+    `replies` are the answers of a done `revise` run to review threads the dispatcher knows, each with the id of
+    the thread's first comment and whether to resolve the thread; they are the only part of the result's replies
+    that is ever posted.
     """
 
     outcome: str
@@ -92,19 +112,23 @@ class _Settled:
     failure_reason: str = ""
     follow_ups: tuple[Mapping[str, str], ...] = ()
     pull_request: Mapping[str, str] | None = None
+    replies: tuple[Mapping[str, object], ...] = ()
 
     def record(self) -> dict:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_record(cls, record: dict) -> "_Settled | None":
-        """The outcome a record holds, or None when the record does not have the shape `record` writes."""
+    def from_record(cls, record: dict, stage: str) -> "_Settled | None":
+        """The outcome a record holds, or None when the record does not have the shape `record` writes.
+
+        A done run of a stage that opens the pull request must hold its text; a fix or revise run need not.
+        """
         if set(record) != set(_RECORD_SHAPES) or not all(fits(record[name]) for name, fits in _RECORD_SHAPES.items()):
             return None
-        if record["outcome"] == "done" and record["pull_request"] is None:
+        if record["outcome"] == "done" and record["pull_request"] is None and stage not in PULL_REQUEST_STAGES:
             return None
         return cls(**{**record, "problems": tuple(record["problems"]), "questions": tuple(record["questions"]),
-                      "follow_ups": tuple(record["follow_ups"])})
+                      "follow_ups": tuple(record["follow_ups"]), "replies": tuple(record["replies"])})
 
     def failed_internally(self) -> "_Settled":
         """The same run as an internal error: nothing is pushed, and neither its texts nor its model are shown."""
@@ -119,9 +143,12 @@ def _hygiene_labels(data: Mapping) -> list[str]:
     """The label of each hygiene finding in the texts of a valid result that are posted, each once.
 
     Never the text that matched. The verification is not posted, so a host path in a command the agent ran is no
-    finding; the finish check scans the same texts, so the agent learns of a finding before the dispatcher does.
+    finding; the finish check scans the result's posted texts, so the agent learns of a finding before the
+    dispatcher does, except in a reply to a review thread, which only this scan covers.
     """
-    found = (label for _, text in result.posted_texts(data) for _, label in hygiene.text_problems(text))
+    texts = [text for _, text in result.posted_texts(data)]
+    texts += [entry["body"] for entry in data.get("thread_replies") or ()]
+    found = (label for text in texts for _, label in hygiene.text_problems(text))
     return list(dict.fromkeys(found))
 
 
@@ -167,10 +194,15 @@ class Publisher:
         """Settle the run's one outcome, show it on GitHub, close the job, and return the outcome.
 
         The outcome is settled once and stored in the job's own directory before the first write. The writes go in
-        this order: the push, the pull request, the run comment, the status label; then the job is closed, and only
-        then is the quarantine ref dropped. A GitHubError, GitError or SpoolError leaves the job finished, so the next
-        poll repeats the call from the stored outcome, and each write is skipped, or has the same effect again, when
-        it was already made.
+        this order: the push, the pull request, the replies to review threads, the run comment, the status label;
+        then the job is closed, and only then is the quarantine ref dropped. A GitHubError, GitError or SpoolError
+        leaves the job finished, so the next poll repeats the call from the stored outcome, and each write is
+        skipped, or has the same effect again, when it was already made.
+
+        The stage, the round and the pull request come from the request, never from the result. A `fix_issue` run
+        opens the issue's pull request and comments on the issue. A `fix` or `revise` run works on the pull request
+        the request names: it opens and closes none, replaces its text when the result holds new text, comments on
+        it, and may be done without a commit. The issue's status label is set on the issue in every case.
 
         Commits are pushed only while the work branch on GitHub is still where the run started, or already at the
         checked head. When it is elsewhere, or GitHub refuses the push, the run is stored again as rejected, and that
@@ -186,8 +218,7 @@ class Publisher:
         settled, pull_request_text = self._settled(job_id, request, issue, branch, now)
         if settled.head_sha is not None:
             settled = self._push(job_id, request["base_sha"], branch, settled)
-        self._show(job_id, request["stage"], issue, branch, settled,
-                   pull_request_text if settled.outcome == "done" else None)
+        self._show(job_id, request, issue, branch, settled, pull_request_text if settled.outcome == "done" else None)
         self._close(job_id, settled)
         return settled.outcome
 
@@ -202,10 +233,10 @@ class Publisher:
             raise ValueError("now must be a timezone-aware datetime")
         branch = branch_for(issue.number)
         request = self._request(job_id, branch, issue.number)
-        _, loaded = self._stored(job_id)
+        _, loaded = self._stored(job_id, request["stage"])
         settled = self._store(job_id, loaded.failed_internally() if loaded is not None
                               else _Settled("crashed", 0, "", reason="internal"))
-        self._show(job_id, request["stage"], issue, branch, settled, None)
+        self._show(job_id, request, issue, branch, settled, None)
         self._close(job_id, settled)
         return settled.outcome
 
@@ -226,6 +257,44 @@ class Publisher:
             if not answered:
                 return
         self.github.post(f"{self.github.repo}/issues/{issue.number}/comments", {"body": body})
+
+    def hand_off(self, issue: Issue) -> None:
+        """Hand the issue's pull request to a person: mark it ready, ask for their review, and say so.
+
+        Nothing is written when GitHub now says the pull request is closed, when its head is no longer the one the
+        poll saw, when that head has a failing review, or when its hand-off comment is already there. The comment is
+        the last write, so a hand-off that stopped before it is done again in full; marking ready and asking for a
+        review are skipped or harmless the second time. A GitHubError other than GitHub's refusal of the review
+        request is raised, and the next poll repeats the hand-off.
+        """
+        pull = issue.pull_request
+        if pull is None or not pull.open or pull.verdict == "fail":
+            return
+        body = compose.handoff_comment(pull.head_sha, pull.verdict)  # refused before anything is written
+        path = f"{self.github.repo}/pulls/{pull.number}"
+        fresh = self.github.get(path)
+        if not isinstance(fresh, dict):
+            raise GitHubError(0, "GET /pulls did not answer with a pull request")
+        head = fresh.get("head")
+        if fresh.get("state") != "open" or not isinstance(head, dict) or head.get("sha") != pull.head_sha:
+            return
+        comments = self._listed(issue, f"{self.github.repo}/issues/{pull.number}/comments")
+        if any(marker.data.get("kind") == "handoff" and marker.data.get("head") == pull.head_sha
+               for marker in comments.markers(self.bot)):
+            return
+        if fresh.get("draft") is True:
+            self.github.graphql(READY_FOR_REVIEW, {"id": pull.node_id})
+        if issue.trigger_actor:
+            self._request_review(path, issue.trigger_actor)
+        self.github.post(f"{self.github.repo}/issues/{pull.number}/comments", {"body": body})
+
+    def _request_review(self, pull_path: str, reviewer: str) -> None:
+        """Ask the person for a review; GitHub refuses when they are the author or already asked, which is fine."""
+        try:
+            self.github.post(f"{pull_path}/requested_reviewers", {"reviewers": [reviewer]})
+        except GitHubError as error:
+            if error.status != HAND_OFF_CHANGED:
+                raise
 
     def set_status(self, issue_number: int, add: str | None, remove: Sequence[str]) -> None:
         """Remove each label in `remove`, then add `add`; a label that is already gone is not an error."""
@@ -253,6 +322,8 @@ class Publisher:
             raise SpoolError("request.json is the request of another job")
         if request["branch"] != branch:
             raise SpoolError(f"request.json names another branch than the one of issue #{issue_number}")
+        if request["stage"] in PULL_REQUEST_STAGES and request["pull_request"] == 0:
+            raise SpoolError("request.json names no pull request for a stage that works on one")
         return request
 
     # Working out the outcome ---------------------------------------------------------------------------------------
@@ -265,7 +336,7 @@ class Publisher:
         between two calls. A stored record that is unusable, or whose commits to push are no longer in the work
         repository, makes the repeat an internal error, stored over it, rather than a second reading of the run.
         """
-        found, loaded = self._stored(job_id)
+        found, loaded = self._stored(job_id, request["stage"])
         if not found:
             settled = self._settle(job_id, request, branch, now)
         elif loaded is None:
@@ -275,14 +346,14 @@ class Publisher:
         else:
             settled = loaded
         try:
-            pull_request_text = self._compose_ahead(job_id, request["stage"], issue.number, branch, settled)
+            pull_request_text = self._compose_ahead(job_id, request, issue.number, branch, settled)
         except ValueError:
             settled, pull_request_text = settled.failed_internally(), None
         if settled is not loaded:
             self._store(job_id, settled)
         return settled, pull_request_text
 
-    def _stored(self, job_id: str) -> tuple[bool, _Settled | None]:
+    def _stored(self, job_id: str, stage: str) -> tuple[bool, _Settled | None]:
         """Whether an earlier call stored an outcome, and that outcome unless its record is unusable.
 
         A record that is not JSON, not an object or not of the shape `_Settled.record` writes is unusable; so is one
@@ -294,7 +365,7 @@ class Publisher:
             return True, None
         if record is None:
             return False, None
-        return True, _Settled.from_record(record)
+        return True, _Settled.from_record(record, stage)
 
     def _settle(self, job_id: str, request: Mapping, branch: str, now: datetime) -> _Settled:
         """The outcome from the run record and, for a completed run, its result and bundle."""
@@ -326,11 +397,35 @@ class Publisher:
         if data["outcome"] == "needs_input":
             problems = (NOT_KEPT, *verdict.problems) if verdict is not None and not verdict.ok else ()
             return _Settled("needs_input", **timing, **texts, **kept, problems=problems)
-        if verdict is None:
+        if verdict is None and request["stage"] not in PULL_REQUEST_STAGES:
             return _Settled("rejected", **timing, **texts, problems=(bundle_check.NO_COMMITS,))
-        if not verdict.ok:
+        if verdict is not None and not verdict.ok:
             return _Settled("rejected", **timing, **texts, problems=verdict.problems)
-        return _Settled("done", **timing, **texts, **kept)
+        return _Settled("done", **timing, **texts, **kept, replies=self._replies(job_id, data))
+
+    def _replies(self, job_id: str, data: Mapping) -> tuple[dict, ...]:
+        """The replies of a result to threads in the job's `threads.json`, at most one a thread, the first kept.
+
+        A thread the file does not hold is ignored, and so is a file that is missing or unusable: the agent was
+        shown only the threads the file lists, so a reply to another is a guess or an attack.
+        """
+        known = self._threads(job_id)
+        chosen: dict[str, dict] = {}
+        for entry in data.get("thread_replies") or ():
+            thread = entry["thread_id"]
+            if thread in known and thread not in chosen:
+                chosen[thread] = {"thread": thread, "comment_id": known[thread], "text": entry["body"],
+                                  "resolved": entry["resolved"]}
+        return tuple(chosen.values())[:MAX_REPLIES]
+
+    def _threads(self, job_id: str) -> dict[str, int]:
+        """`{thread id: first comment id}` from the file the dispatcher wrote, without any entry that is not one."""
+        try:
+            index = self.spool.read_job_json(job_id, THREADS_FILE, MAX_THREADS_BYTES) or {}
+        except SpoolError:
+            return {}
+        return {thread: comment_id for thread, comment_id in index.items()
+                if jobs.THREAD_ID.fullmatch(thread) and _is_number(comment_id)}
 
     def _retry_at(self, resets_at: int | None, now: datetime) -> str:
         """The reported reset when it lies in the next six hours, else now plus the configured backoff."""
@@ -390,15 +485,16 @@ class Publisher:
         """
         return gitops.resolve(self.workrepo, sha) == sha
 
-    def _compose_ahead(self, job_id: str, stage: str, issue_number: int, branch: str,
+    def _compose_ahead(self, job_id: str, request: Mapping, issue_number: int, branch: str,
                        settled: _Settled) -> Mapping[str, str] | None:
-        """The pull request's text for a done run, and a trial run comment, so compose cannot refuse between writes.
+        """The pull request's text for a done run that has one, and a trial run comment, so compose cannot refuse
+        between writes.
 
         The trial leaves out only the pull request's link, which exists after the pull request step and is checked
-        against compose's own form there.
+        against compose's own form there. A reply cannot make compose refuse: a text it will not take is not posted.
         """
-        self._run_comment(job_id, stage, branch, settled, url="")
-        if settled.outcome != "done":
+        self._run_comment(job_id, request, branch, settled, url="")
+        if settled.outcome != "done" or settled.pull_request is None:
             return None
         return {
             "title": compose.pull_request_title(settled.pull_request["title"]),
@@ -444,11 +540,26 @@ class Publisher:
         self.spool.close(job_id, settled.outcome, self.clock())
         self._clean_up(job_id)
 
-    def _show(self, job_id: str, stage: str, issue: Issue, branch: str, settled: _Settled,
+    def _show(self, job_id: str, request: Mapping, issue: Issue, branch: str, settled: _Settled,
               pull_request_text: Mapping[str, str] | None) -> None:
-        """The writes after the push, each safe to repeat; the comment comes after the pull request, which it links."""
-        url = self._pull_request(branch, pull_request_text) if pull_request_text is not None else ""
-        self._post_run_comment(issue, job_id, self._run_comment(job_id, stage, branch, settled, url), settled.outcome)
+        """The writes after the push, each safe to repeat; the comment comes last of those on GitHub's pull request.
+
+        A fix or revise run's writes go to the pull request the request names, and its replies to review threads
+        come before its comment, which is what ends the job: an interruption before it repeats every earlier write.
+        """
+        stage = request["stage"]
+        if stage in PULL_REQUEST_STAGES:
+            number = request["pull_request"]
+            if pull_request_text is not None:
+                self.github.patch(f"{self.github.repo}/pulls/{number}", dict(pull_request_text))
+            if stage == "revise" and settled.outcome == "done":
+                self._post_replies(issue, job_id, number, settled.replies)
+            url = self._pull_request_url({"number": number})
+        else:
+            number = issue.number
+            url = self._pull_request(branch, pull_request_text) if pull_request_text is not None else ""
+        self._post_run_comment(issue, number, job_id, self._run_comment(job_id, request, branch, settled, url),
+                               settled.outcome)
         wanted = STATUS_AFTER.get(settled.outcome, NEEDS_HUMAN)
         others = [label for label in issue.labels if label.startswith(STATUS_PREFIX) and label != wanted]
         self.set_status(issue.number, wanted, others)
@@ -495,32 +606,77 @@ class Publisher:
         built = f"https://github.com/{self._repository}/pull/{pull['number']}"
         return built if compose.PULL_REQUEST_URL.fullmatch(built) else ""
 
-    def _run_comment(self, job_id: str, stage: str, branch: str, settled: _Settled, url: str) -> str:
-        """The run's comment. The texts go to compose raw: compose neutralises them, exactly once."""
+    def _run_comment(self, job_id: str, request: Mapping, branch: str, settled: _Settled, url: str) -> str:
+        """The run's comment. The texts go to compose raw: compose neutralises them, exactly once.
+
+        A done run names the head the work branch has now: the pushed commit, or the one the run started from when
+        it made none. The stage and the round are the request's.
+        """
+        head = (settled.head_sha or request["base_sha"]) if settled.outcome == "done" else ""
         return compose.run_comment(
-            job_id=job_id, stage=stage, outcome=settled.outcome, duration_seconds=settled.duration_seconds,
+            job_id=job_id, stage=request["stage"], outcome=settled.outcome, duration_seconds=settled.duration_seconds,
             model=settled.model, summary=settled.summary, questions=settled.questions,
             failure_reason=settled.failure_reason, problems=settled.problems, follow_ups=settled.follow_ups,
             pull_request_url=url, branch=branch, kept_commits=settled.commits, retry_at=settled.retry_at,
-            reason=settled.reason,
+            reason=settled.reason, round=request["round"], head=head,
         )
 
-    def _post_run_comment(self, issue: Issue, job_id: str, body: str, outcome: str) -> None:
-        """Post the comment unless one of the bot's own comments already reports this job.
+    def _post_replies(self, issue: Issue, job_id: str, number: int, replies: Sequence[Mapping[str, object]]) -> None:
+        """Reply once to each thread, then resolve the ones that are to be; a repeat does only what is missing.
+
+        The review comments are listed afresh, once, and a thread that already holds this job's reply from the bot
+        gets none. Resolving a resolved thread does nothing, so it is simply done again.
+        """
+        already: set[object] | None = None
+        for reply in replies:
+            body = self._reply_body(job_id, reply)
+            if body is not None:
+                if already is None:
+                    already = self._replied_threads(issue, job_id, number)
+                if reply["thread"] not in already:
+                    self.github.post(f"{self.github.repo}/pulls/{number}/comments/{reply['comment_id']}/replies",
+                                     {"body": body})
+            if reply["resolved"]:
+                self.github.graphql(RESOLVE_THREAD, {"id": reply["thread"]})
+
+    @staticmethod
+    def _reply_body(job_id: str, reply: Mapping[str, object]) -> str | None:
+        """The reply as it is posted, ending in the marker that says which job and thread it answers.
+
+        None for a text with nothing in it but white space or control characters: there is nothing to post.
+        """
+        try:
+            text = compose.thread_reply(reply["text"])
+        except ValueError:
+            return None
+        return f"{text}\n\n{markers.encode({'kind': 'reply', 'job': job_id, 'thread': reply['thread']})}"
+
+    def _replied_threads(self, issue: Issue, job_id: str, number: int) -> set[object]:
+        """The threads the bot has already answered for this job, from the pull request's review comments."""
+        found = self._listed(issue, f"{self.github.repo}/pulls/{number}/comments").markers(self.bot)
+        return {marker.data.get("thread") for marker in found
+                if marker.data.get("kind") == "reply" and marker.data.get("job") == job_id}
+
+    def _post_run_comment(self, issue: Issue, number: int, job_id: str, body: str, outcome: str) -> None:
+        """Post the comment on the issue or pull request `number` unless the bot's comments already report this job.
 
         A usage limit right after a usage limit edits that comment instead, so a long wait leaves one comment.
         """
-        found = self._fresh(issue).markers(self.bot)
+        found = self._fresh(issue, number).markers(self.bot)
         if any(marker.data.get("job") == job_id for marker in found):
             return
         if outcome == "usage_limit" and found and found[-1].outcome == "usage_limit":
             self.github.patch(f"{self.github.repo}/issues/comments/{found[-1].comment_id}", {"body": body})
         else:
-            self.github.post(f"{self.github.repo}/issues/{issue.number}/comments", {"body": body})
+            self.github.post(f"{self.github.repo}/issues/{number}/comments", {"body": body})
 
-    def _fresh(self, issue: Issue) -> Issue:
-        """The issue with its comments as GitHub lists them now, oldest first; the one passed in may be a poll old."""
-        listed = self.github.get_all(f"{self.github.repo}/issues/{issue.number}/comments", {"per_page": "100"})
+    def _fresh(self, issue: Issue, number: int | None = None) -> Issue:
+        """The issue with the comments of issue or pull request `number` (its own by default) as GitHub lists them."""
+        return self._listed(issue, f"{self.github.repo}/issues/{number or issue.number}/comments")
+
+    def _listed(self, issue: Issue, path: str) -> Issue:
+        """The issue with the comments GitHub lists at `path` now, oldest first; the one passed in may be a poll old."""
+        listed = self.github.get_all(path, {"per_page": "100"})
         comments = (snapshot.comment_from(entry) for entry in listed)
         ordered = sorted((comment for comment in comments if comment is not None), key=lambda comment: comment.id)
         return dataclasses.replace(issue, comments=tuple(ordered))
