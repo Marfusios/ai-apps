@@ -192,7 +192,7 @@ too vague, or in need of a decision, it returns questions instead and the issue 
 3. When a run has finished and one of those checks failed, a `factory-fix` run addresses it,
    given the failed jobs' logs and, when the review failed, its findings. At most three
    automated fix runs follow each other; when the checks still fail after the third, the
-   issue gets a notice and `status:needs-human`. A person's answer or retry starts the count
+   pull request gets a notice and the issue `status:needs-human`. A person's answer or retry starts the count
    again.
 4. When a run has finished and every check passes, with a review that did not fail, the
    dispatcher hands the pull request over: it marks it ready if it is still a draft,

@@ -595,7 +595,7 @@ queued, running, cancelled or skipped, and have passed when all three succeeded.
   names the round. A fix run that ends **done** is followed the same way, so fix runs follow each
   other until the checks pass, at most `max_fix_rounds` of them in a row
   (`max_fix_rounds = 3` in `factory/config.toml`). When the checks still fail after the last one,
-  the factory posts this notice on the issue and sets `status:needs-human`:
+  the factory posts this notice on the pull request and sets `status:needs-human` on the issue:
 
   > Three automated fix runs in a row did not make the checks pass. Comment `/factory retry` to start again, or a person takes over the pull request.
 

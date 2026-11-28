@@ -1092,6 +1092,60 @@ class NoticeTest(PublishTestCase):
                 self.publisher.post_notice(ISSUE, "needs-app")
                 self.assertEqual(self.github.calls, [self.POSTED])
 
+    def with_pull(self, open_: bool = True) -> Issue:
+        return dataclasses.replace(ISSUE, pull_request=PullRequest(PULL, open_, False, "https://example.test/pull/7"))
+
+    def listed_pull(self, *comments: tuple[int, str, int, str]) -> None:
+        """GitHub's fresh listing of the pull request's comments, each as (id, login, user id, body)."""
+        self.github.answers[key(self.pull_comments, ALL_COMMENTS)] = [comment_json(*comment) for comment in comments]
+
+    def exhausted_posted(self, number: int = PULL) -> tuple:
+        body = {"body": compose.notice("fix-rounds-exhausted")}
+        return ("POST", f"/repos/owner/name/issues/{number}/comments", body)
+
+    def test_a_second_exhausted_notice_is_posted_once_on_the_pull_request(self):
+        exhausted = compose.notice("fix-rounds-exhausted")
+        self.listed(self.bot(5, exhausted))
+        self.listed_pull((6, "Marfusios", 1, "/factory retry"))
+        self.publisher.post_notice(self.with_pull(), "fix-rounds-exhausted")
+        self.assertEqual(self.github.calls, [self.exhausted_posted()])
+        self.github.calls.clear()
+        self.publisher.post_notice(self.with_pull(), "fix-rounds-exhausted")  # the next poll sees it last
+        self.assertEqual(self.github.calls, [])
+
+    def test_the_exhausted_notice_already_last_in_the_merged_stream_is_not_posted_again(self):
+        exhausted = compose.notice("fix-rounds-exhausted")
+        self.listed(self.bot(5, exhausted))
+        self.listed_pull((4, "stranger", 9, "hello"))
+        self.publisher.post_notice(self.with_pull(), "fix-rounds-exhausted")
+        self.assertEqual(self.github.calls, [])
+
+    def test_a_trusted_comment_after_the_notice_on_either_side_lets_it_be_posted_again(self):
+        exhausted = compose.notice("fix-rounds-exhausted")
+        trusted = (9, "Marfusios", 1, "please look")
+        cases = {
+            "on the issue": ((self.bot(5, exhausted), trusted), ()),
+            "on the pull request": ((self.bot(5, exhausted),), (trusted,)),
+        }
+        for name, (on_issue, on_pull) in cases.items():
+            with self.subTest(name):
+                self.build()
+                self.listed(*on_issue)
+                self.listed_pull(*on_pull)
+                self.publisher.post_notice(self.with_pull(), "fix-rounds-exhausted")
+                self.assertEqual(self.github.calls, [self.exhausted_posted()])
+
+    def test_the_exhausted_notice_goes_to_the_issue_without_an_open_pull_request(self):
+        for name, issue in {"no pull request": ISSUE, "a closed one": self.with_pull(open_=False)}.items():
+            with self.subTest(name):
+                self.build()
+                self.publisher.post_notice(issue, "fix-rounds-exhausted")
+                self.assertEqual(self.github.calls, [self.exhausted_posted(12)])
+
+    def test_the_other_notices_go_to_the_issue_even_with_an_open_pull_request(self):
+        self.publisher.post_notice(self.with_pull(), "needs-app")
+        self.assertEqual(self.github.calls, [self.POSTED])
+
     def test_post_notice_refuses_an_unknown_notice(self):
         with self.assertRaises(ValueError):
             self.publisher.post_notice(ISSUE, "anything")

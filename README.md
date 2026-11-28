@@ -189,7 +189,7 @@ sequenceDiagram
         end
         P->>G: Approve and merge
     else Still failing after three fix runs
-        D->>G: A notice on the issue, status:needs-human
+        D->>G: A notice on the pull request, status:needs-human
         P->>G: Comment /factory retry, or take over
     end
 ```

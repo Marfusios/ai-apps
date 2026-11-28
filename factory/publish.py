@@ -33,6 +33,7 @@ MAX_REPLIES = 100  # the thread replies of one run that are kept: a run is not t
 # added for them and 400 more for each reply's keys.
 MAX_SETTLED_CHARACTERS = 4_000 + 20 * 2_000 + 4_000 + 10 * (120 + 1_000) + 120 + 20_000 + MAX_REPLIES * 4_000
 MAX_SETTLED_BYTES = 12 * MAX_SETTLED_CHARACTERS + 100_000 + MAX_REPLIES * 400
+PULL_REQUEST_NOTICES = ("fix-rounds-exhausted",)  # the notices that go on the open pull request, not the issue
 PULL_REQUEST_STAGES = ("fix", "revise")  # the stages that work on a pull request that already exists
 BASE_BRANCH = "main"
 STAGE_LABEL = "stage:fix"
@@ -246,20 +247,26 @@ class Publisher:
     def post_notice(self, issue: Issue, key: str) -> None:
         """Post the fixed notice `key`, unless GitHub now lists that notice last with no trusted comment after it.
 
-        The listing is read fresh, since the poll's may lag behind a notice just posted. A trusted comment after the
-        notice is an answer that did not settle it, such as a second `app:` line that names no app either, and gets
-        the notice again.
+        The comments are read the way `decide` reads them: the issue's and, when the issue has an open pull request,
+        that pull request's, listed fresh (the poll's may lag behind a notice just posted) and merged by id. A
+        trusted comment after the notice, on either side, is an answer that did not settle it, such as a second
+        `app:` line that names no app either or a `/factory retry` that failed again, and gets the notice again.
+        The notice of exhausted fix rounds goes on the open pull request, where the fix runs commented; every other
+        notice goes on the issue.
         """
         body = compose.notice(key)
-        fresh = self._fresh(issue)
-        found = fresh.markers(self.bot)
-        last = found[-1] if found else None
+        pull = issue.pull_request
+        pull_number = pull.number if pull is not None and pull.open else None
+        found = self._stream(issue, pull_number)
+        markers_found = found.markers(self.bot)
+        last = markers_found[-1] if markers_found else None
         if last is not None and last.data.get("kind") == "notice" and last.data.get("key") == key:
             answered = any(comment.id > last.comment_id and comment.author != self.bot.login
-                           and is_trusted(comment.author, self.config) for comment in fresh.comments)
+                           and is_trusted(comment.author, self.config) for comment in found.comments)
             if not answered:
                 return
-        self.github.post(f"{self.github.repo}/issues/{issue.number}/comments", {"body": body})
+        target = pull_number if key in PULL_REQUEST_NOTICES and pull_number is not None else issue.number
+        self.github.post(f"{self.github.repo}/issues/{target}/comments", {"body": body})
 
     def hand_off(self, issue: Issue) -> None:
         """Hand the issue's pull request to a person: mark it ready, ask for their review, and say so.
@@ -712,6 +719,14 @@ class Publisher:
     def _fresh(self, issue: Issue, number: int | None = None) -> Issue:
         """The issue with the comments of issue or pull request `number` (its own by default) as GitHub lists them."""
         return self._listed(issue, f"{self.github.repo}/issues/{number or issue.number}/comments")
+
+    def _stream(self, issue: Issue, pull_number: int | None) -> Issue:
+        """The issue with its comments and, for an open pull request, the pull request's, fresh and merged by id."""
+        stream = self._fresh(issue)
+        if pull_number is None:
+            return stream
+        merged = {comment.id: comment for comment in (*stream.comments, *self._fresh(issue, pull_number).comments)}
+        return dataclasses.replace(issue, comments=tuple(sorted(merged.values(), key=lambda comment: comment.id)))
 
     def _listed(self, issue: Issue, path: str) -> Issue:
         """The issue with the comments GitHub lists at `path` now, oldest first; the one passed in may be a poll old."""
