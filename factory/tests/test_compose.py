@@ -366,21 +366,49 @@ class ThreadReplyTests(unittest.TestCase):
 
 
 class HandoffTests(unittest.TestCase):
-    def test_the_hand_off_is_fixed_text_ending_with_its_marker(self) -> None:
-        text = compose.handoff_comment(HEAD)
+    def test_a_passed_review_is_reported_as_found_nothing_blocking(self) -> None:
+        text = compose.handoff_comment(HEAD, "pass")
         self.assertEqual({"kind": "handoff", "head": HEAD}, markers.parse(text))
         self.assertTrue(text.endswith(markers.encode({"kind": "handoff", "head": HEAD})))
         body = text.split("\n\n")[0]
         self.assertIn("checks pass", body.lower())
-        self.assertIn("nothing blocking", body)
-        self.assertIn("ready for a person's review", body)
+        self.assertIn("found nothing blocking", body)
+        self.assertTrue(body.endswith("The pull request is ready for a person's review."), body)
         self.assertNotIn("@", text)
-        self.assertEqual(text.replace(HEAD, "X"), compose.handoff_comment("f" * 40).replace("f" * 40, "X"))
+
+    def test_an_unavailable_review_is_not_claimed(self) -> None:
+        for verdict in ("unavailable", ""):
+            with self.subTest(verdict=verdict):
+                text = compose.handoff_comment(HEAD, verdict)
+                body = text.split("\n\n")[0]
+                self.assertEqual({"kind": "handoff", "head": HEAD}, markers.parse(text))
+                self.assertIn("checks pass", body.lower())
+                self.assertIn("gave no verdict for this commit", body)
+                self.assertIn("no second model has read it", body)
+                self.assertNotIn("nothing blocking", body)
+                self.assertTrue(body.endswith("The pull request is ready for a person's review."), body)
+        self.assertEqual(compose.handoff_comment(HEAD, ""), compose.handoff_comment(HEAD, "unavailable"))
+
+    def test_any_other_verdict_is_an_error_that_does_not_repeat_it(self) -> None:
+        for verdict in ("fail", "PASS", "passed", "pass ", "ok", PLANTED):
+            with self.subTest(verdict=verdict[:12]), self.assertRaises(ValueError) as caught:
+                compose.handoff_comment(HEAD, verdict)
+            self.assertNotIn(verdict.strip(), str(caught.exception))
+
+    def test_the_texts_are_fixed_and_hold_the_head_only_inside_the_marker(self) -> None:
+        other = "f" * 40
+        for verdict in ("pass", "unavailable", ""):
+            with self.subTest(verdict=verdict):
+                one = compose.handoff_comment(HEAD, verdict)
+                two = compose.handoff_comment(other, verdict)
+                self.assertEqual(one.replace(HEAD, "X"), two.replace(other, "X"))
+                self.assertEqual(1, one.count(HEAD))
+                self.assertEqual(markers.encode({"kind": "handoff", "head": HEAD}), one.split("\n\n")[-1])
 
     def test_the_head_must_be_forty_lower_case_hex_digits(self) -> None:
         for head in ("", "abc", HEAD.upper(), HEAD + "\n", HEAD + "0", "g" * 40, PLANTED):
             with self.subTest(head=head[:20]), self.assertRaises(ValueError) as caught:
-                compose.handoff_comment(head)
+                compose.handoff_comment(head, "pass")
             if head:
                 self.assertNotIn(head, str(caught.exception))
 

@@ -1,13 +1,13 @@
 """Compose every text the bot posts: run comments, pull request titles and bodies, and fixed notices.
 
 A run comment is the bot's own lines (a header, fixed lead-ins and headings, one closing line, a hidden
-marker) around text written by an agent or taken from a bundle. Each piece of that text is neutralised
-once and then placed inside a Markdown container it cannot leave, so it can neither swallow the bot's
-lines nor repeat them at the start of a line: a block quote (`> `) for the summary, the failure
-reason and a reply to a review thread, a list item with indented continuation lines for questions,
-problems and follow-ups. A blank line ends every container. The marker is always the last line. When the comment is over GitHub's size limit,
-the already-neutralised questions are cut evenly, then the summary, then the failure reason, each at most
-once. A pull request body starts with the one line GitHub acts on, `Closes #<issue>`.
+marker) around text written by an agent or taken from a bundle. Each piece of that text is neutralised once
+and then placed inside a Markdown container it cannot leave, so it can neither swallow the bot's lines nor
+repeat them at the start of a line: a block quote (`> `) for the summary, the failure reason and a reply to
+a review thread, a list item with indented continuation lines for questions, problems and follow-ups. A
+blank line ends every container. The marker is always the last line. When the comment is over GitHub's size
+limit, the already-neutralised questions are cut evenly, then the summary, then the failure reason, each at
+most once. A pull request body starts with the one line GitHub acts on, `Closes #<issue>`.
 """
 
 import re
@@ -87,12 +87,13 @@ _NOTICES: Mapping[str, tuple[str, str]] = {
 }
 
 THREAD_REPLY_LIMIT = 4_000
-MAX_ROUND = 1_000
-_HEAD = re.compile(r"[0-9a-f]{40}")
-HANDOFF_TEXT = (
-    "The checks pass and the automated review found nothing blocking. The pull request is ready for a person's "
-    "review."
-)
+HANDOFF_READY = "The pull request is ready for a person's review."
+HANDOFF_TEXTS: Mapping[str, str] = {
+    "pass": f"The checks pass and the automated review found nothing blocking. {HANDOFF_READY}",
+    # The review check also passes when the review model could not run, so no verdict must not read as a review.
+    "unavailable": "The checks pass. The automated review gave no verdict for this commit, so no second model has "
+                   f"read it. {HANDOFF_READY}",
+}
 
 
 def _check(name: str, value: object, pattern: re.Pattern[str], *, optional: bool = False) -> str:
@@ -252,9 +253,8 @@ def run_comment(
     _check("branch", branch, _BRANCH, optional=True)
     _check("retry_at", retry_at, _RETRY_AT, optional=True)
     _check("pull_request_url", pull_request_url, PULL_REQUEST_URL, optional=True)
-
-    _check("head", head, _HEAD, optional=True)
-    if isinstance(round, bool) or not isinstance(round, int) or not 0 <= round <= MAX_ROUND:
+    _check("head", head, spool.COMMIT_SHA, optional=True)
+    if isinstance(round, bool) or not isinstance(round, int) or not 0 <= round <= spool.MAX_ROUND:
         raise ValueError("round must be an integer from 0 to 1000")
 
     marker = {"kind": "run", "job": job_id, "stage": stage, "outcome": outcome}
@@ -344,10 +344,17 @@ def thread_reply(body: str) -> str:
     return _quoted_section("The agent replies:", text)
 
 
-def handoff_comment(head: str) -> str:
-    """The fixed comment that hands a pull request over, with a marker naming the head it was handed over at."""
-    _check("head", head, _HEAD)
-    return f"{HANDOFF_TEXT}\n\n{markers.encode({'kind': 'handoff', 'head': head})}"
+def handoff_comment(head: str, verdict: str) -> str:
+    """The fixed comment that hands a pull request over, with a marker naming the head it was handed over at.
+
+    `verdict` is the review's: "pass", or "unavailable" (or "") when it gave none for this head. A failed review
+    never leads to a hand-off, so any other value is an error.
+    """
+    _check("head", head, spool.COMMIT_SHA)
+    key = verdict or "unavailable"
+    if key not in HANDOFF_TEXTS:
+        raise ValueError("verdict is not one a hand-off follows")
+    return f"{HANDOFF_TEXTS[key]}\n\n{markers.encode({'kind': 'handoff', 'head': head})}"
 
 
 def notice(key: str) -> str:

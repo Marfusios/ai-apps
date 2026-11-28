@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from factory import markers
 from factory.config import MODEL, PERMISSION_MODES, STAGE_LIMITS, Config, is_trusted
 from factory.snapshot import Bot, Comment, Issue
-from factory.spool import JOB_ID
+from factory.spool import COMMIT_SHA, JOB_ID, MAX_ROUND, STAMP
 
 SKILLS = {"fix_issue": "factory-fix-issue", "fix": "factory-fix", "revise": "factory-revise"}
 MAX_CONTEXT_CHARS = 150_000
@@ -16,12 +16,12 @@ MAX_TITLE_CHARS = 300
 MAX_LOG_CHARS = 20_000
 MAX_FAILED_CHECKS = 5
 MAX_NAME_CHARS = 100
-MAX_PATH_CHARS = 200
+MAX_PATH_CHARS = 150  # with the longest id the heading still fits the title limit `_section` applies
+MAX_LINE = 10_000_000
 # The least of a section that cutting it down to share the room keeps; below it a comment is dropped instead.
 SECTION_FLOOR = 1_000
 CUT_LINE = "(truncated)"
-MAX_ROUND = 1_000
-MAX_PULL_REQUEST = 2**53  # a bound that keeps the number exact in JSON readers
+MAX_PULL_REQUEST = 2**53  # the largest integer every JSON reader keeps exact
 THREAD_ID = re.compile(r"[A-Za-z0-9_=-]{1,100}")
 WITHHELD_TITLE = "(title withheld)"
 WITHHELD_BODY = "The issue was opened by someone outside the trusted list, so its text is not included."
@@ -32,7 +32,6 @@ RETRY_COMMAND = "/factory retry"
 REVISE_COMMAND = "/factory revise"
 APP = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 BRANCH = re.compile(r"factory/[a-z0-9][a-z0-9-]{0,60}")
-BASE_SHA = re.compile(r"[0-9a-f]{40}")
 # A component made only of dots would turn the URL into a path that climbs out of github.com/<owner>.
 REPOSITORY_URL = re.compile(r"https://github\.com/(?!\.+/)[A-Za-z0-9._-]+/(?!\.+\.git)[A-Za-z0-9._-]+\.git")
 MAX_IDENTITY_CHARS = 200
@@ -220,7 +219,8 @@ def context(issue: Issue, config: Config, bot: Bot, *, sections: Sequence[tuple[
 
     Each `(heading, text)` of `sections` follows the comments as `## <heading>` and the text quoted line by line.
     To stay within `MAX_CONTEXT_CHARS` the sections are cut first, the longest down to an equal share (each keeps
-    at least `SECTION_FLOOR` characters), and only then are older comments dropped.
+    at least `SECTION_FLOOR` characters), and only then are older comments dropped. With more sections than fit at
+    the floor, the later sections are left out and counted.
     """
     trusted = is_trusted(issue.author, config)
     body = _cut(issue.body) if trusted else WITHHELD_BODY
@@ -272,42 +272,52 @@ def fix_sections(logs: Sequence[tuple[str, str]], review_text: str) -> list[tupl
 
 def _thread_heading(thread: Thread) -> str:
     path = _one_line(thread.path, MAX_PATH_CHARS) or "(no path)"
-    line = thread.line if isinstance(thread.line, int) and not isinstance(thread.line, bool) else 0
-    return f"Review thread {thread.id} ({path}:{line})" if line > 0 else f"Review thread {thread.id} ({path})"
+    line = thread.line if _integer_in(thread.line, 1, MAX_LINE) else 0
+    return f"Review thread {thread.id} ({path}:{line})" if line else f"Review thread {thread.id} ({path})"
 
 
-def _thread_text(thread: Thread, config: Config) -> str:
-    return "\n\n".join(f"{author}:\n{body}" for author, body in thread.comments if is_trusted(author, config))
+def _shown_text(thread: Thread, config: Config) -> str:
+    """What the agent may read of a thread: the comments of trusted people; "" when it is not shown at all.
+
+    A thread whose id is not an identifier is not shown either: it comes from an API and goes into a heading.
+    """
+    if not THREAD_ID.fullmatch(thread.id):
+        return ""
+    text = "\n\n".join(f"{author}:\n{body}" for author, body in thread.comments if is_trusted(author, config))
+    return text if text.strip() else ""
+
+
+def _review_heading(time: str) -> str:
+    return f"Review ({time})" if STAMP.fullmatch(time) else "Review"
 
 
 def revise_sections(
-    review_body: str, threads: Sequence[Thread], instruction: str, config: Config
+    reviews: Sequence[tuple[str, str]], threads: Sequence[Thread], instruction: str, config: Config
 ) -> list[tuple[str, str]]:
-    """The sections of a `revise` run's context: the review, its threads and the person's instruction.
+    """The sections of a `revise` run's context: the instruction, the reviews (oldest first) and their threads.
 
-    A thread keeps only the comments of trusted people and vanishes when none is left; a thread whose id is not an
-    identifier (it comes from an API and goes into a heading) is dropped.
+    The instruction comes first, as the person's directive, so that it is the last to be left out. A review is
+    `(submitted time, body)`; the time is shown only when it is exactly `YYYY-MM-DDTHH:MM:SSZ`. A thread is shown
+    only as `thread_index` says.
     """
-    sections = [("Review", review_body)] if review_body.strip() else []
+    sections = [("Instruction", instruction)] if instruction.strip() else []
+    sections += [(_review_heading(time), body) for time, body in reviews if body.strip()]
     for thread in threads:
-        text = _thread_text(thread, config) if THREAD_ID.fullmatch(thread.id) else ""
-        if text.strip():
+        text = _shown_text(thread, config)
+        if text:
             sections.append((_thread_heading(thread), text))
-    if instruction.strip():
-        sections.append(("Instruction", instruction))
     return sections
 
 
-def thread_index(threads: Sequence[Thread]) -> dict[str, int]:
-    """`{thread id: first comment id}` for the threads whose id is an identifier: what `threads.json` holds."""
-    return {thread.id: thread.first_comment_id for thread in threads if THREAD_ID.fullmatch(thread.id)}
+def thread_index(threads: Sequence[Thread], config: Config) -> dict[str, int]:
+    """`{thread id: first comment id}` for the threads `revise_sections` shows: what `threads.json` holds."""
+    return {thread.id: thread.first_comment_id for thread in threads if _shown_text(thread, config)}
 
 
 def job_file(
-    *, stage: str, app: str, issue: Issue, branch: str, base_sha: str, config: Config, round: int = 0,
-    pull_request: int = 0,
+    *, stage: str, app: str, issue: Issue, branch: str, base_sha: str, config: Config, round: int = 0
 ) -> dict:
-    """The `job.json` the agent contract promises. `pull_request` is the request's; the job file has no key for it."""
+    """The `job.json` the agent contract promises."""
     return {
         "schema": 1,
         "stage": stage,
@@ -369,12 +379,7 @@ def _skill_fits(stage: object, skill: object) -> bool:
     return isinstance(skill, str) and skill in SKILLS.values()
 
 
-def _integer_in(value: object, key: str) -> bool:
-    low, high = STAGE_LIMITS[key]
-    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
-
-
-def _number_in(value: object, low: int, high: int) -> bool:
+def _integer_in(value: object, low: int, high: int) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
 
 
@@ -392,16 +397,16 @@ def validate_request(data: object) -> list[str]:
         "skill": _skill_fits(stage, data.get("skill")),
         "app": _matches(APP, data.get("app")),
         "branch": _matches(BRANCH, data.get("branch")),
-        "base_sha": _matches(BASE_SHA, data.get("base_sha")),
+        "base_sha": _matches(COMMIT_SHA, data.get("base_sha")),
         "repository_url": _matches(REPOSITORY_URL, data.get("repository_url")),
         "model": _matches(MODEL, data.get("model")),
         "permission_mode": data.get("permission_mode") in PERMISSION_MODES,
-        "timeout_minutes": _integer_in(data.get("timeout_minutes"), "timeout_minutes"),
-        "max_turns": _integer_in(data.get("max_turns"), "max_turns"),
+        "timeout_minutes": _integer_in(data.get("timeout_minutes"), *STAGE_LIMITS["timeout_minutes"]),
+        "max_turns": _integer_in(data.get("max_turns"), *STAGE_LIMITS["max_turns"]),
         "git_name": _identity(data.get("git_name")),
         "git_email": _identity(data.get("git_email")),
-        "round": _number_in(data.get("round"), 0, MAX_ROUND),
-        "pull_request": _number_in(data.get("pull_request"), 0, MAX_PULL_REQUEST),
+        "round": _integer_in(data.get("round"), 0, MAX_ROUND),
+        "pull_request": _integer_in(data.get("pull_request"), 0, MAX_PULL_REQUEST),
     }
     problems += [f"{key} is not acceptable" for key in REQUEST_KEYS if key in data and not checks[key]]
     return problems
