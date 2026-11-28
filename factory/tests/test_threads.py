@@ -40,7 +40,7 @@ class FetchTest(unittest.TestCase):
         self.fetch()
         ((query, variables),) = self.github.graphql_calls
         self.assertEqual(variables, {"owner": "owner", "name": "name", "number": 40})
-        self.assertEqual(query.count("hasNextPage"), 2)
+        self.assertEqual(query.count("hasNextPage"), 1)  # asked of the threads only: it is all that is read
 
     def test_a_thread_is_read_with_its_place_comments_and_first_comment(self):
         (found,) = self.fetch(thread("T1", [comment(11, "One"), comment(12, "Two", author="other")], line=None)).threads

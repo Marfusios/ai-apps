@@ -20,7 +20,6 @@ query($owner: String!, $name: String!, $number: Int!) {
           path
           line
           comments(first: %d) {
-            pageInfo { hasNextPage }
             nodes { databaseId author { login } body pullRequestReview { databaseId } }
           }
         }
