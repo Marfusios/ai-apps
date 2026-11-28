@@ -51,22 +51,38 @@ factory/config.toml, config.py     + [stages.fix], [stages.revise], required_che
 
 ## How a pull request moves
 
-The comments of an issue and of its pull request form one stream (both are issue comments, so their ids order them), and "last marker" means the newest bot marker in that stream. Run markers gain `head` (the branch head after the run) and, for `fix` and `revise`, `round`.
+The comments of an issue and of its pull request form one stream (both are issue comments, so their ids order them). Run markers carry `head` (the branch head after the run) and, for `fix`, `round`. "The marker" below is the newest bot marker in that stream, looking through `needs-app` notices: while such a notice is the newest marker and no trusted person has replied, the issue waits with `status:needs-human`; after a reply the newest marker before the notice decides, so a start that was held back for the app keeps its stage.
 
-| Situation (pull request open, no job) | Action |
+The table applies to an open pull request with no job, unless the marker is a `fix_issue` run that did not end `done`, or the `untrusted-author` or `pr-closed` notice: those keep the rows of an issue without a pull request. The first row that applies wins.
+
+| Situation | Action |
 | --- | --- |
-| last marker `needs_input` from a `fix` or `revise` run, a trusted comment after it | start that stage again |
-| last marker a failure outcome from a `fix` or `revise` run, a trusted `/factory retry` after it | start that stage again |
-| a trusted person's review, submitted after the last marker, that requests changes or comments | start `revise` |
-| a trusted comment after the last marker whose first line starts with `/factory revise` | start `revise` with the rest as the instruction |
-| checks for the head are `failed`, fewer than `max_fix_rounds` fix runs in a row | start `fix`, round = runs in a row + 1 |
-| checks `failed`, `max_fix_rounds` fix runs in a row | notice `fix-rounds-exhausted`, `status:needs-human` |
-| checks `passed`, the pull request is a draft | `HandOff` |
+| the marker is `needs_input` from a `fix` or `revise` run, a trusted comment after it | start that stage again (`fix` at round 1) |
+| the marker is a failure from a `fix` or `revise` run, or the `fix-rounds-exhausted` notice, a trusted `/factory retry` after it | start that stage again (`fix` at round 1) |
+| a trusted person's review that requests changes or comments, submitted after the newest revise job was created | start `revise` |
+| a trusted comment whose first line starts with `/factory revise`, written after the newest revise job was created | start `revise` with the rest as the instruction |
+| the marker is `usage_limit` from a `fix` or `revise` run | wait until its time, then start that stage again (`fix` at the same round) |
+| the marker is a question or a failure of a `fix` or `revise` run, or the exhausted notice, and nobody answered | `status:needs-human`, nothing else |
+| the marker is a run that ended `done`; checks for the head `failed`; fewer than `max_fix_rounds` fix rounds behind | start `fix`, round = the marker's round + 1 (round 1 after a `fix_issue` or `revise` run) |
+| the marker is a run that ended `done`; checks `failed`; `max_fix_rounds` rounds behind | notice `fix-rounds-exhausted`, `status:needs-human` |
+| the marker is a run that ended `done`; checks `passed`; the review's verdict is not `fail` | `HandOff` |
 | anything else (checks pending, already handed over) | nothing |
+
+After the hand-off marker only the two rows of a person's ask start anything: a person has the pull request then, so a failing check starts no automatic run. A revise run that ends `done` is a finished run again, so its head is fixed when its checks fail and handed over when they pass: the person is asked to look again after every round.
+
+A person's asks are measured against the newest revise job, not against the last marker, because a review written while a run is in flight is older than that run's marker and would be lost. A job's creation time is the time in its id, which its run marker carries. A review or a command counts when it is strictly later, to the second, than the job of the newest `revise` run marker, or when there is no revise run yet. `decide.reviews_to_answer` and `decide.revise_instruction` give the dispatcher what a revise run must answer: everything since the newest revise job that ended `done`, so a retried run gets what its failed predecessor was given. The host's clock must agree with GitHub's to within the time between a review and the next poll; a larger difference costs one extra revise run, never a loop.
+
+Fix rounds are read from the marker, not counted. A person's restart is round 1, which is how a person's `/factory retry` starts the count again. A `fix` marker without a valid round counts as `max_fix_rounds`, so the factory stops instead of looping.
 
 Checks for a head are: `failed` when a check named in `required_checks` ended in failure or timed out; otherwise `pending` when a name in `required_checks` is missing or has not passed; otherwise `passed`. Only required names decide: a helper job that breaks (one matrix job, the job that calls the review model) is covered by the aggregate names `apps` and `review`. A cancelled, skipped or neutral run is neither a failure nor a pass of a required name.
 
-Two more rulings made during the build: the review workflow picks the document prompt when every changed file lies under `apps/<app>/docs/epics/` (the bot labels a pull request only after opening it, so a label cannot choose the first review's prompt), and it does not run again when a pull request is marked ready (that head has its review already).
+More rulings made during the build:
+
+- The review workflow picks the document prompt when every changed file lies under `apps/<app>/docs/epics/` (the bot labels a pull request only after opening it, so a label cannot choose the first review's prompt), and it lists the changed files without rename detection. It does not run again when a pull request is marked ready (that head has its review already).
+- Only check runs created by GitHub Actions count (`checks_app`), and a list of check runs longer than one page reads as pending.
+- The hand-off does not change the status label: the issue stays `status:building` until the merge, as an epic stays `status:design` while its design waits for a person. The hand-off comment and the review request tell the person.
+- The hand-off comment says "found nothing blocking" only for the verdict `pass`. The `review` check also passes when the review model could not run, and then the comment says that no second model has read the commit.
+- Not built: a notice for checks that stay pending for good (a cancelled run, a workflow that never started). The pull request's own page shows it; it is a candidate for the health review of build step 5.
 
 ---
 
@@ -199,8 +215,9 @@ For an open issue whose pull request is OPEN, `fetch` also reads, below `github.
 
 The table under "How a pull request moves" is added to `decide` for an open trusted issue whose pull request is open and not merged, AFTER the job rows and the settling check and BEFORE today's `done` row; today's rows for an issue without an open pull request are unchanged. Details that decide ties:
 
-- A marker's stage is `marker.data.get("stage")`; markers of kind `notice` have no stage. "Fix runs in a row" counts the run markers with stage `fix` at the end of the stream, skipping `usage_limit` outcomes and stopping at any other marker.
-- A review counts when its author is trusted, its state is `changes_requested` or `commented`, and its `submitted_at` is later than the last marker's `created_at` (both `YYYY-MM-DDTHH:MM:SSZ`, compared as text). An approval starts nothing.
+- A run marker is one whose `kind` is `run`; its stage is `marker.data.get("stage")`. Notices and the hand-off marker have no stage. A fix marker's round is its `round` when that is an integer from 1 to 1,000, else `max_fix_rounds`.
+- A review counts when its author is trusted, its state is `changes_requested` or `commented`, and its `submitted_at` is strictly later than the creation time of the newest revise job (times parsed strictly as `YYYY-MM-DDTHH:MM:SSZ`; text that does not parse never counts). An approval starts nothing.
+- `reviews_to_answer(issue, config, bot)` and `revise_instruction(issue, config, bot)` are public and pure: the dispatcher builds a revise run's context with them.
 - A start from this table goes through the same rules 5 to 7 as today (an app must be chosen, `factory:pause` queues it, halt, a live job and a usage limit block it).
 - `usage_limit` from a `fix` or `revise` run restarts that stage when its time has come.
 - A `fix-rounds-exhausted` notice carries outcome `failed`, so `/factory retry` after it starts `fix` at round 1.
@@ -225,12 +242,12 @@ The table under "How a pull request moves" is added to `decide` for an open trus
   - `@dataclass(frozen=True) class Thread: id: str; path: str; line: int; first_comment_id: int; comments: tuple[tuple[str, str], ...]` (author and body of each comment)
   - `context(issue, config, bot, *, sections: Sequence[tuple[str, str]] = ()) -> str`: as today, then each `(heading, text)` as `## <heading>` followed by the text quoted line by line with `> `, the whole still within `MAX_CONTEXT_CHARS` (sections are cut before comments are dropped)
   - `fix_sections(logs: Sequence[tuple[str, str]], review_text: str) -> list[tuple[str, str]]`: `Failed check: <name>` for each `(name, log tail)` (at most `MAX_FAILED_CHECKS`, each cut to `MAX_LOG_CHARS` from the end), then `Automated review` when the text is not blank
-  - `revise_sections(review_body: str, threads: Sequence[Thread], instruction: str, config: Config) -> list[tuple[str, str]]`: `Review` (the body), one `Review thread <id> (<path>:<line>)` per thread with the comments of trusted authors only, and `Instruction` for `/factory revise`
-  - `job_file` and `request_file` take `round: int = 0` and `pull_request: int = 0`; the request gains the keys `round` (0 to 1,000) and `pull_request` (0 or a positive integer), and `validate_request` accepts exactly the new shape
-  - `thread_index(threads: Sequence[Thread]) -> dict`: `{thread id: first comment id}` for `jobs/<id>/threads.json`
+  - `revise_sections(reviews: Sequence[tuple[str, str]], threads: Sequence[Thread], instruction: str, config: Config) -> list[tuple[str, str]]`: `Instruction` for `/factory revise` first, then `Review (<time>)` for each `(submitted time, body)` whose body is not blank, then one `Review thread <id> (<path>:<line>)` per thread with the comments of trusted authors only (a thread with none, or with an id that is not a plain identifier, is left out)
+  - `job_file` and `request_file` take `round: int = 0`, and `request_file` also `pull_request: int = 0`; the request gains the keys `round` (0 to 1,000) and `pull_request` (0 or a positive integer), and `validate_request` accepts exactly the new shape
+  - `thread_index(threads: Sequence[Thread], config: Config) -> dict`: `{thread id: first comment id}` of the threads `revise_sections` shows, for `jobs/<id>/threads.json`
 - Produces in `factory.compose`:
   - `thread_reply(body: str) -> str`: the neutralised reply (limit 4,000) under the lead-in `The agent replies:` as a block quote
-  - `handoff_comment(head: str) -> str`: a fixed text (checks pass, the automated review found nothing blocking, the pull request is ready for a person's review) ending with the marker `{"kind": "handoff", "head": head}`
+  - `handoff_comment(head: str, verdict: str) -> str`: a fixed text ending with the marker `{"kind": "handoff", "head": head}`: for the verdict `pass`, the checks pass and the automated review found nothing blocking; for `unavailable` or none, the checks pass and no second model has read the commit; either way the pull request is ready for a person's review. Any other verdict is refused
   - `run_comment` takes `round: int = 0` and `head: str = ""` and puts both into the marker when set (and `round` into the header line as `round <n>`); `notice` gains `fix-rounds-exhausted` (outcome `failed`: three automated fix runs in a row did not make the checks pass; `/factory retry` starts again; or a person takes over)
 
 - [ ] **Step 1: Write the failing tests**: sections appear after the comments, quoted, with planted headings and markers inside them unable to leave the quote; a 100,000-character log is cut to its last `MAX_LOG_CHARS`; a sixth failed check is left out with a line saying so; untrusted authors' thread comments are dropped; the request with `round` and `pull_request` validates and odd values are refused; `thread_reply`, `handoff_comment` and the new notice parse and are neutral; `run_comment` carries `round` and `head`.
@@ -252,7 +269,7 @@ The table under "How a pull request moves" is added to `decide` for an open trus
 - Produces in `Publisher`:
   - `publish` handles the stages `fix` and `revise` (from the job's request): the run comment goes on the PULL REQUEST (`request["pull_request"]`), with `round` and, after a push, the new `head`; no pull request is created; when the result holds `pull_request`, the existing one's title and body are replaced through compose; `done` without new commits is allowed and pushes nothing; the issue's status stays `status:building` after `done` and becomes `status:needs-human` otherwise. For `fix_issue` nothing changes except that the marker now carries `head`
   - for `revise` with outcome `done`: each entry of the result's `thread_replies` whose `thread_id` is in the job's `threads.json` is posted once with `POST /pulls/<n>/comments/<first comment id>/replies` (the body from `compose.thread_reply`), and a thread with `resolved: true` is resolved with the GraphQL mutation `resolveReviewThread`; replies already posted by this job are not posted again (a reply's body ends with a marker `{"kind": "reply", "job": …, "thread": …}`, found in a fresh listing of the pull request's review comments); unknown thread ids are ignored
-  - `hand_off(issue: Issue) -> None`: marks the pull request ready with the GraphQL mutation `markPullRequestReadyForReview` (the pull request's `node_id`), requests a review from `issue.trigger_actor` (`POST /pulls/<n>/requested_reviewers`; a 422 is tolerated), and posts `compose.handoff_comment(head)` on the pull request unless a hand-off marker for that head is already there
+  - `hand_off(issue: Issue) -> None`: reads the pull request afresh and stops when it is no longer open or its head is not the snapshot's `head_sha`; marks it ready with the GraphQL mutation `markPullRequestReadyForReview` (the pull request's `node_id`) when it is still a draft; requests a review from `issue.trigger_actor` (`POST /pulls/<n>/requested_reviewers`; a 422 is tolerated); and last posts `compose.handoff_comment(head, verdict)` on the pull request unless a hand-off marker for that head is already there. The comment is the last write, so a hand-off interrupted before it is done again in full on the next poll
 
 The settled-once rule covers the new writes: thread replies and the pull request's new text are part of the stored decision, taken from the result before the first write.
 
@@ -273,7 +290,7 @@ The settled-once rule covers the new writes: thread replies and the pull request
 **Interfaces:**
 - Consumes: everything above.
 
-Applying `StartJob` with stage `fix`: the base is the work branch's head in the mirror after a fetch, and it must equal the pull request's `head_sha` (otherwise the action fails and is tried again next poll); for each failed check of the snapshot (at most `jobs.MAX_FAILED_CHECKS`) the log tail comes from `github.download_text(<repo>/actions/jobs/<job id>/logs, 200_000)` (a failed download gives the text `the log could not be read`); the context gets `jobs.fix_sections`. Stage `revise`: the triggering review is the newest counting review of the snapshot (or none, for `/factory revise`); its threads come from one GraphQL query of the pull request's review threads (id, path, line, comments with database id, author login, body, and the review they belong to), keeping unresolved threads that belong to that review; the context gets `jobs.revise_sections`, and `threads.json` is submitted with the job. `HandOff` calls `publisher.hand_off`. Both stages put `round` and the pull request's number into the request and `job.json`.
+Applying `StartJob` with stage `fix`: the base is the work branch's head in the mirror after a fetch, and it must equal the pull request's `head_sha` (otherwise the action fails and is tried again next poll); for each failed check of the snapshot (at most `jobs.MAX_FAILED_CHECKS`) the log tail comes from `github.download_text(<repo>/actions/jobs/<job id>/logs, 200_000)` (a failed download gives the text `the log could not be read`); the context gets `jobs.fix_sections`. Stage `revise`: the reviews are `decide.reviews_to_answer` (none, for `/factory revise` alone) and the instruction is `decide.revise_instruction`; the threads come from one GraphQL query of the pull request's review threads (id, path, line, comments with database id, author login, body, and the review they belong to), keeping the unresolved threads in which a comment belongs to one of those reviews; the context gets `jobs.revise_sections`, and `threads.json` (`jobs.thread_index`) is submitted with the job. For `fix`, the failed checks that are not required names come first: they are the jobs whose logs show the failure, while a required name such as `apps` only sums them up. `HandOff` calls `publisher.hand_off`. Both stages put `round` and the pull request's number into the request and `job.json`.
 
 - [ ] **Step 1: Write the failing tests**: a snapshot with failed checks leads to a job whose `context.md` holds the quoted log tail and the review text, whose request has stage `fix`, round 1 and the pull request's number, and whose base is the pull request's head; a branch head that differs from the pull request's head starts nothing; a log that cannot be downloaded still starts the job; a trusted review leads to a `revise` job with its threads in the context and in `threads.json`; `HandOff` reaches the publisher; `--dry-run` still writes nothing and makes no GraphQL call.
 - [ ] **Step 2: Run and see them fail.**
