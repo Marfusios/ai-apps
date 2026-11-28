@@ -15,11 +15,11 @@ from unittest import mock
 from factory import dispatcher as dispatcher_module
 from factory import gitops, jobs
 from factory import config as factory_config
-from factory.decide import CloseJob, PostNotice, PublishRun, SetStatus, StartJob
+from factory.decide import CloseJob, HandOff, PostNotice, PublishRun, SetStatus, StartJob
 from factory.dispatcher import Dispatcher, Settings, SettingsError, job_views, settings_from_env
 from factory.github_api import GitHubError, RateLimited
 from factory.publish import Publisher
-from factory.snapshot import Bot
+from factory.snapshot import Bot, Check, Comment, Issue, PullRequest, Review, Snapshot
 from factory.spool import Spool, SpoolError, new_job_id
 from factory.tests.fakes import FakeGitHub
 from factory.tests.gitrepo import Repo
@@ -391,6 +391,272 @@ class TickTest(DispatcherTestCase):
         actions = self.dispatcher.tick()
         self.assertIn(PostNotice(12, "untrusted-author"), actions)
         self.assertEqual(len(self.calls_to("POST", self.comments)), 1)
+
+
+LOG_LINE = "npm ERR! the build exploded"
+UNREADABLE = "the log could not be read"
+TRUSTED = "Marfusios"
+PULL_NUMBER = 40
+
+
+def thread_node(thread_id: object, comments: list, *, resolved: object = False, path: object = "apps/demo/a.txt",
+                line: object = 3) -> dict:
+    return {"id": thread_id, "isResolved": resolved, "path": path, "line": line, "comments": {"nodes": comments}}
+
+
+def comment_node(database_id: object, body: str, *, review: object = 7, author: str = TRUSTED) -> dict:
+    return {"databaseId": database_id, "author": {"login": author}, "body": body,
+            "pullRequestReview": {"databaseId": review}}
+
+
+def threads_answer(*nodes: object) -> dict:
+    return {"repository": {"pullRequest": {"reviewThreads": {"nodes": list(nodes)}}}}
+
+
+class PullRequestRunsTest(DispatcherTestCase):
+    """A fix or revise run starts on the open pull request of an issue; the poll is handed in as a snapshot."""
+
+    def setUp(self):
+        super().setUp()
+        self.upstream.switch("factory/fix-12", self.base)
+        self.head = self.upstream.commit({"apps/demo/a.txt": "work\n"})
+
+    def logs_path(self, job_id: int) -> str:
+        return f"{self.github.repo}/actions/jobs/{job_id}/logs"
+
+    def review(self, review_id: int = 7, body: str = "Rename the helper.") -> Review:
+        return Review(review_id, TRUSTED, "changes_requested", "2026-11-27T10:00:00Z", body)
+
+    def pull(self, **fields) -> PullRequest:
+        values = {"number": PULL_NUMBER, "open": True, "merged": False, "url": "https://example.test/pull/40",
+                  "head_sha": self.head, "node_id": "PR_node"}
+        return PullRequest(**{**values, **fields})
+
+    def issue(self, pull: PullRequest | None, comments: tuple[Comment, ...] = ()) -> Issue:
+        return Issue(12, "Fix the greeting", "It says helo.", TRUSTED, True, ("factory:fix",), TRUSTED, comments, pull)
+
+    def tick(self, issue: Issue, *actions, dry_run: bool = False) -> list:
+        snap = Snapshot((issue,), False, ("demo",))
+        with mock.patch.object(dispatcher_module.snapshot, "fetch", return_value=snap), \
+                mock.patch.object(dispatcher_module, "decide", return_value=list(actions)):
+            return self.dispatcher.tick(dry_run=dry_run)
+
+    def failed(self, *checks: Check, **fields) -> Issue:
+        return self.issue(self.pull(checks=tuple(checks), **fields))
+
+    def context_of(self, job: str) -> str:
+        return self.spool.job_file(job, "context.md").read_text(encoding="utf-8")
+
+    def start_fix(self, issue: Issue, round: int = 1) -> str:
+        before = set(self.spool.job_ids())
+        self.tick(issue, StartJob(12, "demo", "fix", round))
+        (job,) = set(self.spool.job_ids()) - before
+        return job
+
+    def assert_fails_without_a_job(self, issue: Issue, action, error: str = "GitHubError") -> None:
+        with self.assertLogs("factory.dispatcher", "ERROR") as logged:
+            self.tick(issue, action)
+        self.assertEqual(self.spool.job_ids(), [])
+        self.assertEqual(logged.output, [f"ERROR:factory.dispatcher:{action.describe()} failed: {error}"])
+
+    def test_a_fix_run_starts_on_the_pull_request_head_with_the_log_and_the_review_in_its_context(self):
+        self.github.downloads[self.logs_path(31)] = f"2026-11-27T10:00:00.1234567Z {LOG_LINE}\n"
+        issue = self.failed(Check("unit", "failed", 31), verdict="fail", review_text="The loop never ends.")
+        job = self.start_fix(issue)
+        request = self.spool.request(job)
+        self.assertEqual((request["stage"], request["skill"], request["round"], request["pull_request"]),
+                         ("fix", "factory-fix", 1, PULL_NUMBER))
+        self.assertEqual((request["base_sha"], request["branch"]), (self.head, "factory/fix-12"))
+        record = json.loads(self.spool.job_file(job, "job.json").read_text())
+        self.assertEqual((record["stage"], record["round"], record["base_sha"]), ("fix", 1, self.head))
+        context = self.context_of(job)
+        self.assertIn(f"## Failed check: unit\n\n> {LOG_LINE}", context)
+        self.assertIn("> The loop never ends.", context)
+        self.assertFalse(self.spool.job_file(job, "threads.json").exists())
+
+    def test_a_fix_run_keeps_the_round_it_was_decided_for(self):
+        job = self.start_fix(self.failed(Check("unit", "failed", 0)), round=3)
+        self.assertEqual(self.spool.request(job)["round"], 3)
+
+    def test_the_review_text_is_part_of_the_work_only_when_the_verdict_is_fail(self):
+        for verdict in ("pass", "unavailable", ""):
+            with self.subTest(verdict=verdict):
+                job = self.start_fix(self.failed(Check("unit", "failed", 0), verdict=verdict, review_text="Nice."))
+                self.assertNotIn("Nice.", self.context_of(job))
+                self.spool.close(job, "done", self.now)
+
+    def test_failed_checks_that_are_not_required_names_come_first_and_only_failed_ones_count(self):
+        for job_id in (1, 2, 3, 4):
+            self.github.downloads[self.logs_path(job_id)] = f"log {job_id}"
+        issue = self.failed(Check("apps", "failed", 4), Check("unit b", "failed", 2), Check("passing", "passed", 9),
+                            Check("unit a", "failed", 1), Check("other", "other", 8), Check("review", "failed", 3))
+        context = self.context_of(self.start_fix(issue))
+        headings = [line for line in context.splitlines() if line.startswith("## Failed check")]
+        self.assertEqual(headings, ["## Failed check: unit a", "## Failed check: unit b", "## Failed check: apps",
+                                    "## Failed check: review"])
+        self.assertNotIn("passing", context)
+
+    def test_no_more_logs_are_downloaded_than_the_context_shows_and_the_rest_are_named(self):
+        names = [f"job{number}" for number in range(jobs.MAX_FAILED_CHECKS + 2)]
+        checks = [Check(name, "failed", number + 1) for number, name in enumerate(names)]
+        for check in checks:
+            self.github.downloads[self.logs_path(check.job_id)] = "tail"
+        with mock.patch.object(self.github, "download_text", wraps=self.github.download_text) as download:
+            context = self.context_of(self.start_fix(self.failed(*checks)))
+        self.assertEqual(download.call_count, jobs.MAX_FAILED_CHECKS)
+        self.assertIn(f"{names[-2]}, {names[-1]}", context)
+
+    def test_a_check_without_a_job_downloads_nothing_and_a_log_that_fails_is_replaced_by_a_line(self):
+        self.github.downloads[self.logs_path(5)] = LOG_LINE
+        issue = self.failed(Check("a", "failed", 0), Check("b", "failed", 77), Check("c", "failed", 5))
+        with mock.patch.object(self.github, "download_text", wraps=self.github.download_text) as download:
+            context = self.context_of(self.start_fix(issue))
+        self.assertEqual([call.args[0] for call in download.call_args_list],
+                         [self.logs_path(77), self.logs_path(5)])
+        self.assertEqual(context.count(f"> {UNREADABLE}"), 2)
+        self.assertIn(f"> {LOG_LINE}", context)
+
+    def test_a_rate_limit_while_reading_a_log_reaches_the_loop_and_starts_nothing(self):
+        with mock.patch.object(self.github, "download_text", side_effect=RateLimited(429, "limit", 0.0)):
+            with self.assertRaises(RateLimited):
+                self.tick(self.failed(Check("a", "failed", 5)), StartJob(12, "demo", "fix", 1))
+        self.assertEqual(self.spool.job_ids(), [])
+
+    def test_a_branch_that_is_not_at_the_pull_request_head_starts_nothing(self):
+        self.upstream.commit({"apps/demo/a.txt": "newer\n"})
+        self.assert_fails_without_a_job(self.failed(Check("a", "failed", 0)), StartJob(12, "demo", "fix", 1),
+                                        "GitError")
+
+    def test_a_branch_the_mirror_does_not_have_starts_nothing(self):
+        self.upstream.git("update-ref", "refs/heads/main", self.base)
+        self.upstream.git("symbolic-ref", "HEAD", "refs/heads/main")
+        self.upstream.git("update-ref", "-d", "refs/heads/factory/fix-12")
+        self.assert_fails_without_a_job(self.issue(self.pull(reviews=(self.review(),))),
+                                        StartJob(12, "demo", "revise"), "GitError")
+
+    def test_a_fix_or_revise_run_needs_an_open_pull_request_with_a_commit_id_as_its_head(self):
+        cases = {"none": None, "closed": self.pull(open=False), "no head": self.pull(head_sha=""),
+                 "short head": self.pull(head_sha=self.head[:10]),
+                 "upper case head": self.pull(head_sha=self.head.upper())}
+        for stage in ("fix", "revise"):
+            for name, pull in cases.items():
+                with self.subTest(stage=stage, pull=name):
+                    self.assert_fails_without_a_job(self.issue(pull), StartJob(12, "demo", stage))
+
+    def test_a_revise_run_gets_the_unresolved_threads_of_the_reviews_it_answers(self):
+        self.github.graphql_answers.append(threads_answer(
+            thread_node("PRRT_open", [comment_node(501, "Why this name?"), comment_node(502, "Please rename.")]),
+            thread_node("PRRT_done", [comment_node(503, "Old remark.")], resolved=True),
+            thread_node("PRRT_other", [comment_node(504, "From another review.", review=8)]),
+            thread_node("PRRT_plain", [{**comment_node(505, "No review."), "pullRequestReview": None}]),
+        ))
+        self.tick(self.issue(self.pull(reviews=(self.review(),))), StartJob(12, "demo", "revise"))
+        job = self.only_job()
+        request = self.spool.request(job)
+        self.assertEqual((request["stage"], request["skill"], request["round"], request["pull_request"]),
+                         ("revise", "factory-revise", 0, PULL_NUMBER))
+        self.assertEqual(request["base_sha"], self.head)
+        self.assertEqual(json.loads(self.spool.job_file(job, "threads.json").read_text()), {"PRRT_open": 501})
+        context = self.context_of(job)
+        self.assertIn("## Review (2026-11-27T10:00:00Z)\n\n> Rename the helper.", context)
+        self.assertIn("## Review thread PRRT_open (apps/demo/a.txt:3)", context)
+        self.assertIn("> Marfusios:\n> Why this name?\n>\n> Marfusios:\n> Please rename.", context)
+        for left_out in ("PRRT_done", "PRRT_other", "PRRT_plain", "Old remark."):
+            self.assertNotIn(left_out, context)
+        ((query, variables),) = self.github.graphql_calls
+        self.assertEqual(variables, {"owner": "owner", "name": "name", "number": PULL_NUMBER})
+        self.assertNotIn("owner/name", query)
+        self.assertNotIn(str(PULL_NUMBER), query)
+
+    def test_a_revise_command_alone_gives_its_instruction_and_no_threads_and_asks_graphql_nothing(self):
+        command = Comment(5, TRUSTED, 1, "2026-11-27T10:00:00Z", "/factory revise Use shorter names.")
+        self.tick(self.issue(self.pull(), (command,)), StartJob(12, "demo", "revise"))
+        job = self.only_job()
+        self.assertIn("## Instruction\n\n> Use shorter names.", self.context_of(job))
+        self.assertEqual(json.loads(self.spool.job_file(job, "threads.json").read_text()), {})
+        self.assertEqual(self.github.graphql_calls, [])
+
+    def test_odd_threads_from_graphql_are_left_out_and_raise_nothing(self):
+        good = comment_node(601, "Fine one.")
+        self.github.graphql_answers.append(threads_answer(
+            None, 5, "text", {},
+            thread_node("PRRT_ok", [None, 7, comment_node("9", "string id"), {**good, "author": None},
+                                    {**good, "pullRequestReview": {"databaseId": "7"}}, {**good, "body": None}, good],
+                        line=None),
+            thread_node(5, [good]),
+            thread_node("PRRT_flag", [good], resolved="no"),
+            thread_node("PRRT_path", [good], path=None),
+            thread_node("PRRT_line", [good], line="3"),
+            thread_node("PRRT_bool", [comment_node(True, "bool id")]),
+            {**thread_node("PRRT_comments", [good]), "comments": None},
+            thread_node("PRRT_empty", []),
+        ))
+        self.tick(self.issue(self.pull(reviews=(self.review(),))), StartJob(12, "demo", "revise"))
+        job = self.only_job()
+        self.assertEqual(json.loads(self.spool.job_file(job, "threads.json").read_text()), {"PRRT_ok": 601})
+        self.assertIn("## Review thread PRRT_ok (apps/demo/a.txt)\n", self.context_of(job))
+
+    def test_a_graphql_failure_starts_no_revise_run(self):
+        self.github.graphql_answers.append(GitHubError(0, "POST /graphql failed with 1 error"))
+        self.assert_fails_without_a_job(self.issue(self.pull(reviews=(self.review(),))),
+                                        StartJob(12, "demo", "revise"))
+
+    def test_an_answer_that_holds_no_threads_at_all_starts_no_revise_run(self):
+        self.github.graphql_answers.append({"repository": None})
+        self.assert_fails_without_a_job(self.issue(self.pull(reviews=(self.review(),))),
+                                        StartJob(12, "demo", "revise"))
+
+    def test_a_first_run_for_an_issue_keeps_its_round_and_pull_request_at_zero(self):
+        self.tick(self.issue(None), StartJob(12, "demo"))
+        job = self.only_job()
+        request = self.spool.request(job)
+        self.assertEqual((request["stage"], request["round"], request["pull_request"]), ("fix_issue", 0, 0))
+        self.assertEqual(json.loads(self.spool.job_file(job, "job.json").read_text())["round"], 0)
+        self.assertFalse(self.spool.job_file(job, "threads.json").exists())
+
+    def test_nothing_of_a_check_a_review_or_a_thread_is_logged(self):
+        self.github.downloads[self.logs_path(5)] = LOG_LINE
+        self.github.graphql_answers.append(threads_answer(thread_node("PRRT_open", [comment_node(501, "Hidden")])))
+        issue = self.failed(Check("secret-check", "failed", 5), reviews=(self.review(body="Secret review"),),
+                            verdict="fail", review_text="Secret verdict text")
+        with self.assertLogs("factory.dispatcher", "INFO") as logged:
+            self.tick(issue, StartJob(12, "demo", "fix", 1))
+            self.spool.close(self.only_job(), "done", self.now)
+            self.tick(issue, StartJob(12, "demo", "revise"))
+        self.assertEqual(logged.output, [
+            f"INFO:factory.dispatcher:{StartJob(12, 'demo', 'fix', 1).describe()}",
+            f"INFO:factory.dispatcher:{StartJob(12, 'demo', 'revise').describe()}"])
+
+    def test_the_hand_off_reaches_the_publisher_with_the_issue(self):
+        issue = self.issue(self.pull())
+        with mock.patch.object(Publisher, "hand_off") as hand_off:
+            self.tick(issue, HandOff(12))
+        hand_off.assert_called_once_with(issue)
+
+    def test_a_hand_off_that_fails_is_logged_like_any_failed_action(self):
+        with mock.patch.object(Publisher, "hand_off", side_effect=GitHubError(502, "down")), \
+                self.assertLogs("factory.dispatcher", "ERROR") as logged:
+            self.tick(self.issue(self.pull()), HandOff(12))
+        self.assertEqual(logged.output, [f"ERROR:factory.dispatcher:{HandOff(12).describe()} failed: GitHubError"])
+
+    def test_a_hand_off_that_meets_odd_data_does_not_stop_the_actions_after_it(self):
+        with mock.patch.object(Publisher, "hand_off", side_effect=ValueError("a refused verdict text")), \
+                self.assertLogs("factory.dispatcher", "ERROR") as logged:
+            self.tick(self.issue(self.pull()), HandOff(12), SetStatus(3, "status:queued", ()))
+        self.assertEqual(logged.output, [f"ERROR:factory.dispatcher:{HandOff(12).describe()} failed: ValueError"])
+        self.assertEqual(self.calls_to("POST", f"{self.github.repo}/issues/3/labels"), [{"labels": ["status:queued"]}])
+
+    def test_a_dry_run_reads_no_log_asks_graphql_nothing_and_writes_nothing(self):
+        self.github.downloads[self.logs_path(5)] = LOG_LINE
+        issue = self.issue(self.pull(checks=(Check("a", "failed", 5),), reviews=(self.review(),)))
+        before = self.tree()
+        with mock.patch.object(self.github, "download_text") as download:
+            actions = self.tick(issue, StartJob(12, "demo", "fix", 1), StartJob(12, "demo", "revise"), HandOff(12),
+                                dry_run=True)
+        self.assertEqual(len(actions), 3)
+        download.assert_not_called()
+        self.assertEqual((self.github.graphql_calls, self.github.calls, self.git.mirror_requests), ([], [], []))
+        self.assertEqual(self.tree(), before)
 
 
 class DryRunTest(DispatcherTestCase):

@@ -21,22 +21,48 @@ except ImportError:  # not on Windows: there the lock is skipped
     fcntl = None
 
 from factory import compose, gitops, jobs, snapshot
-from factory.config import REQUIRED_STAGE, Config, ConfigError
+from factory.config import Config, ConfigError
 from factory.config import load as load_config
-from factory.decide import Action, CloseJob, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide
+from factory.decide import (
+    PULL_REQUEST_STAGES, Action, CloseJob, HandOff, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide,
+    reviews_to_answer, revise_instruction,
+)
 from factory.github_api import GitHub, GitHubError, RateLimited, post_as_app
 from factory.github_auth import AuthError, InstallationToken
 from factory.gitops import GitError
 from factory.publish import Publisher
-from factory.snapshot import Bot, Issue, branch_for
-from factory.spool import JOB_ID, TIME_FORMAT, Spool, SpoolError, new_job_id
+from factory.snapshot import Bot, Check, Issue, PullRequest, Review, branch_for
+from factory.spool import COMMIT_SHA, JOB_ID, TIME_FORMAT, Spool, SpoolError, new_job_id
 
 log = logging.getLogger("factory.dispatcher")
 
 REPOSITORY = re.compile(r"(?!\.+/)[A-Za-z0-9._-]+/(?!\.+$)[A-Za-z0-9._-]+")
 LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?")  # git and the request refuse a leading "-"
 DIGITS = re.compile(r"[0-9]+")  # explicit [0-9]: \d would accept other scripts' digits
-STAGE = REQUIRED_STAGE  # the one stage this version starts
+MAIN_BRANCH = "refs/heads/main"
+MAX_LOG_BYTES = 200_000  # the end of a check's log read for a fix run
+UNREADABLE_LOG = "the log could not be read"
+MAX_THREADS = 100
+MAX_THREAD_COMMENTS = 50
+REVIEW_THREADS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: %d) {
+        nodes {
+          id
+          isResolved
+          path
+          line
+          comments(first: %d) {
+            nodes { databaseId author { login } body pullRequestReview { databaseId } }
+          }
+        }
+      }
+    }
+  }
+}
+""" % (MAX_THREADS, MAX_THREAD_COMMENTS)
 SETTLE_WINDOW = timedelta(minutes=10)  # how long a published job still holds its issue while GitHub's listing lags
 UNREADABLE_REQUEST = "unreadable request"
 FIRST_RETRY_SECONDS = 60
@@ -354,7 +380,9 @@ class Dispatcher:
         if isinstance(action, SetStatus):
             self._publisher.set_status(action.issue, action.add, action.remove)
         elif isinstance(action, StartJob):
-            self._start_job(issues[action.issue], action.app, now)
+            self._start_job(issues[action.issue], action, now)
+        elif isinstance(action, HandOff):
+            self._hand_off(issues[action.issue], action)
         elif isinstance(action, PostNotice):
             self._publisher.post_notice(issues[action.issue], action.key)
         elif isinstance(action, CloseJob):
@@ -362,29 +390,167 @@ class Dispatcher:
         else:
             raise TypeError(f"unknown action {type(action).__name__}")
 
-    def _start_job(self, issue: Issue, app: str, now: datetime) -> None:
+    def _hand_off(self, issue: Issue, action: HandOff) -> None:
+        """Hand the pull request over; odd data the publisher refuses ends this action only, not the tick."""
+        try:
+            self._publisher.hand_off(issue)
+        except ValueError as error:  # its message may quote text from GitHub, so only the class is logged
+            log.error("%s failed: %s", action.describe(), type(error).__name__)
+
+    def _start_job(self, issue: Issue, action: StartJob, now: datetime) -> None:
         settings = self._settings
         self._git.ensure_mirror(settings.mirror, f"https://github.com/{settings.repository}.git", self._token())
         self._git.ensure_workrepo(settings.workrepo, settings.mirror)
         branch = branch_for(issue.number)
-        # A run that asked a question left checked commits on its branch; the next run goes on from them.
-        base_sha = self._git.resolve(settings.mirror, f"refs/heads/{branch}") or self._git.resolve(
-            settings.mirror, "refs/heads/main")
-        if base_sha is None:
-            raise GitError("resolve", "no commit to start from")
-        job_id = new_job_id(STAGE, issue.number, now)
+        pull = _pull_request_to_work_on(issue) if action.stage in PULL_REQUEST_STAGES else None
+        base_sha = self._base_of(branch, pull)
+        sections, files = self._stage_context(issue, action.stage, pull)
+        job_id = new_job_id(action.stage, issue.number, now)
         bot = settings.bot
-        request = jobs.request_file(job_id=job_id, stage=STAGE, app=app, branch=branch, base_sha=base_sha,
-                                    repository=settings.repository, config=self._config, bot=bot)
+        request = jobs.request_file(job_id=job_id, stage=action.stage, app=action.app, branch=branch,
+                                    base_sha=base_sha, repository=settings.repository, config=self._config, bot=bot,
+                                    round=action.round, pull_request=pull.number if pull else 0)
         problems = jobs.validate_request(request)
         if problems:  # the runner and the publisher would refuse it, so the job would never end
             raise SpoolError(f"request.json would be refused: {'; '.join(problems)}")
-        job = jobs.job_file(stage=STAGE, app=app, issue=issue, branch=branch, base_sha=base_sha, config=self._config)
+        job = jobs.job_file(stage=action.stage, app=action.app, issue=issue, branch=branch, base_sha=base_sha,
+                            config=self._config, round=action.round)
         self._spool.submit(job_id, {
             "request.json": _json(request),
             "job.json": _json(job),
-            "context.md": jobs.context(issue, self._config, bot).encode("utf-8"),
+            "context.md": jobs.context(issue, self._config, bot, sections=sections).encode("utf-8"),
+            **files,
         })
+
+    def _base_of(self, branch: str, pull: PullRequest | None) -> str:
+        """The commit a run starts from.
+
+        A run on a pull request starts from the work branch, which must still be the head the poll saw: a branch that
+        moved since, or a mirror that lags, fails this poll and the next one decides again. A first run goes on from
+        the checked commits a run that asked a question left on its branch, else from main.
+        """
+        mirror = self._settings.mirror
+        head = self._git.resolve(mirror, f"refs/heads/{branch}")
+        if pull is None:
+            head = head or self._git.resolve(mirror, MAIN_BRANCH)
+            if head is None:
+                raise GitError("resolve", "no commit to start from")
+        elif head != pull.head_sha:
+            raise GitError("resolve", "the work branch is not at the head of the pull request")
+        return head
+
+    def _stage_context(
+        self, issue: Issue, stage: str, pull: PullRequest | None
+    ) -> tuple[list[tuple[str, str]], dict[str, bytes]]:
+        """The sections a stage adds to `context.md`, and the files it adds to its job."""
+        if pull is not None and stage == "fix":
+            return self._fix_sections(pull), {}
+        if pull is not None and stage == "revise":
+            return self._revise_context(issue, pull)
+        return [], {}
+
+    def _fix_sections(self, pull: PullRequest) -> list[tuple[str, str]]:
+        """The log tail of each failed check and, for a failing review, its text.
+
+        A check that is not a required name is a job whose log shows the failure, while a required name only sums
+        them up, so those come last. Only the logs the context will show are read; the others are named.
+        """
+        required = self._config.dispatcher.required_checks
+        failed = sorted((check for check in pull.checks if check.state == "failed"),
+                        key=lambda check: (check.name in required, check.name))
+        shown, left_out = failed[:jobs.MAX_FAILED_CHECKS], failed[jobs.MAX_FAILED_CHECKS:]
+        logs = [(check.name, self._log_of(check)) for check in shown] + [(check.name, "") for check in left_out]
+        return jobs.fix_sections(logs, pull.review_text if pull.verdict == "fail" else "")
+
+    def _log_of(self, check: Check) -> str:
+        """The end of the check's log, or a line saying it could not be read (a rate limit is not that)."""
+        if check.job_id <= 0:
+            return UNREADABLE_LOG
+        try:
+            return self._github.download_text(f"{self._github.repo}/actions/jobs/{check.job_id}/logs", MAX_LOG_BYTES)
+        except RateLimited:
+            raise
+        except GitHubError:
+            return UNREADABLE_LOG
+
+    def _revise_context(self, issue: Issue, pull: PullRequest) -> tuple[list[tuple[str, str]], dict[str, bytes]]:
+        bot = self._settings.bot
+        reviews = reviews_to_answer(issue, self._config, bot)
+        threads = self._threads_of(pull, reviews)
+        sections = jobs.revise_sections([(review.submitted_at, review.body) for review in reviews], threads,
+                                        revise_instruction(issue, self._config, bot), self._config)
+        return sections, {"threads.json": _json(jobs.thread_index(threads, self._config))}
+
+    def _threads_of(self, pull: PullRequest, reviews: Sequence[Review]) -> list[jobs.Thread]:
+        """The unresolved threads in which a comment belongs to one of the reviews; none without a review to answer."""
+        if not reviews:
+            return []
+        owner, name = self._settings.repository.split("/")
+        answer = self._github.graphql(REVIEW_THREADS_QUERY, {"owner": owner, "name": name, "number": pull.number})
+        return _threads_from(answer, {review.id for review in reviews})
+
+
+def _pull_request_to_work_on(issue: Issue) -> PullRequest:
+    """The issue's open pull request, which a fix or revise run needs, with its head as a full commit id."""
+    pull = issue.pull_request
+    if pull is None or not pull.open or COMMIT_SHA.fullmatch(pull.head_sha) is None:
+        raise GitHubError(0, "the issue has no open pull request with a head commit to work on")
+    return pull
+
+
+def _thread_nodes(answer: object) -> list:
+    """The thread nodes of a review-threads answer; an answer of another shape is an error, not an empty list."""
+    node: object = answer
+    for step in ("repository", "pullRequest", "reviewThreads", "nodes"):
+        node = node.get(step) if isinstance(node, dict) else None
+    if not isinstance(node, list):
+        raise GitHubError(0, "the review threads answer has an unexpected shape")
+    return node
+
+
+def _threads_from(answer: object, review_ids: set[int]) -> list[jobs.Thread]:
+    """The unresolved threads of the answer with a comment of one of the reviews; odd entries are left out."""
+    found = []
+    for node in _thread_nodes(answer):
+        thread = _thread_from(node)
+        if thread is not None and review_ids.intersection(thread[1]):
+            found.append(thread[0])
+    return found
+
+
+def _is_integer(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _thread_from(node: object) -> tuple[jobs.Thread, set[int]] | None:
+    """An unresolved thread and the ids of the reviews its comments belong to; None when it is odd or resolved."""
+    if not isinstance(node, dict):
+        return None
+    thread_id, path, line, resolved = node.get("id"), node.get("path"), node.get("line"), node.get("isResolved")
+    comments = node.get("comments")
+    nodes = comments.get("nodes") if isinstance(comments, dict) else None
+    odd = not (isinstance(thread_id, str) and isinstance(path, str) and isinstance(resolved, bool)
+               and (line is None or _is_integer(line)) and isinstance(nodes, list))
+    if odd or resolved:
+        return None
+    entries = [entry for entry in map(_comment_from, nodes) if entry is not None]
+    if not entries:
+        return None
+    texts = tuple((author, body) for _, author, body, _ in entries)
+    reviews = {review for _, _, _, review in entries if review is not None}
+    return jobs.Thread(thread_id, path, line or 0, entries[0][0], texts), reviews
+
+
+def _comment_from(node: object) -> tuple[int, str, str, int | None] | None:
+    """`(database id, author, body, database id of its review or None)` of a comment; None when it is odd."""
+    if not isinstance(node, dict):
+        return None
+    author, review = node.get("author"), node.get("pullRequestReview")
+    login = author.get("login") if isinstance(author, dict) else None
+    review_id = review.get("databaseId") if isinstance(review, dict) else None
+    valid = (_is_integer(node.get("databaseId")) and isinstance(login, str) and isinstance(node.get("body"), str)
+             and (review is None or _is_integer(review_id)))
+    return (node["databaseId"], login, node["body"], review_id) if valid else None
 
 
 def _json(record: Mapping) -> bytes:
