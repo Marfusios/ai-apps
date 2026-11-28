@@ -39,8 +39,8 @@ class GitHubError(Exception):
 class GraphQLRefused(GitHubError):
     """GitHub took a GraphQL call and reported errors in its answer; a failed request raises plain GitHubError.
 
-    `types` holds the `type` of each error, such as `NOT_FOUND` (an error of the type `RATE_LIMITED` raises RateLimited), and "" for one without a plain
-    type. Nothing else of an error is kept: its message may quote the query.
+    `types` holds the `type` of each error, such as `NOT_FOUND`, and "" for one without a plain type. Nothing else
+    of an error is kept: its message may quote the query. An error of the type `RATE_LIMITED` raises RateLimited.
     """
 
     def __init__(self, status: int, message: str, types: tuple[str, ...] = ()) -> None:

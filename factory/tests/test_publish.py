@@ -1391,11 +1391,20 @@ class ReviseRunTest(PublishTestCase):
         self.assertNotIn("@someone", posted["body"])
         self.assertNotIn("fixes #3", posted["body"])
 
-    def test_a_blank_reply_posts_nothing_but_its_resolution_is_honoured(self):
-        self.run_with([reply("T1", "   \n ", True)])
-        self.assertEqual(self.writes("POST", reply_path(501)), [])
-        self.assertEqual(self.resolved(), ["T1"])
-        self.assertEqual(len(self.writes("POST", self.pull_comments)), 1)
+    def test_a_result_with_a_reply_the_schema_refuses_is_refused_whole(self):
+        """White space for a reply, an id that is no thread id, more replies than allowed: the agent's own finish
+        check refuses each, so a result that still holds one is not the agent's honest work and nothing of it is used."""
+        too_many = [reply(f"T{number}", "Done.") for number in range(MAX_THREAD_REPLIES + 1)]
+        for name, replies in (("white space", [reply("T1", "   \n ", True), reply("T2", "Second.")]),
+                              ("no thread id", [reply("bad key!", "Done."), reply("T1", "First.")]),
+                              ("too many", too_many)):
+            with self.subTest(name):
+                self.build()
+                with mock.patch("factory.gitops.push") as push:
+                    self.assertEqual(self.run_with(replies), "crashed")
+                push.assert_not_called()
+                self.assertEqual([call for call in self.github.calls if REPLY_PATH.fullmatch(call[1])], [])
+                self.assertEqual(self.resolved(), [])
 
     def test_replies_are_posted_only_for_a_done_run(self):
         self.finish(result=needs_input_result(thread_replies=[reply("T1", "Done.", True)]))
@@ -1471,8 +1480,8 @@ class ReviseRunTest(PublishTestCase):
         self.assertIn("First answer.", posted["body"])
         self.assertEqual(self.resolved(), [])
 
-    def test_known_threads_beyond_the_limit_are_cut_and_a_repeat_loads_the_stored_decision(self):
-        threads = {f"T{number}": 1000 + number for number in range(MAX_THREAD_REPLIES + 1)}
+    def test_as_many_replies_as_a_result_may_hold_are_all_posted_and_a_repeat_loads_the_stored_decision(self):
+        threads = {f"T{number}": 1000 + number for number in range(MAX_THREAD_REPLIES)}
         self.spool.write_job_json(self.job, "threads.json", threads)
         replies = [reply(thread, "Done.") for thread in threads]
         self.branch_on_github(self.base)
@@ -1490,7 +1499,7 @@ class ReviseRunTest(PublishTestCase):
     def test_entries_of_the_thread_list_that_are_not_a_thread_and_a_comment_are_dropped(self):
         self.spool.write_job_json(self.job, "threads.json", {
             "B": True, "S": "502", "bad key!": 503, "": 504, "Z": 0, "N": -3, "T1": 501})
-        replies = [reply(thread, "Done.") for thread in ("B", "S", "bad key!", "Z", "N", "T1")]
+        replies = [reply(thread, "Done.") for thread in ("B", "S", "Z", "N", "T1")]  # each a thread id by its form
         self.assertEqual(self.run_with(replies), "done")
         self.assertEqual([call[1] for call in self.github.calls if REPLY_PATH.fullmatch(call[1])], [reply_path(501)])
 

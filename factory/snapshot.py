@@ -336,10 +336,10 @@ def _open_pull_details(
     github: GitHub, pull: PullRequest, config: Config
 ) -> tuple[PullRequest, tuple[Comment, ...]]:
     """The open pull request with its checks, review verdict and reviews, and its comments."""
-    # The check runs come first. The review check passes only after its comment is posted, so comments read after
-    # the checks hold the verdict of every review check seen as passed. Read the other way round, a review that
-    # finishes between the two reads shows as a passed check with no verdict, which hands the pull request over as
-    # if no second model had read the commit. Read in this order, that review shows as pending, with its verdict.
+    # The check runs come first. The review check ends after its comment is posted (or after every try to post it
+    # failed), so comments read after the checks hold the verdict of a review check seen as passed. Read the other
+    # way round, a review that finishes between the two reads shows as a passed check with no verdict, which hands
+    # the pull request over as if no second model had read the commit. Read in this order, it shows as pending.
     checks: tuple[Check, ...] = ()
     complete = True
     has_head = _SHA.fullmatch(pull.head_sha)  # the head goes into a request path, so only a full commit id may

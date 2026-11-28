@@ -97,7 +97,7 @@ def validate(data: object, stage: str) -> list[str]:
             _text(pull_request["body"], "pull_request.body", 1, 20000, problems, posted=True)
         else:
             problems.append("pull_request: must be an object with exactly the keys ['body', 'title']")
-    elif outcome == "done" and stage not in ("revise", "fix"):
+    elif outcome == "done" and stage not in PULL_REQUEST_STAGES:
         problems.append("pull_request: required when outcome is done")
 
     if "thread_replies" in data:

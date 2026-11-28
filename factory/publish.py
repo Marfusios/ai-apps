@@ -426,7 +426,7 @@ class Publisher:
             if thread in known and thread not in chosen:
                 chosen[thread] = {"thread": thread, "comment_id": known[thread], "text": entry["body"],
                                   "resolved": entry["resolved"]}
-        return tuple(chosen.values())[:MAX_THREAD_REPLIES]
+        return tuple(chosen.values())  # never more than MAX_THREAD_REPLIES: a valid result holds no more entries
 
     def _threads(self, job_id: str) -> dict[str, int]:
         """`{thread id: first comment id}` from the file the dispatcher wrote, without any entry that is not one."""

@@ -259,7 +259,7 @@ def run_comment(
     _check("pull_request_url", pull_request_url, PULL_REQUEST_URL, optional=True)
     _check("head", head, spool.COMMIT_SHA, optional=True)
     if isinstance(round, bool) or not isinstance(round, int) or not 0 <= round <= spool.MAX_ROUND:
-        raise ValueError("round must be an integer from 0 to 1000")
+        raise ValueError(f"round must be an integer from 0 to {spool.MAX_ROUND}")
 
     marker = {"kind": "run", "job": job_id, "stage": stage, "outcome": outcome}
     if outcome == "usage_limit":
