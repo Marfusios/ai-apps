@@ -20,6 +20,7 @@ DOWNLOAD_CHUNK_BYTES = 65_536
 USER_AGENT = "factory-dispatcher"
 DEFAULT_RETRY_SECONDS = 60
 NEXT_LINK = re.compile(r'<([^>]*)>\s*;\s*rel="next"')
+ERROR_TYPE = re.compile(r"[A-Z][A-Z_]{0,39}")  # how GitHub names the type of a GraphQL error
 
 
 class GitHubError(Exception):
@@ -36,8 +37,25 @@ class GitHubError(Exception):
 
 
 class GraphQLRefused(GitHubError):
-    """GitHub took a GraphQL call and reported errors in its answer: the request arrived, and asking again changes
-    nothing. A caller that can do without the result may skip it; a failed request raises plain GitHubError."""
+    """GitHub took a GraphQL call and reported errors in its answer; a failed request raises plain GitHubError.
+
+    `types` holds the `type` of each error, such as `NOT_FOUND` or `RATE_LIMITED`, and "" for one without a plain
+    type. Nothing else of an error is kept: its message may quote the query.
+    """
+
+    def __init__(self, status: int, message: str, types: tuple[str, ...] = ()) -> None:
+        super().__init__(status, message)
+        self.types = types
+
+    @property
+    def not_found(self) -> bool:
+        """True when every error says its object does not exist, so asking again changes nothing."""
+        return bool(self.types) and all(kind == "NOT_FOUND" for kind in self.types)
+
+
+def _error_type(error: object) -> str:
+    kind = error.get("type") if isinstance(error, dict) else None
+    return kind if isinstance(kind, str) and ERROR_TYPE.fullmatch(kind) else ""
 
 
 class RateLimited(GitHubError):
@@ -177,7 +195,8 @@ class GitHub:
         data = answer.get("data") if isinstance(answer, dict) else None
         if errors:
             count = len(errors) if isinstance(errors, list) else 1
-            raise GraphQLRefused(0, f"POST /graphql failed with {count} {'error' if count == 1 else 'errors'}")
+            types = tuple(map(_error_type, errors)) if isinstance(errors, list) else ()
+            raise GraphQLRefused(0, f"POST /graphql failed with {count} {'error' if count == 1 else 'errors'}", types)
         if not isinstance(data, dict):
             raise GitHubError(0, "POST /graphql answered no data")
         return data

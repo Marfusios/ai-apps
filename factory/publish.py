@@ -649,32 +649,35 @@ class Publisher:
         already: set[object] | None = None
         for reply in replies:
             body = self._reply_body(job_id, reply)
+            answered = True  # a reply without text has nothing to post
             if body is not None:
                 if already is None:
                     already = self._replied_threads(issue, job_id, number)
-                if reply["thread"] not in already:
-                    self._reply(number, reply, body)
-            if reply["resolved"]:
+                answered = reply["thread"] in already or self._reply(number, reply, body)
+            if reply["resolved"] and answered:  # resolving a thread the reply never reached would hide it unanswered
                 self._resolve(reply["thread"])
 
-    def _reply(self, number: int, reply: Mapping[str, object], body: str) -> None:
-        """Post one reply; GitHub says the comment or its thread is gone with a 404 or 422, and then it is skipped."""
+    def _reply(self, number: int, reply: Mapping[str, object], body: str) -> bool:
+        """Post one reply and say whether it was taken; a 404 or 422 means the comment or its thread is gone."""
         try:
             self.github.post(f"{self.github.repo}/pulls/{number}/comments/{reply['comment_id']}/replies",
                              {"body": body})
         except GitHubError as error:
             if error.status not in REPLY_REFUSED:
                 raise
+            return False
+        return True
 
     def _resolve(self, thread: object) -> None:
-        """Resolve a thread; when GitHub refuses in its answer (the thread is gone, say) it is skipped.
+        """Resolve a thread; when GitHub answers that it does not exist, it is skipped.
 
-        A request that failed is not that: it raises, and the publish is tried again.
+        Any other refusal (a limit, a permission) and any failed request raise, and the publish is tried again.
         """
         try:
             self.github.graphql(RESOLVE_THREAD, {"id": thread})
-        except GraphQLRefused:
-            pass
+        except GraphQLRefused as refused:
+            if not refused.not_found:
+                raise
 
     @staticmethod
     def _reply_body(job_id: str, reply: Mapping[str, object]) -> str | None:

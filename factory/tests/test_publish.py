@@ -1443,9 +1443,11 @@ class ReviseRunTest(PublishTestCase):
             with self.subTest(status=status):
                 self.build()
                 self.github.refuse[("POST", reply_path(501))] = status
-                self.assertEqual(self.run_with([reply("T1", "First.", True), reply("T2", "Second.")]), "done")
+                replies = [reply("T1", "First.", True), reply("T2", "Second.", True)]
+                self.assertEqual(self.run_with(replies), "done")
                 self.assertEqual(len(self.writes("POST", reply_path(502))), 1)
-                self.assertEqual(self.resolved(), ["T1"])
+                # A thread whose reply could not be posted stays open: resolving it would hide an unanswered thread.
+                self.assertEqual(self.resolved(), ["T2"])
                 self.assertEqual(len(self.writes("POST", self.pull_comments)), 1)
                 self.assertEqual(self.spool.state(self.job), "closed")
 
@@ -1457,10 +1459,13 @@ class ReviseRunTest(PublishTestCase):
         self.assertEqual(self.spool.state(self.job), "finished")
 
     def test_a_resolution_github_refuses_in_its_answer_is_skipped_but_a_failed_request_is_not(self):
-        self.github.graphql_answers.insert(0, GraphQLRefused(0, "refused"))
+        self.github.graphql_answers.insert(0, GraphQLRefused(0, "refused", ("NOT_FOUND",)))
         self.assertEqual(self.run_with([reply("T1", "First.", True), reply("T2", "Second.", True)]), "done")
         self.assertEqual(self.resolved(), ["T1", "T2"])
         for error in (GitHubError(502, "POST /graphql failed"),
+                      GraphQLRefused(0, "refused", ("RATE_LIMITED",)),  # a refusal that may pass later is retried
+                      GraphQLRefused(0, "refused", ("NOT_FOUND", "FORBIDDEN")),
+                      GraphQLRefused(0, "refused"),
                       GitHubError(0, "POST /graphql failed with 1 error"),  # the wording alone decides nothing
                       GitHubError(0, "POST /graphql failed on the network (OSError)")):
             with self.subTest(error=error.message):

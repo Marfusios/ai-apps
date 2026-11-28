@@ -440,6 +440,20 @@ class GraphQLTest(unittest.TestCase):
         with self.assertRaises(GraphQLRefused) as refused:
             github.graphql("q", {})
         self.assertEqual(refused.exception.status, 0)
+        self.assertEqual(refused.exception.types, ("",))
+
+    def test_a_refusal_names_the_type_of_each_error_and_nothing_else_from_it(self):
+        errors = [{"type": "NOT_FOUND", "message": "secret-text"}, {"type": "not a type"}, {"type": 7}, "odd",
+                  {"type": "RATE_LIMITED"}]
+        github, _ = client([("POST", "/graphql", 200, {}, {"errors": errors})])
+        with self.assertRaises(GraphQLRefused) as refused:
+            github.graphql("q", {})
+        self.assertEqual(refused.exception.types, ("NOT_FOUND", "", "", "", "RATE_LIMITED"))
+        self.assertNotIn("secret-text", str(refused.exception))
+        github, _ = client([("POST", "/graphql", 200, {}, {"errors": "odd"})])
+        with self.assertRaises(GraphQLRefused) as odd:
+            github.graphql("q", {})
+        self.assertEqual(odd.exception.types, ())
         for status, answer in ((502, {}), (200, {"data": None}), (200, [])):
             with self.subTest(status=status, answer=answer):
                 github, _ = client([("POST", "/graphql", status, {}, answer)])
