@@ -248,7 +248,7 @@ The table under "How a pull request moves" is added to `decide` for an open trus
 - Produces in `factory.compose`:
   - `thread_reply(body: str) -> str`: the neutralised reply (limit 4,000) under the lead-in `The agent replies:` as a block quote
   - `handoff_comment(head: str, verdict: str) -> str`: a fixed text ending with the marker `{"kind": "handoff", "head": head}`: for the verdict `pass`, the checks pass and the automated review found nothing blocking; for `unavailable` or none, the checks pass and no second model has read the commit; either way the pull request is ready for a person's review. Any other verdict is refused
-  - `run_comment` takes `round: int = 0` and `head: str = ""` and puts both into the marker when set (and `round` into the header line as `round <n>`); `notice` gains `fix-rounds-exhausted` (outcome `failed`: three automated fix runs in a row did not make the checks pass; `/factory retry` starts again; or a person takes over)
+  - `run_comment` takes `round: int = 0` and `head: str = ""` and puts both into the marker when set (and `round` into the header line as `round <n>`); `notice` gains `fix-rounds-exhausted` (outcome `failed`: the automated fix runs did not make the checks pass and the limit of fix rounds in a row is reached, with no number in the text since the limit is a setting; `/factory retry` starts again; or a person takes over); a `fix` or `revise` run that ends `done` with no commit pushed closes its comment with the fixed sentence "No commit was pushed, so the branch is unchanged."
 
 - [ ] **Step 1: Write the failing tests**: sections appear after the comments, quoted, with planted headings and markers inside them unable to leave the quote; a 100,000-character log is cut to its last `MAX_LOG_CHARS`; a sixth failed check is left out with a line saying so; untrusted authors' thread comments are dropped; the request with `round` and `pull_request` validates and odd values are refused; `thread_reply`, `handoff_comment` and the new notice parse and are neutral; `run_comment` carries `round` and `head`.
 - [ ] **Step 2: Run and see them fail.**
@@ -387,7 +387,5 @@ Known limits, each a candidate for later work:
 - A hand-off that keeps failing, such as a mark-ready that GitHub refuses, is tried again on every
   poll, without a delay or a count. The log names it. A hand-off is also made while
   `factory:halt` or `factory:pause` holds, like a notice or a status label: those stop runs only.
-- The `fix-rounds-exhausted` notice says "Three automated fix runs" whatever `max_fix_rounds`
-  holds.
 - A thread reply with nothing but white space, marked resolved, resolves its thread with no reply;
   the agent contract warns against it.

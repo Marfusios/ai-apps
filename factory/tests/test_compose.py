@@ -236,6 +236,19 @@ class RunCommentTests(unittest.TestCase):
                 self.assertEqual(closing, expected.get(outcome, CLOSING))
                 self.assertIn(compose.OUTCOME_WORDS[outcome], body.split("\n\n")[0])
 
+    def test_a_done_fix_or_revise_run_without_a_commit_says_so(self) -> None:
+        for stage in ("fix", "revise"):
+            with self.subTest(stage=stage):
+                body = comment(stage=stage, outcome="done", kept_commits=0)
+                self.assertEqual(body.split("\n\n")[-2], "No commit was pushed, so the branch is unchanged.")
+                self.assertEqual(markers.parse(body)["outcome"], "done")
+                pushed = comment(stage=stage, outcome="done", kept_commits=1)
+                self.assertNotIn("No commit was pushed", pushed)
+
+    def test_a_done_run_that_opens_a_pull_request_never_says_no_commit_was_pushed(self) -> None:
+        body = comment(stage="fix_issue", outcome="done", kept_commits=0, pull_request_url="https://github.com/o/r/pull/1")
+        self.assertNotIn("No commit was pushed", body)
+
     def test_the_branch_is_named_only_when_commits_were_kept(self) -> None:
         self.assertNotIn(BRANCH, comment(branch=BRANCH, kept_commits=0))
         self.assertIn(f"`{BRANCH}`", comment(branch=BRANCH, kept_commits=1))
@@ -513,9 +526,13 @@ class NoticeTests(unittest.TestCase):
         self.assertIn("/factory retry", compose.notice("pr-closed"))
         self.assertIn("restate the request in a comment", compose.notice("untrusted-author"))
         exhausted = compose.notice("fix-rounds-exhausted")
-        self.assertIn("Three automated fix runs in a row", exhausted)
+        self.assertIn("did not make the checks pass", exhausted)
+        self.assertIn("limit of fix rounds in a row", exhausted)
         self.assertIn("`/factory retry`", exhausted)
         self.assertIn("takes over", exhausted)
+
+    def test_the_exhausted_notice_names_no_number_because_the_limit_is_a_setting(self) -> None:
+        self.assertIsNone(re.search(r"\d|\b(one|two|three|four|five)\b", compose.notice("fix-rounds-exhausted").split("\n\n")[0], re.I))
 
     def test_an_unknown_notice_is_an_error(self) -> None:
         with self.assertRaises(ValueError):

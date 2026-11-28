@@ -5,6 +5,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 STAGES = ("design", "plan", "step", "fix", "revise", "fix_issue")
+PULL_REQUEST_STAGES = ("fix", "revise")  # the stages that work on a pull request that already exists
 OUTCOMES = ("done", "needs_input", "failed")
 MAX_RESULT_BYTES = 200_000
 KEYS = {"schema", "outcome", "summary", "questions", "failure_reason", "pull_request",

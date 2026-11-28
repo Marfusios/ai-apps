@@ -1207,6 +1207,7 @@ class FixRunTest(PublishTestCase):
             "kind": "run", "job": self.job, "stage": "fix", "outcome": "done", "round": 2, "head": self.work_head})
         self.assertIn("round 2", posted["body"])
         self.assertNotIn("Pull request:", posted["body"])  # the comment is on that pull request already
+        self.assertNotIn("No commit was pushed", posted["body"])
         self.assertEqual(self.github.posted(self.labels), {"labels": ["status:building"]})
         self.assertEqual(self.spool.state(self.job), "closed")
 
@@ -1218,6 +1219,7 @@ class FixRunTest(PublishTestCase):
         self.assertIsNone(self.remote_branch())
         marker = markers.parse(self.assertCommentedOnThePullRequest()["body"])
         self.assertEqual((marker["outcome"], marker["head"], marker["round"]), ("done", self.base, 2))
+        self.assertIn("No commit was pushed, so the branch is unchanged.", self.github.posted(self.pull_comments)["body"])
         self.assertEqual(self.github.posted(self.labels), {"labels": ["status:building"]})
 
     def test_a_pull_request_text_in_the_result_replaces_the_existing_text(self):

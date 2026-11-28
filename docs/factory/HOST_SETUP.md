@@ -597,7 +597,7 @@ queued, running, cancelled or skipped, and have passed when all three succeeded.
   (`max_fix_rounds = 3` in `factory/config.toml`). When the checks still fail after the last one,
   the factory posts this notice on the pull request and sets `status:needs-human` on the issue:
 
-  > Three automated fix runs in a row did not make the checks pass. Comment `/factory retry` to start again, or a person takes over the pull request.
+  > The automated fix runs did not make the checks pass, and the limit of fix rounds in a row is reached. Comment `/factory retry` to start again, or a person takes over the pull request.
 
   Read the run comments and the failed checks' logs. When a passing fault, such as a network
   failure on the hosted runner, is the cause, rerun the failed jobs on GitHub first. Then either
@@ -633,7 +633,7 @@ resolves the threads its change settled.
 
 | Outcome word | Marker | What happened | What starts the next run |
 | --- | --- | --- | --- |
-| **done** | `done` | The agent finished, and its commits passed the checks. They are on the work branch `factory/fix-<issue>`, and a draft pull request is open or updated; the comment links it. A fix or revise run pushes to the pull request's branch and may have no commit; it replaces the pull request's title and body only when it wrote new ones and the bot opened the pull request. | The hosted checks of the head: a fix run when they fail, the hand-off when they pass (above). |
+| **done** | `done` | The agent finished, and its commits passed the checks. They are on the work branch `factory/fix-<issue>`, and a draft pull request is open or updated; the comment links it. A fix or revise run pushes to the pull request's branch and may have no commit, and then its comment says that no commit was pushed and the branch is unchanged; it replaces the pull request's title and body only when it wrote new ones and the bot opened the pull request. | The hosted checks of the head: a fix run when they fail, the hand-off when they pass (above). |
 | **needs input** | `needs_input` | The agent asked the numbered questions. Commits that passed the checks are on the work branch; a first run opens no pull request for them yet. | A comment by a trusted person. |
 | **failed** | `failed` | The agent could not finish; the comment quotes its reason. | `/factory retry`, once the cause is fixed. |
 | **timed out** | `timeout` | The run reached the stage's `timeout_minutes` in `factory/config.toml`, and its container was stopped. | `/factory retry` |

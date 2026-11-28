@@ -80,12 +80,14 @@ _NOTICES: Mapping[str, tuple[str, str]] = {
         "failed",
     ),
     "fix-rounds-exhausted": (
-        "Three automated fix runs in a row did not make the checks pass. Comment `/factory retry` to start again, "
-        "or a person takes over the pull request.",
+        "The automated fix runs did not make the checks pass, and the limit of fix rounds in a row is reached. "
+        "Comment `/factory retry` to start again, or a person takes over the pull request.",
         "failed",
     ),
 }
 
+# A fix or revise run may end done without a commit; the comment says so, since it shows nothing else about it.
+NO_COMMIT_PUSHED = "No commit was pushed, so the branch is unchanged."
 THREAD_REPLY_LIMIT = 4_000
 HANDOFF_READY = "The pull request is ready for a person's review."
 HANDOFF_TEXTS: Mapping[str, str] = {
@@ -158,13 +160,15 @@ def _follow_ups_section(follow_ups: Sequence[Mapping[str, str]]) -> str:
     return "**Follow-ups the agent noticed**\n\n" + "\n".join(items) if items else ""
 
 
-def _closing(outcome: str, *, pull_request_url: str, branch: str, kept_commits: int, retry_at: str) -> str:
+def _closing(outcome: str, *, stage: str, pull_request_url: str, branch: str, kept_commits: int, retry_at: str) -> str:
     if outcome == "needs_input":
         line = "Reply in a comment and the work continues from where it stopped."
         if kept_commits and branch:
             line += f" The work so far is on the branch `{branch}`."
         return line
     if outcome == "done":
+        if stage in result.PULL_REQUEST_STAGES and not kept_commits:
+            return NO_COMMIT_PUSHED
         return f"Pull request: {pull_request_url}" if pull_request_url else ""
     if outcome == "usage_limit":
         line = "The subscription's usage limit was reached."
@@ -270,7 +274,7 @@ def run_comment(
     reason_line = f"This run ended because {REASON_WORDS[reason]}." if reason is not None else ""
     problems_section = _problems_section(problems)
     follow_ups_section = _follow_ups_section(follow_ups)
-    closing = _closing(outcome, pull_request_url=pull_request_url, branch=branch, kept_commits=kept_commits,
+    closing = _closing(outcome, stage=stage, pull_request_url=pull_request_url, branch=branch, kept_commits=kept_commits,
                        retry_at=retry_at)
 
     # Each text is neutralised here, once; later cuts only shorten these strings.
