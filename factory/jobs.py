@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from factory import markers
 from factory.config import MODEL, PERMISSION_MODES, STAGE_LIMITS, Config, is_trusted
 from factory.snapshot import Bot, Comment, Issue
-from factory.spool import COMMIT_SHA, JOB_ID, MAX_ROUND, STAMP
+from factory.spool import COMMIT_SHA, JOB_ID, MAX_ROUND, STAMP, THREAD_ID
 
 SKILLS = {"fix_issue": "factory-fix-issue", "fix": "factory-fix", "revise": "factory-revise"}
 MAX_CONTEXT_CHARS = 150_000
@@ -22,7 +22,6 @@ MAX_LINE = 10_000_000
 SECTION_FLOOR = 1_000
 CUT_LINE = "(truncated)"
 MAX_PULL_REQUEST = 2**53  # the largest integer every JSON reader keeps exact
-THREAD_ID = re.compile(r"[A-Za-z0-9_=-]{1,100}")
 # What a hosted check's log carries that tells an agent nothing: the time before each line, colour and cursor
 # sequences, and control characters (a NUL among them makes tools read the whole context as a binary file).
 _LOG_TIME = re.compile(r"(?m)^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+Z ")

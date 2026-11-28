@@ -25,6 +25,7 @@ REASON_REQUIRED = ("refused", "crashed")
 MAX_UNIX_SECONDS = 4_102_444_800  # the year 2100: anything later is not a real reset time
 MODEL_NAME = re.compile(r"[A-Za-z0-9._:\[\]-]{0,100}")
 COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
+THREAD_ID = re.compile(r"[A-Za-z0-9_=-]{1,100}")  # a review thread's node id, which goes into a marker
 MAX_ROUND = 1_000  # the most fix or revise rounds a request or a run comment may name
 STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"

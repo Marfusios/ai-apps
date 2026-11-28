@@ -1,4 +1,7 @@
-"""Publish a finished run: read the runner's files as hostile data, settle one outcome, then show it on GitHub."""
+"""Publish a finished run: read the runner's files as hostile data, settle one outcome, then show it on GitHub.
+
+The same module hands a pull request over to a person (`hand_off`), since it is the one that writes as the bot.
+"""
 
 import contextlib
 import dataclasses
@@ -9,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from factory import bundle_check, compose, gitops, hygiene, jobs, markers, result, snapshot
+from factory import bundle_check, compose, gitops, hygiene, jobs, result, snapshot, spool
 from factory.bundle_check import Verdict
 from factory.config import Config, is_trusted
 from factory.decide import BUILDING, NEEDS_HUMAN, QUEUED, STATUS_PREFIX
@@ -42,7 +45,11 @@ NOT_KEPT = "the work so far was not kept"
 REFUSED_PUSH = "GitHub refused the push of the checked commits"
 BRANCH_MOVED = "the work branch changed on GitHub while the run was going"
 STATUS_AFTER = {"done": BUILDING, "usage_limit": QUEUED}  # every other outcome waits for a person
-HAND_OFF_CHANGED = 422  # GitHub's answer to a review request for the pull request's own author, among others
+# What GitHub answers to a review request it cannot take (the person is the author, or no collaborator), and to a
+# reply whose comment or thread is gone: neither stops the publish.
+REVIEW_REQUEST_REFUSED = (422,)
+REPLY_REFUSED = (NOT_FOUND, 422)
+GRAPHQL_REFUSED = "POST /graphql failed with "  # how GitHub.graphql words an error in the body of a 200 answer
 READY_FOR_REVIEW = ("mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) "
                     "{ clientMutationId } }")
 RESOLVE_THREAD = "mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { clientMutationId } }"
@@ -58,7 +65,7 @@ def _is_texts(value: object) -> bool:
 
 def _is_reply(value: object) -> bool:
     return (isinstance(value, dict) and set(value) == {"thread", "comment_id", "text", "resolved"}
-            and isinstance(value["thread"], str) and jobs.THREAD_ID.fullmatch(value["thread"]) is not None
+            and isinstance(value["thread"], str) and spool.THREAD_ID.fullmatch(value["thread"]) is not None
             and _is_number(value["comment_id"]) and isinstance(value["text"], str)
             and isinstance(value["resolved"], bool))
 
@@ -143,12 +150,9 @@ def _hygiene_labels(data: Mapping) -> list[str]:
     """The label of each hygiene finding in the texts of a valid result that are posted, each once.
 
     Never the text that matched. The verification is not posted, so a host path in a command the agent ran is no
-    finding; the finish check scans the result's posted texts, so the agent learns of a finding before the
-    dispatcher does, except in a reply to a review thread, which only this scan covers.
+    finding; the finish check scans the same texts, so the agent learns of a finding before the dispatcher does.
     """
-    texts = [text for _, text in result.posted_texts(data)]
-    texts += [entry["body"] for entry in data.get("thread_replies") or ()]
-    found = (label for text in texts for _, label in hygiene.text_problems(text))
+    found = (label for _, text in result.posted_texts(data) for _, label in hygiene.text_problems(text))
     return list(dict.fromkeys(found))
 
 
@@ -217,7 +221,7 @@ class Publisher:
         request = self._request(job_id, branch, issue.number)
         settled, pull_request_text = self._settled(job_id, request, issue, branch, now)
         if settled.head_sha is not None:
-            settled = self._push(job_id, request["base_sha"], branch, settled)
+            settled = self._push(job_id, request, branch, settled)
         self._show(job_id, request, issue, branch, settled, pull_request_text if settled.outcome == "done" else None)
         self._close(job_id, settled)
         return settled.outcome
@@ -262,10 +266,10 @@ class Publisher:
         """Hand the issue's pull request to a person: mark it ready, ask for their review, and say so.
 
         Nothing is written when GitHub now says the pull request is closed, when its head is no longer the one the
-        poll saw, when that head has a failing review, or when its hand-off comment is already there. The comment is
-        the last write, so a hand-off that stopped before it is done again in full; marking ready and asking for a
-        review are skipped or harmless the second time. A GitHubError other than GitHub's refusal of the review
-        request is raised, and the next poll repeats the hand-off.
+        poll saw, when that head has a failing review, or when its hand-off comment is already there. Only a trusted
+        person is asked for a review. The comment is the last write, so a hand-off that stopped before it is done
+        again in full; marking ready and asking for a review are skipped or harmless the second time. A GitHubError
+        other than GitHub's refusal of the review request is raised, and the next poll repeats the hand-off.
         """
         pull = issue.pull_request
         if pull is None or not pull.open or pull.verdict == "fail":
@@ -284,16 +288,16 @@ class Publisher:
             return
         if fresh.get("draft") is True:
             self.github.graphql(READY_FOR_REVIEW, {"id": pull.node_id})
-        if issue.trigger_actor:
+        if issue.trigger_actor and is_trusted(issue.trigger_actor, self.config):
             self._request_review(path, issue.trigger_actor)
         self.github.post(f"{self.github.repo}/issues/{pull.number}/comments", {"body": body})
 
     def _request_review(self, pull_path: str, reviewer: str) -> None:
-        """Ask the person for a review; GitHub refuses when they are the author or already asked, which is fine."""
+        """Ask the person for a review; GitHub refuses when they are the author or cannot review, which is fine."""
         try:
             self.github.post(f"{pull_path}/requested_reviewers", {"reviewers": [reviewer]})
         except GitHubError as error:
-            if error.status != HAND_OFF_CHANGED:
+            if error.status not in REVIEW_REQUEST_REFUSED:
                 raise
 
     def set_status(self, issue_number: int, add: str | None, remove: Sequence[str]) -> None:
@@ -401,7 +405,8 @@ class Publisher:
             return _Settled("rejected", **timing, **texts, problems=(bundle_check.NO_COMMITS,))
         if verdict is not None and not verdict.ok:
             return _Settled("rejected", **timing, **texts, problems=verdict.problems)
-        return _Settled("done", **timing, **texts, **kept, replies=self._replies(job_id, data))
+        replies = self._replies(job_id, data) if request["stage"] == "revise" else ()
+        return _Settled("done", **timing, **texts, **kept, replies=replies)
 
     def _replies(self, job_id: str, data: Mapping) -> tuple[dict, ...]:
         """The replies of a result to threads in the job's `threads.json`, at most one a thread, the first kept.
@@ -425,7 +430,7 @@ class Publisher:
         except SpoolError:
             return {}
         return {thread: comment_id for thread, comment_id in index.items()
-                if jobs.THREAD_ID.fullmatch(thread) and _is_number(comment_id)}
+                if spool.THREAD_ID.fullmatch(thread) and _is_number(comment_id)}
 
     def _retry_at(self, resets_at: int | None, now: datetime) -> str:
         """The reported reset when it lies in the next six hours, else now plus the configured backoff."""
@@ -503,13 +508,18 @@ class Publisher:
 
     # Showing it on GitHub ------------------------------------------------------------------------------------------
 
-    def _push(self, job_id: str, base_sha: str, branch: str, settled: _Settled) -> _Settled:
+    def _push(self, job_id: str, request: Mapping, branch: str, settled: _Settled) -> _Settled:
         """Push the checked commits and return the outcome; a rejected one, stored, when GitHub stands in the way.
 
-        A branch that GitHub does not have yet is fine: a run that starts from `main` creates it. Any other failure
-        of the push, of the network or of signing in, is raised, so that the next poll tries again.
+        A branch that GitHub does not have yet is fine for a `fix_issue` run: one that starts from `main` creates
+        it. A fix or revise run works on a branch that exists, so a missing one was deleted and stays so. Any other
+        failure of the push, of the network or of signing in, is raised, so that the next poll tries again.
         """
-        if self._branch_head(branch) not in (None, base_sha, settled.head_sha):
+        base_sha = request["base_sha"]
+        allowed = (base_sha, settled.head_sha)
+        if request["stage"] not in PULL_REQUEST_STAGES:
+            allowed += (None,)
+        if self._branch_head(branch) not in allowed:
             return self._store(job_id, settled.rejected(BRANCH_MOVED))
         try:
             gitops.push(self.workrepo, self.push_url, self.token(), settled.head_sha, branch)
@@ -551,10 +561,10 @@ class Publisher:
         if stage in PULL_REQUEST_STAGES:
             number = request["pull_request"]
             if pull_request_text is not None:
-                self.github.patch(f"{self.github.repo}/pulls/{number}", dict(pull_request_text))
+                self._replace_text(number, pull_request_text)
             if stage == "revise" and settled.outcome == "done":
                 self._post_replies(issue, job_id, number, settled.replies)
-            url = self._pull_request_url({"number": number})
+            url = ""  # the comment is on that pull request already
         else:
             number = issue.number
             url = self._pull_request(branch, pull_request_text) if pull_request_text is not None else ""
@@ -563,6 +573,15 @@ class Publisher:
         wanted = STATUS_AFTER.get(settled.outcome, NEEDS_HUMAN)
         others = [label for label in issue.labels if label.startswith(STATUS_PREFIX) and label != wanted]
         self.set_status(issue.number, wanted, others)
+
+    def _replace_text(self, number: int, text: Mapping[str, str]) -> None:
+        """Give the pull request the run's text, but only when the bot opened it, as read from GitHub now.
+
+        One that another account opened keeps its text, as in `_pull_request`.
+        """
+        pull = self.github.get(f"{self.github.repo}/pulls/{number}")
+        if isinstance(pull, dict) and self._is_the_bots(pull):
+            self.github.patch(f"{self.github.repo}/pulls/{number}", dict(text))
 
     def _pull_request(self, branch: str, text: Mapping[str, str]) -> str:
         """The branch's open pull request, opened as a draft when there is none; return its link.
@@ -609,8 +628,9 @@ class Publisher:
     def _run_comment(self, job_id: str, request: Mapping, branch: str, settled: _Settled, url: str) -> str:
         """The run's comment. The texts go to compose raw: compose neutralises them, exactly once.
 
-        A done run names the head the work branch has now: the pushed commit, or the one the run started from when
-        it made none. The stage and the round are the request's.
+        A done run names its head: the commit it pushed, or, when it made none and so pushed nothing, the one it
+        started from, which was the work branch's head when the job was made. The stage and the round are the
+        request's.
         """
         head = (settled.head_sha or request["base_sha"]) if settled.outcome == "done" else ""
         return compose.run_comment(
@@ -634,10 +654,29 @@ class Publisher:
                 if already is None:
                     already = self._replied_threads(issue, job_id, number)
                 if reply["thread"] not in already:
-                    self.github.post(f"{self.github.repo}/pulls/{number}/comments/{reply['comment_id']}/replies",
-                                     {"body": body})
+                    self._reply(number, reply, body)
             if reply["resolved"]:
-                self.github.graphql(RESOLVE_THREAD, {"id": reply["thread"]})
+                self._resolve(reply["thread"])
+
+    def _reply(self, number: int, reply: Mapping[str, object], body: str) -> None:
+        """Post one reply; GitHub says the comment or its thread is gone with a 404 or 422, and then it is skipped."""
+        try:
+            self.github.post(f"{self.github.repo}/pulls/{number}/comments/{reply['comment_id']}/replies",
+                             {"body": body})
+        except GitHubError as error:
+            if error.status not in REPLY_REFUSED:
+                raise
+
+    def _resolve(self, thread: object) -> None:
+        """Resolve a thread; an error GitHub reports in its answer (the thread is gone, say) is skipped.
+
+        A request that failed is not that: its status is not 0, and a network failure has another wording.
+        """
+        try:
+            self.github.graphql(RESOLVE_THREAD, {"id": thread})
+        except GitHubError as error:
+            if error.status != 0 or not error.message.startswith(GRAPHQL_REFUSED):
+                raise
 
     @staticmethod
     def _reply_body(job_id: str, reply: Mapping[str, object]) -> str | None:
@@ -646,10 +685,9 @@ class Publisher:
         None for a text with nothing in it but white space or control characters: there is nothing to post.
         """
         try:
-            text = compose.thread_reply(reply["text"])
+            return compose.thread_reply(reply["text"], job_id=job_id, thread_id=reply["thread"])
         except ValueError:
             return None
-        return f"{text}\n\n{markers.encode({'kind': 'reply', 'job': job_id, 'thread': reply['thread']})}"
 
     def _replied_threads(self, issue: Issue, job_id: str, number: int) -> set[object]:
         """The threads the bot has already answered for this job, from the pull request's review comments."""

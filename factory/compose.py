@@ -336,12 +336,19 @@ def pull_request_body(body: str, issue_number: int, follow_ups: Sequence[Mapping
     return "\n\n".join(parts)
 
 
-def thread_reply(body: str) -> str:
-    """The agent's reply to a review thread: neutralised once, as a block quote under a fixed lead-in."""
+def thread_reply(body: str, *, job_id: str, thread_id: str) -> str:
+    """The agent's reply to a review thread: neutralised once, as a block quote under a fixed lead-in.
+
+    The last line is a marker naming the job and the thread, so that a repeat can tell the reply was posted; no
+    marker in the body survives neutralising, and both ids must have their expected form.
+    """
+    _check("job_id", job_id, spool.JOB_ID)
+    _check("thread_id", thread_id, spool.THREAD_ID)
     text = _neutral(body, THREAD_REPLY_LIMIT)
     if not text:
         raise ValueError("a reply must have text")
-    return _quoted_section("The agent replies:", text)
+    marker = markers.encode({"kind": "reply", "job": job_id, "thread": thread_id})
+    return f"{_quoted_section('The agent replies:', text)}\n\n{marker}"
 
 
 def handoff_comment(head: str, verdict: str) -> str:

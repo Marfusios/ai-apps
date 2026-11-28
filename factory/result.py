@@ -132,8 +132,8 @@ def validate(data: object, stage: str) -> list[str]:
 def posted_texts(data: Mapping) -> Iterator[tuple[str, str]]:
     """Each text of a valid result that the dispatcher posts, with its field's name as `validate` names it.
 
-    The verification is never posted, and neither are thread replies, which only the revise stage has and this
-    version does not run.
+    The verification is never posted. A reply to a review thread, which only the revise stage has, is posted once
+    its thread is known to the dispatcher; every one is listed, known or not.
     """
     yield "summary", data["summary"]
     for index, question in enumerate(data.get("questions") or ()):
@@ -147,6 +147,8 @@ def posted_texts(data: Mapping) -> Iterator[tuple[str, str]]:
     for index, follow_up in enumerate(data.get("follow_ups") or ()):
         yield f"follow_ups[{index}].title", follow_up["title"]
         yield f"follow_ups[{index}].reason", follow_up["reason"]
+    for index, reply in enumerate(data.get("thread_replies") or ()):
+        yield f"thread_replies[{index}].body", reply["body"]
 
 
 def load(path: Path, stage: str) -> dict:

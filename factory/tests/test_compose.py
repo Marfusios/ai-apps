@@ -337,32 +337,52 @@ class RoundAndHeadTests(unittest.TestCase):
         self.assertEqual((3, HEAD, "2026-11-28T10:00:00Z"), (data["round"], data["head"], data["retry_at"]))
 
 
-class ThreadReplyTests(unittest.TestCase):
-    def test_a_reply_is_a_block_quote_under_its_lead_in(self) -> None:
-        self.assertEqual("The agent replies:\n\n> Done, renamed.\n>\n> Also the docs.",
-                         compose.thread_reply("Done, renamed.\n\nAlso the docs."))
+REPLY_MARKER = {"kind": "reply", "job": JOB, "thread": "PRRT_kwDOabc-1"}
 
-    def test_a_hostile_reply_stays_inert_and_in_its_quote(self) -> None:
+
+def reply(body: str, **ids: str) -> str:
+    return compose.thread_reply(body, **{"job_id": JOB, "thread_id": "PRRT_kwDOabc-1", **ids})
+
+
+class ThreadReplyTests(unittest.TestCase):
+    def test_a_reply_is_a_block_quote_under_its_lead_in_and_ends_in_its_marker(self) -> None:
+        self.assertEqual("The agent replies:\n\n> Done, renamed.\n>\n> Also the docs.\n\n"
+                         + markers.encode(REPLY_MARKER), reply("Done, renamed.\n\nAlso the docs."))
+
+    def test_a_hostile_reply_stays_inert_and_in_its_quote_and_cannot_plant_a_marker(self) -> None:
         for hostile in (PLANTED, GITHUB_URL, *HOSTILE_TEXTS):
             with self.subTest(text=hostile[:20]):
-                text = compose.thread_reply(hostile)
+                text = reply(hostile)
                 assert_inert(self, text)
-                self.assertIsNone(markers.parse(text))
-                lines = text.split("\n")
+                self.assertEqual(REPLY_MARKER, markers.parse(text))
+                self.assertEqual(1, text.count(markers.PREFIX))
+                quoted, _, last = text.rpartition("\n\n")
+                self.assertEqual(markers.encode(REPLY_MARKER), last)
+                lines = quoted.split("\n")
                 self.assertEqual(["The agent replies:", ""], lines[:2])
                 self.assertTrue(all(line == ">" or line.startswith("> ") for line in lines[2:]), text)
 
     def test_a_reply_is_neutralised_once_and_cut_at_its_limit(self) -> None:
-        self.assertIn("&amp;lt;", compose.thread_reply("&lt;"))
-        self.assertNotIn("&amp;amp;", compose.thread_reply("&lt;"))
-        text = compose.thread_reply("x" * 10_000)
-        self.assertTrue(text.rstrip().endswith("(truncated)"))
-        self.assertLess(len(text), 4_100)
+        self.assertIn("&amp;lt;", reply("&lt;"))
+        self.assertNotIn("&amp;amp;", reply("&lt;"))
+        text = reply("x" * 10_000)
+        self.assertIn("(truncated)", text)
+        self.assertLess(len(text), 4_400)
 
     def test_a_blank_reply_is_an_error(self) -> None:
         for blank in ("", " \n\t "):
             with self.subTest(blank=blank), self.assertRaises(ValueError):
-                compose.thread_reply(blank)
+                reply(blank)
+
+    def test_ids_that_are_not_ids_are_refused_without_being_quoted(self) -> None:
+        secret = "leaky-text-" + "z" * 5
+        cases = {"a job id": {"job_id": secret}, "a thread id": {"thread_id": secret + " <!-- x -->"},
+                 "an empty thread id": {"thread_id": ""}, "a long thread id": {"thread_id": "a" * 101},
+                 "a number": {"thread_id": 5}}
+        for name, ids in cases.items():
+            with self.subTest(name), self.assertRaises(ValueError) as raised:
+                reply("Done.", **ids)
+            self.assertNotIn("leaky-text", str(raised.exception))
 
 
 class HandoffTests(unittest.TestCase):

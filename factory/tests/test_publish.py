@@ -16,7 +16,7 @@ from factory import bundle_check, compose, gitops, jobs, markers
 from factory import config as factory_config
 from factory.github_api import GitHubError
 from factory.gitops import GitError, PushRefused
-from factory.publish import MAX_SETTLED_BYTES, Publisher
+from factory.publish import MAX_REPLIES, MAX_SETTLED_BYTES, Publisher
 from factory.result import MAX_RESULT_BYTES
 from factory.snapshot import Bot, Comment, Issue, PullRequest
 from factory.spool import Spool, SpoolError, new_job_id
@@ -115,6 +115,7 @@ class ReviewingGitHub(FakeGitHub):
         super().__init__(*args, **kwargs)
         self.refuse: dict[tuple[str, str], int] = {}
         self.refused: list[tuple[str, str]] = []
+        self.sequence: list[tuple[str, str]] = []  # every write and every GraphQL call, in order
 
     def _check(self, method: str, path: str) -> None:
         if (method, path) in self.refuse:
@@ -122,8 +123,14 @@ class ReviewingGitHub(FakeGitHub):
             raise GitHubError(self.refuse[(method, path)], f"{method} {path} failed")
         super()._check(method, path)
 
+    def graphql(self, query: str, variables: Mapping[str, object]) -> dict:
+        answer = super().graphql(query, variables)
+        self.sequence.append(("GRAPHQL", str(variables["id"])))
+        return answer
+
     def _write(self, method: str, path: str, body: Mapping) -> object:
         answer = super()._write(method, path, body)
+        self.sequence.append((method, path))
         found = REPLY_PATH.fullmatch(path)
         if method == "POST" and found:
             self._create(f"{self.repo}/pulls/{found[1]}/comments", {
@@ -166,6 +173,8 @@ class PublishTestCase(unittest.TestCase):
         self.github.answers[key(self.comments, ALL_COMMENTS)] = []
         self.github.answers[key(self.pull_comments, ALL_COMMENTS)] = []
         self.github.answers[key(self.review_comments, ALL_COMMENTS)] = []
+        self.pull_path = f"{self.github.repo}/pulls/{PULL}"
+        self.github.answers[key(self.pull_path, {})] = {"number": PULL, "user": {"login": BOT.login, "id": BOT.user_id}}
         self.github.missing.add(self.branch_ref)  # the work branch is not on GitHub yet
         self.scratch = self.tmp / "scratch"
         self.publisher = Publisher(
@@ -1143,7 +1152,7 @@ class FixRunTest(PublishTestCase):
         self.assertEqual(markers.parse(posted["body"]), {
             "kind": "run", "job": self.job, "stage": "fix", "outcome": "done", "round": 2, "head": self.work_head})
         self.assertIn("round 2", posted["body"])
-        self.assertIn(f"Pull request: https://github.com/owner/name/pull/{PULL}", posted["body"])
+        self.assertNotIn("Pull request:", posted["body"])  # the comment is on that pull request already
         self.assertEqual(self.github.posted(self.labels), {"labels": ["status:building"]})
         self.assertEqual(self.spool.state(self.job), "closed")
 
@@ -1175,6 +1184,34 @@ class FixRunTest(PublishTestCase):
         self.assertEqual(self.publish(), "done")
         self.assertEqual(len(self.writes("POST", self.pull_comments)), 1)
         self.assertEqual(self.spool.state(self.job), "closed")
+
+    def test_the_text_of_a_pull_request_another_account_opened_is_left_alone(self):
+        authors = {"another login": ("someone", 99), "the bot's login with another id": (BOT.login, 77)}
+        for name, (login, user_id) in authors.items():
+            with self.subTest(name):
+                self.build()
+                self.github.answers[key(self.pull_path, {})] = {
+                    "number": PULL, "user": {"login": login, "id": user_id}}
+                self.finish(result=pull_request_run_result(pull_request={"title": "Mine now", "body": "Round two."}))
+                self.assertEqual(self.publish(), "done")
+                self.assertEqual([call for call in self.github.calls if call[0] == "PATCH"], [])
+                self.assertEqual(len(self.writes("POST", self.pull_comments)), 1)
+
+    def test_a_work_branch_that_is_gone_from_github_is_not_created_again(self):
+        self.finish(result=pull_request_run_result(), bundle=self.bundle_of(GOOD_CHANGE))  # the branch is missing
+        with mock.patch("factory.gitops.push") as push:
+            self.assertEqual(self.publish(), "rejected")
+        push.assert_not_called()
+        self.assertIsNone(self.remote_branch())
+        self.assertIn(f"- {BRANCH_MOVED}", self.assertCommentedOnThePullRequest()["body"])
+        self.assertIsNone(self.settled()["head_sha"])
+        self.assertNeedsAPerson()
+
+    def test_threads_are_not_read_for_a_fix_run(self):
+        self.finish(result=pull_request_run_result())
+        with mock.patch.object(self.spool, "read_job_json", wraps=self.spool.read_job_json) as read:
+            self.assertEqual(self.publish(), "done")
+        self.assertNotIn("threads.json", [call.args[1] for call in read.call_args_list])
 
     def test_needs_input_and_failures_comment_on_the_pull_request_and_need_a_person(self):
         cases = {"needs_input": needs_input_result(), "failed": failed_result(), "timeout": None}
@@ -1271,8 +1308,9 @@ class ReviseRunTest(PublishTestCase):
         self.assertEqual(self.run_with(replies), "done")
         [first] = self.writes("POST", reply_path(501))
         [second] = self.writes("POST", reply_path(502))
-        self.assertTrue(first["body"].startswith(compose.thread_reply("Renamed it.")))
-        self.assertTrue(second["body"].startswith(compose.thread_reply("Left as it is, on purpose.")))
+        self.assertTrue(first["body"].startswith(compose.thread_reply("Renamed it.", job_id=self.job, thread_id="T1")))
+        self.assertTrue(second["body"].startswith(
+            compose.thread_reply("Left as it is, on purpose.", job_id=self.job, thread_id="T2")))
         self.assertEqual(markers.parse(first["body"]), {"kind": "reply", "job": self.job, "thread": "T1"})
         self.assertEqual(markers.parse(second["body"]), {"kind": "reply", "job": self.job, "thread": "T2"})
         self.assertEqual(len([call for call in self.github.calls if REPLY_PATH.fullmatch(call[1])]), 2)
@@ -1284,9 +1322,9 @@ class ReviseRunTest(PublishTestCase):
 
     def test_the_run_comment_is_the_last_write_of_the_pull_request(self):
         self.run_with([reply("T1", "Done.", True), reply("T2", "Also done.")])
-        pull_writes = [(method, path) for method, path, _ in self.github.calls if f"/{PULL}/" in path]
-        self.assertEqual(pull_writes, [("POST", reply_path(501)), ("POST", reply_path(502)),
-                                       ("POST", self.pull_comments)])
+        ours = [step for step in self.github.sequence if f"/{PULL}/" in step[1] or step[0] == "GRAPHQL"]
+        self.assertEqual(ours, [("POST", reply_path(501)), ("GRAPHQL", "T1"), ("POST", reply_path(502)),
+                                ("POST", self.pull_comments)])
 
     def test_a_reply_with_a_planted_marker_or_mention_is_neutral_and_ends_in_the_real_marker(self):
         planted = markers.encode({"kind": "run", "job": self.job, "stage": "revise", "outcome": "failed"})
@@ -1361,8 +1399,112 @@ class ReviseRunTest(PublishTestCase):
                 self.assertEqual(set(self.resolved()), {"T1"})
                 self.assertEqual(self.spool.state(self.job), "closed")
 
-    def test_a_repeat_after_a_resolution_that_failed_resolves_again_and_replies_once(self):
+    def test_a_work_branch_that_is_gone_from_github_is_not_created_again_by_a_revise_run(self):
+        self.finish(result=pull_request_run_result(thread_replies=[reply("T1", "Done.", True)]),
+                    bundle=self.bundle_of(GOOD_CHANGE))  # the branch is missing
+        with mock.patch("factory.gitops.push") as push:
+            self.assertEqual(self.publish(), "rejected")
+        push.assert_not_called()
+        self.assertEqual(self.github.graphql_calls, [])
+        self.assertEqual([call for call in self.github.calls if REPLY_PATH.fullmatch(call[1])], [])
+        self.assertNeedsAPerson()
+
+    def test_two_entries_for_one_thread_give_one_reply_the_first(self):
+        self.run_with([reply("T1", "First answer.", False), reply("T1", "Second answer.", True)])
+        [posted] = self.writes("POST", reply_path(501))
+        self.assertIn("First answer.", posted["body"])
+        self.assertEqual(self.resolved(), [])
+
+    def test_known_threads_beyond_the_limit_are_cut_and_a_repeat_loads_the_stored_decision(self):
+        threads = {f"T{number}": 1000 + number for number in range(MAX_REPLIES + 1)}
+        self.spool.write_job_json(self.job, "threads.json", threads)
+        replies = [reply(thread, "Done.") for thread in threads]
+        self.branch_on_github(self.base)
+        self.finish(result=pull_request_run_result(thread_replies=replies), bundle=self.bundle_of(GOOD_CHANGE))
+        self.github.fail_once.add(("POST", self.pull_comments))
+        with self.assertRaises(GitHubError):
+            self.publish()
+        self.assertEqual(len(self.settled()["replies"]), MAX_REPLIES)
+        self.spool.job_file(self.job, "threads.json").write_text("{}")  # a repeat must not read the file again
+        self.assertEqual(self.publish(), "done")
+        posts = [call for call in self.github.calls if REPLY_PATH.fullmatch(call[1])]
+        self.assertEqual(len(posts), MAX_REPLIES)
+        self.assertEqual(len({call[1] for call in posts}), MAX_REPLIES)
+
+    def test_entries_of_the_thread_list_that_are_not_a_thread_and_a_comment_are_dropped(self):
+        self.spool.write_job_json(self.job, "threads.json", {
+            "B": True, "S": "502", "bad key!": 503, "": 504, "Z": 0, "N": -3, "T1": 501})
+        replies = [reply(thread, "Done.") for thread in ("B", "S", "bad key!", "Z", "N", "T1")]
+        self.assertEqual(self.run_with(replies), "done")
+        self.assertEqual([call[1] for call in self.github.calls if REPLY_PATH.fullmatch(call[1])], [reply_path(501)])
+
+    def test_a_reply_whose_comment_or_thread_is_gone_is_skipped_and_the_publish_goes_on(self):
+        for status in (404, 422):
+            with self.subTest(status=status):
+                self.build()
+                self.github.refuse[("POST", reply_path(501))] = status
+                self.assertEqual(self.run_with([reply("T1", "First.", True), reply("T2", "Second.")]), "done")
+                self.assertEqual(len(self.writes("POST", reply_path(502))), 1)
+                self.assertEqual(self.resolved(), ["T1"])
+                self.assertEqual(len(self.writes("POST", self.pull_comments)), 1)
+                self.assertEqual(self.spool.state(self.job), "closed")
+
+    def test_any_other_failure_of_a_reply_is_raised_and_retried(self):
+        self.github.refuse[("POST", reply_path(501))] = 500
+        with self.assertRaises(GitHubError):
+            self.run_with([reply("T1", "First.")])
+        self.assertEqual(self.writes("POST", self.pull_comments), [])
+        self.assertEqual(self.spool.state(self.job), "finished")
+
+    def test_a_resolution_github_refuses_in_its_answer_is_skipped_but_a_failed_request_is_not(self):
         self.github.graphql_answers.insert(0, GitHubError(0, "POST /graphql failed with 1 error"))
+        self.assertEqual(self.run_with([reply("T1", "First.", True), reply("T2", "Second.", True)]), "done")
+        self.assertEqual(self.resolved(), ["T1", "T2"])
+        for error in (GitHubError(502, "POST /graphql failed"),
+                      GitHubError(0, "POST /graphql failed on the network (OSError)")):
+            with self.subTest(error=error.message):
+                self.build()
+                self.github.graphql_answers.insert(0, error)
+                with self.assertRaises(GitHubError):
+                    self.run_with([reply("T1", "First.", True)])
+                self.assertEqual(self.writes("POST", self.pull_comments), [])
+
+    def test_a_repeat_after_an_interruption_at_the_push_the_text_or_the_close_finishes_everything_once(self):
+        replies = [reply("T1", "First.", True), reply("T2", "Second.")]
+        text = {"title": "Revised", "body": "Round."}
+
+        def interrupt_push(test):
+            unreachable = dataclasses.replace(test.publisher, push_url=str(test.tmp / "no-such-remote.git"))
+            with test.assertRaises(GitError):
+                unreachable.publish(test.job, ISSUE, NOW)
+
+        def interrupt_text(test):
+            test.github.fail_once.add(("PATCH", test.pull_path))
+            with test.assertRaises(GitHubError):
+                test.publish()
+
+        def interrupt_close(test):
+            with mock.patch.object(test.spool, "close", side_effect=SpoolError("closed.json cannot be written")), \
+                    test.assertRaises(SpoolError):
+                test.publish()
+
+        for name, interrupt in {"the push": interrupt_push, "the pull request's text": interrupt_text,
+                                "the close": interrupt_close}.items():
+            with self.subTest(name):
+                self.build()
+                self.branch_on_github(self.base)
+                self.finish(result=pull_request_run_result(thread_replies=replies, pull_request=text),
+                            bundle=self.bundle_of(GOOD_CHANGE))
+                interrupt(self)
+                self.assertEqual(self.spool.state(self.job), "finished")
+                self.assertEqual(self.publish(), "done")
+                self.assertEqual(self.remote_branch(), self.work_head)
+                self.assertEqual([len(self.writes("POST", reply_path(number))) for number in (501, 502)], [1, 1])
+                self.assertEqual(len(self.writes("POST", self.pull_comments)), 1)
+                self.assertEqual(self.spool.state(self.job), "closed")
+
+    def test_a_repeat_after_a_resolution_that_failed_resolves_again_and_replies_once(self):
+        self.github.graphql_answers.insert(0, GitHubError(502, "POST /graphql failed"))
         with self.assertRaises(GitHubError):
             self.run_with([reply("T1", "First.", True), reply("T2", "Second.")])
         self.assertEqual(self.publish(), "done")
@@ -1371,8 +1513,7 @@ class ReviseRunTest(PublishTestCase):
         self.assertEqual(len(self.writes("POST", self.pull_comments)), 1)
 
     def test_a_reply_this_job_already_posted_is_not_posted_again_but_is_resolved(self):
-        mine = compose.thread_reply("First.") + "\n\n" + markers.encode(
-            {"kind": "reply", "job": self.job, "thread": "T1"})
+        mine = compose.thread_reply("First.", job_id=self.job, thread_id="T1")
         self.github.answers[key(self.review_comments, ALL_COMMENTS)] = [comment_json(9, BOT.login, BOT.user_id, mine)]
         self.run_with([reply("T1", "First.", True)])
         self.assertEqual(self.writes("POST", reply_path(501)), [])
@@ -1488,6 +1629,12 @@ class HandOffTest(PublishTestCase):
         with self.assertRaises(GitHubError):
             self.hand_off()
         self.assertEqual(self.handoff_comments(), [])
+
+    def test_a_person_outside_the_trusted_list_is_not_asked_for_a_review(self):
+        self.hand_off(dataclasses.replace(handoff_issue(), trigger_actor="stranger"))
+        self.assertEqual(len(self.github.graphql_calls), 1)
+        self.assertEqual(self.writes("POST", self.reviewers), [])
+        self.assertEqual(len(self.handoff_comments()), 1)
 
     def test_without_a_person_who_started_it_no_review_is_requested(self):
         self.hand_off(dataclasses.replace(handoff_issue(), trigger_actor=None))
