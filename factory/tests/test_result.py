@@ -6,8 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from factory import hygiene
 from factory.config import load as load_config
-from factory.result import MAX_RESULT_BYTES, OUTCOMES, ResultError, load, validate
+from factory.result import MAX_RESULT_BYTES, MAX_THREAD_REPLIES, OUTCOMES, ResultError, load, posted_texts, validate
 
 VERIFICATION = [{"command": "make check", "exit_code": 0, "summary": "passed"}]
 PULL_REQUEST = {"title": "Add thing", "body": "Adds the thing."}
@@ -74,6 +75,34 @@ class ResultTest(unittest.TestCase):
         self.mentions(done(thread_replies=replies), "step", "thread_replies")
         self.mentions(done(thread_replies=[{"thread_id": "T1", "body": "", "resolved": "yes"}]), "revise",
                       "thread_replies[0]")
+
+    def test_a_reply_body_must_hold_a_visible_character(self):
+        for body in (" ", "\n\t ", "​", "\x00"):
+            with self.subTest(body=body):
+                replies = [{"thread_id": "T1", "body": body, "resolved": True}]
+                self.mentions(done(thread_replies=replies), "revise", "thread_replies[0].body")
+
+    def test_a_reply_thread_id_must_be_the_kind_of_id_the_publisher_accepts(self):
+        for thread_id in ("PRRT_kwDOA-b=", "T1", "x" * 100):
+            with self.subTest(thread_id=thread_id):
+                replies = [{"thread_id": thread_id, "body": "Done.", "resolved": False}]
+                self.assertEqual(validate(done(thread_replies=replies), "revise"), [])
+        for thread_id in ("has space", "a/b", "x" * 101, "id\n", "", "é", 7, None):
+            with self.subTest(thread_id=thread_id):
+                replies = [{"thread_id": thread_id, "body": "Done.", "resolved": False}]
+                self.mentions(done(thread_replies=replies), "revise", "thread_replies[0].thread_id")
+
+    def test_a_result_holds_at_most_the_replies_the_publisher_keeps(self):
+        reply = {"thread_id": "T1", "body": "Done.", "resolved": False}
+        self.assertEqual(validate(done(thread_replies=[reply] * MAX_THREAD_REPLIES), "revise"), [])
+        self.mentions(done(thread_replies=[reply] * (MAX_THREAD_REPLIES + 1)), "revise", "thread_replies: at most")
+        self.assertEqual(MAX_THREAD_REPLIES, 100)
+
+    def test_the_contract_states_the_rules_of_a_reply(self):
+        row = next(line for line in CONTRACT.read_text(encoding="utf-8").splitlines() if line.startswith("| `thread_replies`"))
+        self.assertIn(f"at most {MAX_THREAD_REPLIES} objects", row)
+        self.assertIn("`thread_id` (1 to 100 letters, digits, underscores, equal signs or hyphens)", row)
+        self.assertIn("`body` (1 to 4,000 characters, non-blank)", row)
 
     def test_unknown_key_rejected(self):
         self.mentions(done(extra=1), "step", "extra")
@@ -188,6 +217,23 @@ class ContractTest(unittest.TestCase):
                 self.assertEqual(validate(example, stage), [])
                 outcomes.add(example["outcome"])
         self.assertEqual(outcomes, set(OUTCOMES))
+
+
+class PostedTextsTests(unittest.TestCase):
+    def test_every_reply_to_a_thread_is_listed_under_the_name_of_its_entry(self) -> None:
+        data = {"schema": 1, "outcome": "done", "summary": "Done.", "verification": VERIFICATION,
+                "thread_replies": [{"thread_id": "T1", "body": "First.", "resolved": True},
+                                   {"thread_id": "T2", "body": "Second.", "resolved": False}]}
+        self.assertEqual([], validate(data, "revise"))
+        listed = dict(posted_texts(data))
+        self.assertEqual(("First.", "Second."), (listed["thread_replies[0].body"], listed["thread_replies[1].body"]))
+
+    def test_a_reply_that_names_a_home_directory_is_a_finding_the_finish_check_can_report(self) -> None:
+        home = "/" + "home/someone/project"  # joined at run time: the repository checker refuses the literal
+        data = {"schema": 1, "outcome": "done", "summary": "Done.", "verification": VERIFICATION,
+                "thread_replies": [{"thread_id": "T1", "body": f"Look at {home}.", "resolved": False}]}
+        found = [(field, label) for field, text in posted_texts(data) for _, label in hygiene.text_problems(text)]
+        self.assertEqual([("thread_replies[0].body", "personal filesystem path")], found)
 
 
 if __name__ == "__main__":

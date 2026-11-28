@@ -13,8 +13,8 @@ keyword search and an AI evidence search.
 | --- | --- | --- |
 | Agent harness | The instructions, skills, subagents and hooks every agent session loads, with the issue forms, labels and GitHub rulesets | Built |
 | Small-change track | A trusted person labels an issue `factory:fix`; the factory answers with a draft pull request or with questions | Built and running |
-| Checks and review | Per-app checks in CI, a second-model review of every pull request, automatic fix rounds, revise runs from a person's review, the hand-off from draft to ready | Not built: next |
-| Epic track | A design pull request, a plan pull request, then one pull request per plan step | Not built: after checks and review |
+| Checks and review | Per-app checks in CI, a second-model review of every pull request, automatic fix rounds, the hand-off from draft to ready, revise runs from a person's review | Built |
+| Epic track | A design pull request, a plan pull request, then one pull request per plan step | Not built: next |
 | Service containers, sandbox deployment | Temporary databases for an app's tests; a deployment where a person can try a change | Not built: later |
 
 ## How it fits together
@@ -25,7 +25,7 @@ flowchart TB
     subgraph gh["GitHub"]
         direction LR
         issues[("Issues, labels,<br/>pull requests, comments")]
-        checks["GitHub Actions<br/>repository checks"]
+        checks["GitHub Actions<br/>checks and second-model review"]
         issues -- "every pull request" --> checks
     end
     subgraph host["The owner's server: connects out only"]
@@ -99,7 +99,7 @@ counts only when a trusted person applied it, meaning a GitHub login listed in
 | The agent produces | One pull request with the change, its tests and the checks it ran, or questions | A design, then a plan, then one pull request per plan step |
 | Pull requests | One | One for the design, one for the plan, one per step |
 | A person | Applies the label, answers questions, reviews and merges | Applies the label, then reviews and merges the design, the plan and each step |
-| Stage skills | `factory-fix-issue` | `factory-design`, `factory-plan`, `factory-implement` |
+| Stage skills | `factory-fix-issue` makes the change; `factory-fix` fixes failed checks and review findings on its pull request; `factory-revise` answers a person's review | `factory-design`, `factory-plan`, `factory-implement` |
 | Status | Built and running | Designed, not built yet |
 
 ### Small change (`factory:fix`): built
@@ -130,7 +130,7 @@ sequenceDiagram
     D->>D: Check every commit, neutralise the text
     alt done
         D->>G: Push factory/fix-N, open a draft PR, comment
-        P->>G: Mark ready, review, merge
+        Note over P,A: The pull request's life starts (below)
     else needs input
         D->>G: Push the checked commits, post the questions
         P->>G: Reply with an answer
@@ -154,28 +154,78 @@ instead of guessing. Its checked commits so far go to the work branch, a trusted
 the issue, and the next run starts from that branch with the reply in its context. An issue that is
 really an epic gets that recommendation.
 
-Every run ends with one outcome on the issue: **done**, **needs input**, **failed**, **timed out**,
-**ended without a result**, **not started**, **work not published**, or **waiting for the usage
-limit**. Reaching the subscription's usage limit is not a failure: the run starts again by itself
-once the limit resets. The [operating guide](docs/factory/HOST_SETUP.md#9-operating) says what each
-outcome means and what starts the next run.
+Every run ends with one outcome: **done**, **needs input**, **failed**, **timed out**, **ended
+without a result**, **not started**, **work not published**, or **waiting for the usage limit**.
+Reaching the subscription's usage limit is not a failure: the run starts again by itself once the
+limit resets. The [operating guide](docs/factory/HOST_SETUP.md#9-operating) says what each outcome
+means and what starts the next run.
+
+Once the pull request is open, it looks after itself until a person is needed:
+
+```mermaid
+sequenceDiagram
+    actor P as Person
+    participant G as GitHub
+    participant W as GitHub Actions
+    participant D as Dispatcher
+    participant A as Agent run
+    G->>W: A new head on the pull request
+    W->>G: Repository and app checks, review comment
+    D->>G: Poll and read the checks and the verdict
+    loop While a check fails, at most three fix runs
+        D->>A: Fix run with the failed logs and findings
+        A-->>D: Result and commits
+        D->>G: Push to the branch, comment on the PR
+        W->>G: Checks and review of the new head
+    end
+    alt Every check passes
+        D->>G: Mark ready, request a review, comment
+        opt The person asks for changes
+            P->>G: Review, or comment /factory revise
+            D->>A: Revise run with the review's threads
+            A-->>D: Result and commits
+            D->>G: Push, reply in each thread, comment
+            Note over G,D: Checks again, then fix runs or a new hand-off
+        end
+        P->>G: Approve and merge
+    else Still failing after three fix runs
+        D->>G: A notice on the pull request, status:needs-human
+        P->>G: Comment /factory retry, or take over
+    end
+```
+
+- **The checks.** Three hosted workflows run on every new head: the repository checks; App checks,
+  which runs the `setup` and `check` commands of each app the change touches, read from the app's
+  `factory.toml`; and a review by a second model, Codex. The review reads the change with a
+  read-only profile and posts its findings as a comment. A blocker or a major finding fails it.
+- **Fix rounds.** When a check fails, a fix run starts on the same branch, with the end of each
+  failed job's log and the review's findings quoted in its context. The
+  [factory-fix](.claude/skills/factory-fix/SKILL.md) skill verifies each item before it acts and
+  fixes the cause. At most three fix runs follow each other; when the checks still fail, the
+  factory says so on the issue and waits for a person.
+- **The hand-off.** When every check passes, the dispatcher marks the pull request ready, asks the
+  person who labelled the issue for a review, and comments whether the second model found nothing
+  blocking or could not review this commit. It does this once for each head.
+- **Revise runs.** A review that requests changes or leaves comments, or a comment
+  `/factory revise <instruction>`, starts a revise run. The
+  [factory-revise](.claude/skills/factory-revise/SKILL.md) skill answers every review thread with
+  one reply, changing the code or saying why not, and resolves the threads its change settled. Its
+  commits go through the same checks, fix runs and hand-off.
+
+After the hand-off only a person's asks start runs: a check that fails then starts nothing, since
+the pull request is in a person's hands. The person approves and merges.
 
 All steering happens on GitHub:
 
-| Signal | Effect | Status |
-| --- | --- | --- |
-| A trusted person applies `factory:fix` | Starts a small-change run | Built |
-| A trusted person replies after the agent's questions | The next run starts, with the reply in its context | Built |
-| A trusted person comments `/factory retry` | Runs again after a failure, a timeout, a refused job, a rejected result, or a pull request closed without merging | Built |
-| A trusted person writes a line `app: <name>` | Picks the app the run works on | Built |
-| Anyone who can label applies `factory:pause` or `factory:halt` | No new run for this issue, or anywhere; a run in progress finishes and is published | Built |
-| A trusted person submits a review, or comments `/factory revise <instruction>` | One revise run that answers every review thread | Not built: next |
-
-**Next, for every pull request** (designed, not built): hosted workflows run the app's own checks
-and a review by a second model, Codex. A failed check or review starts an automatic fix run, at most
-three rounds. When everything passes, the dispatcher marks the pull request ready and asks the
-person who started the run to review it. Today the pull request stays a draft until a person marks
-it ready, and the app's checks run only inside the agent's run.
+| Signal | Effect |
+| --- | --- |
+| A trusted person applies `factory:fix` | Starts a small-change run |
+| A trusted person replies after the agent's questions | The next run starts, with the reply in its context |
+| A trusted person comments `/factory retry` | Runs again after a failure, a timeout, a refused job, a rejected result, used-up fix rounds, or a pull request closed without merging |
+| A trusted person writes a line `app: <name>` | Picks the app the run works on |
+| A trusted person submits a review that requests changes or leaves comments | One revise run that answers every thread of the review |
+| A trusted person comments `/factory revise <instruction>` | One revise run that carries out the instruction |
+| Anyone who can label applies `factory:pause` or `factory:halt` | No new run for this issue, or anywhere; a run in progress finishes and is published |
 
 ### Epic (`factory:epic`): designed, not built yet
 
@@ -240,10 +290,10 @@ cannot merge, force-push or rewrite history. The design's
 [trust and safety](docs/factory/DESIGN.md#7-trust-and-safety) section gives the full reasoning.
 
 **Who can start a run.** Only a label applied by a trusted login counts; the dispatcher checks who
-applied it in the issue's timeline, not only that it is there. Comments by anyone else never reach
-the agent. For an issue opened by someone outside the list, the agent never sees the title or the
-body, and a trusted person restates the request in a comment. The factory never checks out a pull
-request from a fork.
+applied it in the issue's timeline, not only that it is there. Only a trusted person's comments and
+reviews steer, and comments by anyone else, review comments included, never reach the agent. For an
+issue opened by someone outside the list, the agent never sees the title or the body, and a trusted
+person restates the request in a comment. The factory never checks out a pull request from a fork.
 
 **Two users, two credentials.** The program that can write to GitHub never runs anything an agent
 produced, and the program that runs agent output cannot write to GitHub. The runner packs the
@@ -273,9 +323,15 @@ diff, so a secret added in one commit and removed in the next still blocks publi
   each file, the number of commits and the bundle.
 
 **Agent text is neutralised before it is posted.** Mentions, issue references, closing keywords,
-links, images and HTML in a summary, a question or a pull request body are broken, and each text
-sits in a quote under a fixed lead-in. It cannot notify anyone, close an issue, or pass for the
-bot's own lines. The dispatcher writes `Closes #<issue>` itself.
+links, images and HTML in a summary, a question, a pull request body or a reply to a review thread
+are broken, and each text sits in a quote under a fixed lead-in. It cannot notify anyone, close an
+issue, or pass for the bot's own lines. The dispatcher writes `Closes #<issue>` itself.
+
+**A review the pull request cannot steer.** The second-model review runs in two jobs. The one that
+holds the API key can only read, and takes its prompt and its answer schema from the base commit,
+so a pull request cannot change how it is reviewed. The one that posts the comment holds no secret
+and runs only the base commit's code. A check's log and the review's findings reach the next run
+only as quotes under headings the dispatcher writes, cut to a fixed size.
 
 **Guard rails inside the agent's session.** Four hooks guard every factory run; the first three
 also run in a person's interactive session.
@@ -295,8 +351,9 @@ hooks catch mistakes and casual attempts. They are not the security boundary, an
 checks before publishing, the rules on GitHub, and the agent's lack of any GitHub credential stand
 behind them.
 
-**People merge.** The dispatcher opens draft pull requests and never merges. GitHub rulesets refuse
-a direct push to `main` and a force push to a `factory/` branch, whatever the factory's code does.
+**People merge.** The dispatcher opens draft pull requests and marks them ready for a person, but
+never merges and never approves. GitHub rulesets refuse a direct push to `main` and a force push to
+a `factory/` branch, whatever the factory's code does.
 
 **Accepted risk.** The agent has open access to the public internet and holds its Claude token
 while it runs, so a poisoned dependency or web page could try to talk it into leaking the token. The
@@ -316,7 +373,7 @@ same files. Together they are called the harness.
 | [.claude/skills/](.claude/skills/) | One skill per stage: `factory-fix-issue`, `factory-design`, `factory-plan`, `factory-implement`, `factory-fix`, `factory-revise`; and `new-app` |
 | [.claude/agents/](.claude/agents/) | Three subagents: `design-critic` attacks a design, `step-reviewer` reviews a diff with fresh context, `verifier` runs the app's checks and reports the evidence |
 | [.claude/hooks/](.claude/hooks/) | The four guards above |
-| [factory/AGENT_CONTRACT.md](factory/AGENT_CONTRACT.md) | What a factory run is given (the job, the issue's trusted text, the base commit) and what it returns: a JSON result that is done, needs input or failed, with a summary, questions, the pull request's text, the commands it ran and follow-ups |
+| [factory/AGENT_CONTRACT.md](factory/AGENT_CONTRACT.md) | What a factory run is given (the job, the issue's trusted text, the base commit, and for a fix or revise run the failed checks' logs, the review's findings or a person's review threads) and what it returns: a JSON result that is done, needs input or failed, with a summary, questions, the pull request's text, replies to review threads, the commands it ran and follow-ups |
 
 Each run starts with no memory of earlier runs. The code, its tests and its documents are all it
 hands to the next run, so [AGENTS.md](AGENTS.md) tells every agent that the code is its own to keep
@@ -339,8 +396,8 @@ healthy, with no cleanup phase later. The standards it is held to:
   the manifest.
 
 The standards scale with the change: a typo fix needs no domain model. Tools enforce what they can,
-through each app's linter and check command and the hooks; the step reviewer and the person who
-merges judge the rest.
+through each app's linter and check command and the hooks; the step reviewer, the second-model
+review and the person who merges judge the rest.
 
 ## The apps
 
@@ -361,9 +418,9 @@ apps/<app>/      one app each: code, tests, README.md, AGENTS.md, factory.toml, 
 packages/        code shared by two or more apps
 templates/app/   the files scripts/new_app.py copies into a new app
 scripts/         repository tools: check_repo.py, new_app.py
-factory/         the dispatcher, the runner, the agent image, config.toml, AGENT_CONTRACT.md
+factory/         the dispatcher, the runner, the agent image, the review, config.toml, AGENT_CONTRACT.md
 .claude/         hooks, settings, skills and subagents for agent sessions
-.github/         issue forms, the pull request template and the repository checks
+.github/         issue forms, the pull request template, the check and review workflows
 docs/            repository conventions and the engineering standards
 docs/factory/    the factory's design, the host guide and the implementation plans
 ```
@@ -400,15 +457,17 @@ python3 scripts/check_repo.py
 python3 -m unittest discover -s factory/tests -t .
 ```
 
-The same two commands run in GitHub Actions on every pull request and on `main`. The checker
-verifies each app's required files, its `factory.toml` and its entry in the catalog, local Markdown
-links, empty credential placeholders in `.env.example` files, and common accidental credential,
-personal-path and private-address patterns in tracked or non-ignored files. These checks are
-useful safeguards, not a complete secret audit of the history.
+The same two commands run in GitHub Actions on every pull request and on `main`, as the
+`repository` check. The checker verifies each app's required files, its `factory.toml` and its
+entry in the catalog, local Markdown links, empty credential placeholders in `.env.example` files,
+and common accidental credential, personal-path and private-address patterns in tracked or
+non-ignored files. These checks are useful safeguards, not a complete secret audit of the history.
 
-The tests, more than 900 of them, run offline with the standard library's test runner. They cover the
-decision function, the checks before publishing, the text neutraliser, the runner, the agent image
-and the hooks. Each app also has its own check command in its `factory.toml`.
+The tests, more than 1,200 of them, run offline with the standard library's test runner. They cover
+the decision function, the checks before publishing, the text neutraliser, the runner, the agent
+image, the review's report and the hooks. Each app also has its own check command in its
+`factory.toml`, which the App checks workflow runs on every pull request that touches the app, as
+the `apps` check. The Review workflow adds the second-model review as the `review` check.
 
 ## Running an app
 
@@ -426,7 +485,8 @@ and its tests run offline by default.
 
 The factory runs on a Linux host with systemd, cgroup v2, nftables, rootless Podman, Python 3.11,
 git and OpenSSL, outbound internet access and no inbound port. It needs two unprivileged users, a
-GitHub App of your own and a token for a Claude subscription. The
+GitHub App of your own and a token for a Claude subscription; the second-model review needs an
+OpenAI API key as a repository secret. The
 [host guide](docs/factory/HOST_SETUP.md) covers every step: the users and directories, the firewall
 table, the resource cap, the GitHub App, the token, deploying, updating, operating and removing
 everything. In a fork, set `trusted_logins` in [factory/config.toml](factory/config.toml) to your
@@ -437,7 +497,7 @@ own login before you deploy.
 | Document | What it covers |
 | --- | --- |
 | [docs/factory/DESIGN.md](docs/factory/DESIGN.md) | The factory's design: intent, the approaches considered, architecture, workflows, trust and safety, the harness, the [build order](docs/factory/DESIGN.md#14-build-order) |
-| [docs/factory/plans/](docs/factory/plans/) | The implementation plans: [the harness](docs/factory/plans/01-harness.md) and [the small-change pipeline](docs/factory/plans/02-fix-pipeline.md) |
+| [docs/factory/plans/](docs/factory/plans/) | The implementation plans: [the harness](docs/factory/plans/01-harness.md), [the small-change pipeline](docs/factory/plans/02-fix-pipeline.md) and [checks and review](docs/factory/plans/03-checks-and-review.md) |
 | [docs/factory/HOST_SETUP.md](docs/factory/HOST_SETUP.md) | Setting up, updating and operating a factory host |
 | [factory/AGENT_CONTRACT.md](factory/AGENT_CONTRACT.md) | What a factory run is given and what it must return |
 | [factory/PLAN_FORMAT.md](factory/PLAN_FORMAT.md) | The strict format of an epic's `PLAN.md` |

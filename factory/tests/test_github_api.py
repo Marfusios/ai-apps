@@ -10,16 +10,18 @@ from unittest import mock
 
 from factory.github_api import (
     API_ROOT,
+    DOWNLOAD_CHUNK_BYTES,
     MAX_BODY_BYTES,
     MAX_REMEMBERED,
     GitHub,
     GitHubError,
+    GraphQLRefused,
     NoRedirect,
     RateLimited,
     post_as_app,
 )
 from factory.github_auth import InstallationToken
-from factory.tests.fakes import FakeGitHub, FakeOpener
+from factory.tests.fakes import FakeGitHub, FakeOpener, message
 
 TOKEN = "tok-" + "x" * 20
 NOW = 1_800_000_000.0
@@ -380,6 +382,312 @@ class PostAsAppTest(unittest.TestCase):
         opener = FakeOpener([("POST", "/x", 201, {}, [1])])
         with self.assertRaises(GitHubError):
             post_as_app("/x", "the-jwt", "owner/name", opener=opener)
+
+
+class GraphQLTest(unittest.TestCase):
+    def test_it_posts_the_query_and_variables_and_returns_data(self):
+        github, opener = client([("POST", "/graphql", 200, {}, {"data": {"viewer": {"id": 1}}})])
+        self.assertEqual(github.graphql("query { viewer { id } }", {"n": 3}), {"viewer": {"id": 1}})
+        self.assertEqual(json.loads(opener.requests[0].body), {"query": "query { viewer { id } }", "variables": {"n": 3}})
+        self.assertEqual(opener.requests[0].headers["authorization"], f"Bearer {TOKEN}")
+
+    def test_a_401_refreshes_the_token_like_any_write(self):
+        tokens = iter(["old", "new"])
+        github, opener = client(
+            [("POST", "/graphql", 401, {}, {}), ("POST", "/graphql", 200, {}, {"data": {}})], token=lambda: next(tokens)
+        )
+        self.assertEqual(github.graphql("q", {}), {})
+        self.assertEqual([r.headers["authorization"] for r in opener.requests], ["Bearer old", "Bearer new"])
+
+    def test_a_rate_limit_is_raised_as_rate_limited(self):
+        github, _ = client([("POST", "/graphql", 429, {"retry-after": "9"}, {})])
+        with self.assertRaises(RateLimited) as caught:
+            github.graphql("q", {})
+        self.assertEqual(caught.exception.retry_at, NOW + 9)
+
+    def test_a_graphql_rate_limit_in_a_200_answer_is_raised_as_rate_limited_a_minute_ahead(self):
+        for errors in ([{"type": "RATE_LIMITED", "message": "secret-text"}],
+                       [{"type": "NOT_FOUND"}, {"type": "RATE_LIMITED", "message": "secret-text"}]):
+            with self.subTest(errors=len(errors)):
+                github, _ = client([("POST", "/graphql", 200, {}, {"errors": errors})])
+                with self.assertRaises(RateLimited) as caught:
+                    github.graphql("query-" + "q" * 8, {"name": "var-" + "v" * 8})
+                self.assertEqual(caught.exception.retry_at, NOW + 60)
+                for text in (str(caught.exception), caught.exception.message):
+                    for leaked in ("query-", "var-", "secret-text"):
+                        self.assertNotIn(leaked, text)
+
+    def test_a_graphql_refusal_of_another_type_is_still_a_refusal(self):
+        for kind in ("NOT_FOUND", "FORBIDDEN", "rate_limited", "NOT_RATE_LIMITED"):
+            with self.subTest(kind=kind):
+                github, _ = client([("POST", "/graphql", 200, {}, {"errors": [{"type": kind}]})])
+                with self.assertRaises(GraphQLRefused) as refused:
+                    github.graphql("q", {})
+                self.assertNotIsInstance(refused.exception, RateLimited)
+
+    def test_errors_and_a_missing_or_wrong_data_raise_without_query_variables_or_error_text(self):
+        for answer in (
+            {"data": {"a": 1}, "errors": [{"message": "secret-text"}, {"message": "more"}]},
+            {"errors": [{"message": "secret-text"}]},
+            {"errors": "secret-text"},
+            {"data": None},
+            {"data": [1]},
+            {},
+            [1],
+        ):
+            with self.subTest(answer=answer):
+                github, _ = client([("POST", "/graphql", 200, {}, answer)])
+                with self.assertRaises(GitHubError) as caught:
+                    github.graphql("query-" + "q" * 8, {"name": "var-" + "v" * 8})
+                self.assertEqual(caught.exception.status, 0)
+                for text in (str(caught.exception), caught.exception.message):
+                    for leaked in ("query-", "var-", "secret-text"):
+                        self.assertNotIn(leaked, text)
+
+    def test_the_message_counts_the_errors(self):
+        github, _ = client([("POST", "/graphql", 200, {}, {"errors": [{}, {}, {}]})])
+        with self.assertRaises(GitHubError) as caught:
+            github.graphql("q", {})
+        self.assertIn("3 errors", caught.exception.message)
+        github, _ = client([("POST", "/graphql", 200, {}, {"errors": [{}]})])
+        with self.assertRaises(GitHubError) as one:
+            github.graphql("q", {})
+        self.assertIn("1 error", one.exception.message)
+        self.assertNotIn("1 errors", one.exception.message)
+
+    def test_errors_in_the_answer_have_their_own_type_and_a_failed_request_does_not(self):
+        github, _ = client([("POST", "/graphql", 200, {}, {"errors": [{}]})])
+        with self.assertRaises(GraphQLRefused) as refused:
+            github.graphql("q", {})
+        self.assertEqual(refused.exception.status, 0)
+        self.assertEqual(refused.exception.types, ("",))
+
+    def test_a_refusal_names_the_type_of_each_error_and_nothing_else_from_it(self):
+        errors = [{"type": "NOT_FOUND", "message": "secret-text"}, {"type": "not a type"}, {"type": 7}, "odd",
+                  {"type": "FORBIDDEN"}]
+        github, _ = client([("POST", "/graphql", 200, {}, {"errors": errors})])
+        with self.assertRaises(GraphQLRefused) as refused:
+            github.graphql("q", {})
+        self.assertEqual(refused.exception.types, ("NOT_FOUND", "", "", "", "FORBIDDEN"))
+        self.assertNotIn("secret-text", str(refused.exception))
+        github, _ = client([("POST", "/graphql", 200, {}, {"errors": "odd"})])
+        with self.assertRaises(GraphQLRefused) as odd:
+            github.graphql("q", {})
+        self.assertEqual(odd.exception.types, ())
+        for status, answer in ((502, {}), (200, {"data": None}), (200, [])):
+            with self.subTest(status=status, answer=answer):
+                github, _ = client([("POST", "/graphql", status, {}, answer)])
+                with self.assertRaises(GitHubError) as failed:
+                    github.graphql("q", {})
+                self.assertNotIsInstance(failed.exception, GraphQLRefused)
+
+
+SIGNED = "https://logs.example/signed?sig=" + "k" * 12
+
+
+def redirect(location: str = SIGNED) -> tuple:
+    return ("GET", "/jobs/7/logs", 302, {"Location": location}, b"")
+
+
+class DownloadTextTest(unittest.TestCase):
+    def test_it_follows_one_redirect_without_the_token_or_other_client_headers(self):
+        github, opener = client([redirect(), ("GET", "", 200, {}, "line one\nline two")])
+        self.assertEqual(github.download_text("/jobs/7/logs", 1000), "line one\nline two")
+        first, second = opener.requests
+        self.assertEqual(first.url, f"{API_ROOT}/jobs/7/logs")
+        self.assertEqual(first.headers["authorization"], f"Bearer {TOKEN}")
+        self.assertEqual(second.url, SIGNED)
+        self.assertNotIn("authorization", second.headers)
+        self.assertEqual(second.headers, {"user-agent": "factory-dispatcher"})
+
+    def test_both_requests_use_the_timeout_and_neither_follows_a_redirect(self):
+        seen = []
+
+        class Spy(FakeOpener):
+            def __call__(self, request, timeout=None):
+                seen.append(timeout)
+                return super().__call__(request, timeout)
+
+        opener = Spy([redirect(), ("GET", "", 302, {"Location": "https://elsewhere.example/x"}, b"")])
+        github = GitHub("owner/name", lambda: TOKEN, opener=opener)
+        with self.assertRaises(GitHubError):
+            github.download_text("/jobs/7/logs", 10)
+        self.assertEqual(seen, [30, 30])
+        self.assertEqual(len(opener.requests), 2)
+
+    def test_a_direct_200_answer_is_the_body(self):
+        github, opener = client([("GET", "/jobs/7/logs", 200, {}, "direct")])
+        self.assertEqual(github.download_text("/jobs/7/logs", 100), "direct")
+        self.assertEqual(len(opener.requests), 1)
+
+    def test_it_returns_only_the_tail_of_a_body_longer_than_the_limit(self):
+        body = "".join(f"{i:04d}\n" for i in range(2000))
+        github, _ = client([redirect(), ("GET", "", 200, {}, body)])
+        self.assertEqual(github.download_text("/jobs/7/logs", 12), body[-12:])
+
+    def test_a_body_within_the_limit_is_returned_whole_and_a_zero_limit_is_empty(self):
+        github, _ = client([redirect(), ("GET", "", 200, {}, "abc"), redirect(), ("GET", "", 200, {}, "abc")])
+        self.assertEqual(github.download_text("/jobs/7/logs", 3), "abc")
+        self.assertEqual(github.download_text("/jobs/7/logs", 0), "")
+
+    def test_the_body_is_read_in_bounded_chunks_never_all_at_once(self):
+        amounts = []
+
+        class Stream:
+            status = 200
+            headers = {}
+
+            def __init__(self):
+                self.left = 40
+
+            def read(self, amount=-1):
+                amounts.append(amount)
+                if not self.left:
+                    return b""
+                self.left -= 1
+                return b"y" * amount
+
+            def close(self):
+                pass
+
+        def opener(request, timeout=None):
+            if request.full_url.startswith(API_ROOT):
+                raise urllib.error.HTTPError(request.full_url, 302, "Found", message({"Location": SIGNED}), None)
+            return Stream()
+
+        text = GitHub("o/n", lambda: TOKEN, opener=opener).download_text("/x", 100)
+        self.assertEqual(text, "y" * 100)
+        self.assertTrue(all(0 < amount <= DOWNLOAD_CHUNK_BYTES for amount in amounts))
+
+    def test_a_decoding_error_is_replaced(self):
+        github, _ = client([redirect(), ("GET", "", 200, {}, b"ok \xff\xfe end")])
+        self.assertEqual(github.download_text("/jobs/7/logs", 100), "ok �� end")
+
+    def test_a_body_over_the_total_cap_is_an_error(self):
+        class Endless:
+            status = 200
+            headers = {}
+
+            def read(self, amount=-1):
+                return b"z" * amount
+
+            def close(self):
+                pass
+
+        def opener(request, timeout=None):
+            if request.full_url.startswith(API_ROOT):
+                raise urllib.error.HTTPError(request.full_url, 302, "Found", message({"Location": SIGNED}), None)
+            return Endless()
+
+        with mock.patch("factory.github_api.MAX_DOWNLOAD_BYTES", 1_000_000):
+            with self.assertRaises(GitHubError) as caught:
+                GitHub("o/n", lambda: TOKEN, opener=opener).download_text("/jobs/7/logs", 10)
+        self.assertEqual(caught.exception.status, 0)
+
+    def test_a_location_that_is_not_https_or_is_missing_is_refused_without_a_second_request(self):
+        for headers in ({"Location": "http://logs.example/x"}, {"Location": "file:///etc/x"}, {"Location": "/rel"}, {}):
+            with self.subTest(headers=headers):
+                github, opener = client([("GET", "/jobs/7/logs", 302, headers, b"")])
+                with self.assertRaises(GitHubError):
+                    github.download_text("/jobs/7/logs", 10)
+                self.assertEqual(len(opener.requests), 1)
+
+    def test_other_statuses_and_network_errors_raise_naming_the_path_only(self):
+        cases = {
+            "404 first": [("GET", "/jobs/7/logs", 404, {}, "nope")],
+            "301 first": [("GET", "/jobs/7/logs", 301, {"Location": SIGNED}, b"")],
+            "204 second": [redirect(), ("GET", "", 204, {}, b"")],
+            "403 second": [redirect(), ("GET", "", 403, {}, "denied " + SIGNED)],
+            "network first": [("GET", "/jobs/7/logs", urllib.error.URLError("failed"), {}, b"")],
+            "network second": [redirect(), ("GET", "", urllib.error.URLError("failed " + SIGNED), {}, b"")],
+            "timeout second": [redirect(), ("GET", "", TimeoutError("timed out"), {}, b"")],
+            "http client second": [redirect(), ("GET", "", http.client.IncompleteRead(b"x"), {}, b"")],
+        }
+        for name, answers in cases.items():
+            with self.subTest(name):
+                github, _ = client(answers)
+                with self.assertRaises(GitHubError) as caught:
+                    github.download_text("/jobs/7/logs", 10)
+                self.assertIn("/jobs/7/logs", caught.exception.message)
+                for text in (str(caught.exception), caught.exception.message):
+                    self.assertNotIn("sig=", text)
+                    self.assertNotIn("logs.example", text)
+
+    def test_a_malformed_location_is_a_github_error_not_another_exception(self):
+        for location in ("https://localhost:1/é", "https://[bad/x", "https:///nohost", "https://"):
+            with self.subTest(location=location):
+                github, _ = client([redirect(location), ("GET", "", 200, {}, "never")])
+                with self.assertRaises(GitHubError) as caught:
+                    github.download_text("/jobs/7/logs", 10)
+                self.assertIn("/jobs/7/logs", caught.exception.message)
+
+    def test_a_value_error_from_the_second_request_is_a_github_error(self):
+        def opener(request, timeout=None):
+            if request.full_url.startswith(API_ROOT):
+                raise urllib.error.HTTPError(request.full_url, 302, "Found", message({"Location": SIGNED}), None)
+            raise ValueError("bad url " + SIGNED)
+
+        with self.assertRaises(GitHubError) as caught:
+            GitHub("o/n", lambda: TOKEN, opener=opener).download_text("/jobs/7/logs", 10)
+        self.assertNotIn("sig=", str(caught.exception))
+
+    def test_a_rate_limit_on_the_first_request_is_raised_as_rate_limited(self):
+        for status, headers in ((429, {"retry-after": "9"}), (403, {"x-ratelimit-remaining": "0"})):
+            with self.subTest(status=status):
+                github, opener = client([("GET", "/jobs/7/logs", status, headers, {})])
+                with self.assertRaises(RateLimited) as caught:
+                    github.download_text("/jobs/7/logs", 10)
+                self.assertEqual(caught.exception.status, status)
+                self.assertEqual(len(opener.requests), 1)
+
+    def test_a_read_that_fails_midway_is_a_github_error(self):
+        class Broken:
+            status = 200
+            headers = {}
+
+            def read(self, amount=-1):
+                raise ConnectionResetError("reset " + SIGNED)
+
+            def close(self):
+                pass
+
+        def opener(request, timeout=None):
+            if request.full_url.startswith(API_ROOT):
+                raise urllib.error.HTTPError(request.full_url, 302, "Found", message({"Location": SIGNED}), None)
+            return Broken()
+
+        with self.assertRaises(GitHubError) as caught:
+            GitHub("o/n", lambda: TOKEN, opener=opener).download_text("/jobs/7/logs", 10)
+        self.assertNotIn("sig=", str(caught.exception))
+
+    def test_the_path_is_validated_like_every_other(self):
+        github, opener = client([])
+        for path in ("x", "/a b", "@other.example/x"):
+            with self.subTest(path=path), self.assertRaises(GitHubError):
+                github.download_text(path, 10)
+        self.assertEqual(opener.requests, [])
+
+
+class FakeGitHubGraphQLAndDownloadsTest(unittest.TestCase):
+    def test_graphql_answers_are_consumed_in_order_and_calls_recorded(self):
+        fake = FakeGitHub()
+        fake.graphql_answers = [{"a": 1}, GitHubError(0, "failed")]
+        self.assertEqual(fake.graphql("q1", {"x": 1}), {"a": 1})
+        with self.assertRaises(GitHubError):
+            fake.graphql("q2", {})
+        self.assertEqual(fake.graphql_calls, [("q1", {"x": 1}), ("q2", {})])
+        with self.assertRaises(AssertionError):
+            fake.graphql("q3", {})
+
+    def test_downloads_return_the_tail_and_a_missing_path_is_a_404(self):
+        fake = FakeGitHub()
+        fake.downloads["/jobs/1/logs"] = "abcdef"
+        self.assertEqual(fake.download_text("/jobs/1/logs", 100), "abcdef")
+        self.assertEqual(fake.download_text("/jobs/1/logs", 2), "ef")
+        self.assertEqual(fake.download_text("/jobs/1/logs", 0), "")
+        with self.assertRaises(GitHubError) as caught:
+            fake.download_text("/jobs/2/logs", 10)
+        self.assertEqual(caught.exception.status, 404)
 
 
 class FakeGitHubTest(unittest.TestCase):

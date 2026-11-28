@@ -1,13 +1,13 @@
 """Compose every text the bot posts: run comments, pull request titles and bodies, and fixed notices.
 
 A run comment is the bot's own lines (a header, fixed lead-ins and headings, one closing line, a hidden
-marker) around text written by an agent or taken from a bundle. Each piece of that text is neutralised
-once and then placed inside a Markdown container it cannot leave, so it can neither swallow the bot's
-lines nor repeat them at the start of a line: a block quote (`> `) for the summary and the failure
-reason, a list item with indented continuation lines for questions, problems and follow-ups. A blank line
-ends every container. The marker is always the last line. When the comment is over GitHub's size limit,
-the already-neutralised questions are cut evenly, then the summary, then the failure reason, each at most
-once. A pull request body starts with the one line GitHub acts on, `Closes #<issue>`.
+marker) around text written by an agent or taken from a bundle. Each piece of that text is neutralised once
+and then placed inside a Markdown container it cannot leave, so it can neither swallow the bot's lines nor
+repeat them at the start of a line: a block quote (`> `) for the summary, the failure reason and a reply to
+a review thread, a list item with indented continuation lines for questions, problems and follow-ups. A
+blank line ends every container. The marker is always the last line. When the comment is over GitHub's size
+limit, the already-neutralised questions are cut evenly, then the summary, then the failure reason, each at
+most once. A pull request body starts with the one line GitHub acts on, `Closes #<issue>`.
 """
 
 import re
@@ -79,6 +79,22 @@ _NOTICES: Mapping[str, tuple[str, str]] = {
         "the work branch, or close this issue.",
         "failed",
     ),
+    "fix-rounds-exhausted": (
+        "The automated fix runs did not make the checks pass, and the limit of fix rounds in a row is reached. "
+        "Comment `/factory retry` to start again, or a person takes over the pull request.",
+        "failed",
+    ),
+}
+
+# A fix or revise run may end done without a commit; the comment says so, since it shows nothing else about it.
+NO_COMMIT_PUSHED = "No commit was pushed, so the branch is unchanged."
+THREAD_REPLY_LIMIT = 4_000
+HANDOFF_READY = "The pull request is ready for a person's review."
+HANDOFF_TEXTS: Mapping[str, str] = {
+    "pass": f"The checks pass and the automated review found nothing blocking. {HANDOFF_READY}",
+    # The review check also passes when the review model could not run, so no verdict must not read as a review.
+    "unavailable": "The checks pass. The automated review gave no verdict for this commit, so no second model has "
+                   f"read it. {HANDOFF_READY}",
 }
 
 
@@ -144,13 +160,15 @@ def _follow_ups_section(follow_ups: Sequence[Mapping[str, str]]) -> str:
     return "**Follow-ups the agent noticed**\n\n" + "\n".join(items) if items else ""
 
 
-def _closing(outcome: str, *, pull_request_url: str, branch: str, kept_commits: int, retry_at: str) -> str:
+def _closing(outcome: str, *, stage: str, pull_request_url: str, branch: str, kept_commits: int, retry_at: str) -> str:
     if outcome == "needs_input":
         line = "Reply in a comment and the work continues from where it stopped."
         if kept_commits and branch:
             line += f" The work so far is on the branch `{branch}`."
         return line
     if outcome == "done":
+        if stage in result.PULL_REQUEST_STAGES and not kept_commits:
+            return NO_COMMIT_PUSHED
         return f"Pull request: {pull_request_url}" if pull_request_url else ""
     if outcome == "usage_limit":
         line = "The subscription's usage limit was reached."
@@ -220,8 +238,14 @@ def run_comment(
     kept_commits: int = 0,
     retry_at: str = "",
     reason: str | None = None,
+    round: int = 0,
+    head: str = "",
 ) -> str:
-    """The comment after a run, ending with a marker that no other text in it can imitate."""
+    """The comment after a run, ending with a marker that no other text in it can imitate.
+
+    A `round` above 0 and a non-empty `head` (the branch head after the run) go into the marker; the round
+    also into the header.
+    """
     if outcome not in OUTCOME_WORDS:
         raise ValueError(f"unknown outcome: {outcome!r}")
     if reason is not None and reason not in REASON_WORDS:
@@ -233,16 +257,24 @@ def run_comment(
     _check("branch", branch, _BRANCH, optional=True)
     _check("retry_at", retry_at, _RETRY_AT, optional=True)
     _check("pull_request_url", pull_request_url, PULL_REQUEST_URL, optional=True)
+    _check("head", head, spool.COMMIT_SHA, optional=True)
+    if isinstance(round, bool) or not isinstance(round, int) or not 0 <= round <= spool.MAX_ROUND:
+        raise ValueError(f"round must be an integer from 0 to {spool.MAX_ROUND}")
 
     marker = {"kind": "run", "job": job_id, "stage": stage, "outcome": outcome}
     if outcome == "usage_limit":
         marker["retry_at"] = retry_at
-    header = (f"**Factory run** · stage `{stage}` · **{OUTCOME_WORDS[outcome]}** · {_duration(duration_seconds)}"
-              f" · model `{model or 'unknown'}`")
+    if round:
+        marker["round"] = round
+    if head:
+        marker["head"] = head
+    round_part = f" · round {round}" if round else ""
+    header = (f"**Factory run** · stage `{stage}`{round_part} · **{OUTCOME_WORDS[outcome]}** · "
+              f"{_duration(duration_seconds)} · model `{model or 'unknown'}`")
     reason_line = f"This run ended because {REASON_WORDS[reason]}." if reason is not None else ""
     problems_section = _problems_section(problems)
     follow_ups_section = _follow_ups_section(follow_ups)
-    closing = _closing(outcome, pull_request_url=pull_request_url, branch=branch, kept_commits=kept_commits,
+    closing = _closing(outcome, stage=stage, pull_request_url=pull_request_url, branch=branch, kept_commits=kept_commits,
                        retry_at=retry_at)
 
     # Each text is neutralised here, once; later cuts only shorten these strings.
@@ -306,6 +338,34 @@ def pull_request_body(body: str, issue_number: int, follow_ups: Sequence[Mapping
     if items:
         parts.append("## Follow-ups\n\n" + "\n".join(items))
     return "\n\n".join(parts)
+
+
+def thread_reply(body: str, *, job_id: str, thread_id: str) -> str:
+    """The agent's reply to a review thread: neutralised once, as a block quote under a fixed lead-in.
+
+    The last line is a marker naming the job and the thread, so that a repeat can tell the reply was posted; no
+    marker in the body survives neutralising, and both ids must have their expected form.
+    """
+    _check("job_id", job_id, spool.JOB_ID)
+    _check("thread_id", thread_id, spool.THREAD_ID)
+    text = _neutral(body, THREAD_REPLY_LIMIT)
+    if not text:
+        raise ValueError("a reply must have text")
+    marker = markers.encode({"kind": "reply", "job": job_id, "thread": thread_id})
+    return f"{_quoted_section('The agent replies:', text)}\n\n{marker}"
+
+
+def handoff_comment(head: str, verdict: str) -> str:
+    """The fixed comment that hands a pull request over, with a marker naming the head it was handed over at.
+
+    `verdict` is the review's: "pass", or "unavailable" (or "") when it gave none for this head. A failed review
+    never leads to a hand-off, so any other value is an error.
+    """
+    _check("head", head, spool.COMMIT_SHA)
+    key = verdict or "unavailable"
+    if key not in HANDOFF_TEXTS:
+        raise ValueError("verdict is not one a hand-off follows")
+    return f"{HANDOFF_TEXTS[key]}\n\n{markers.encode({'kind': 'handoff', 'head': head})}"
 
 
 def notice(key: str) -> str:

@@ -7,10 +7,14 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from factory import compose, jobs
+from factory.config import load as load_config
+
 ROOT = Path(__file__).resolve().parents[2]
 CLAUDE = ROOT / ".claude"
 HOOKS = CLAUDE / "hooks"
 SETTINGS = CLAUDE / "settings.json"
+CONTRACT = ROOT / "factory" / "AGENT_CONTRACT.md"
 READ_ONLY_AGENTS = {"design-critic", "step-reviewer"}
 READ_ONLY_TOOLS = {"Read", "Grep", "Glob"}
 HOOK_COMMAND = re.compile(r"""^sh "\$CLAUDE_PROJECT_DIR/\.claude/hooks/run" (\w+)$""")
@@ -40,6 +44,27 @@ def read_frontmatter(path: Path) -> dict[str, str]:
 
 def load_settings() -> dict:
     return json.loads(SETTINGS.read_text(encoding="utf-8"))
+
+
+def flowing(path: Path) -> str:
+    """The file's text with every run of white space as one space, so a line break inside a phrase is a space."""
+    return " ".join(path.read_text(encoding="utf-8").split())
+
+
+def fix_headings() -> list[str]:
+    """The headings the dispatcher writes into a fix run's context, with `<name>` for the check's name."""
+    sections = jobs.fix_sections([("<name>", "a log")] * (jobs.MAX_FAILED_CHECKS + 1), "a finding")
+    return list(dict.fromkeys(heading for heading, _ in sections))
+
+
+def revise_headings() -> list[str]:
+    """The headings the dispatcher writes into a revise run's context, with placeholders for what varies."""
+    config = load_config()
+    stamp = "2026-01-02T03:04:05Z"
+    thread = jobs.Thread("THREAD", "PATH", 7, 1, ((config.trusted_logins[0], "a comment"),))
+    sections = jobs.revise_sections([(stamp, "a review")], [thread], "an instruction", config)
+    return [heading.replace(stamp, "<time>").replace("THREAD", "<id>").replace("PATH", "<path>")
+            .replace(":7)", ":<line>)") for heading, _ in sections]
 
 
 def settings_commands(settings: dict) -> list[str]:
@@ -168,6 +193,64 @@ class SkillTests(unittest.TestCase):
         chore = text.partition("## Do a chore")[2].partition("\n## ")[0]
         for name in ("apps/<app>/factory.toml", "[quality]", "commands.check", "commands.quick", "Commands"):
             self.assertIn(name, chore)
+
+    def test_the_placeholder_headings_are_the_ones_the_dispatcher_writes(self) -> None:
+        self.assertEqual(fix_headings(), ["Failed check: <name>", "Failed checks not shown", "Automated review"])
+        self.assertEqual(revise_headings(), ["Instruction", "Review (<time>)", "Review thread <id> (<path>:<line>)"])
+
+    def test_the_fix_skill_reads_each_section_of_its_context_and_its_round(self) -> None:
+        text = flowing(CLAUDE / "skills" / "factory-fix" / "SKILL.md")
+        for words in (*(f"`## {heading}`" for heading in fix_headings()), "`round`", "`thread_replies`"):
+            with self.subTest(words=words):
+                self.assertIn(words, text)
+
+    def test_the_revise_skill_answers_each_thread_by_the_id_in_its_heading(self) -> None:
+        text = flowing(CLAUDE / "skills" / "factory-revise" / "SKILL.md")
+        for words in (*(f"`## {heading}`" for heading in revise_headings()), "`thread_replies`", "`thread_id`",
+                      "`resolved`", "`round`"):
+            with self.subTest(words=words):
+                self.assertIn(words, text)
+
+    def test_the_fix_skill_and_the_contract_tell_the_three_cases_of_a_fix_run_with_no_commit(self) -> None:
+        for path in (CLAUDE / "skills" / "factory-fix" / "SKILL.md", CONTRACT):
+            text = flowing(path)
+            for words in ("no failed check and no review finding", "`done` with no commit", "return `failed`",
+                          "`failure_reason`"):
+                with self.subTest(path=path.name, words=words):
+                    self.assertIn(words, text)
+
+    def test_the_fix_skill_says_a_failed_run_waits_for_a_retry_after_the_check_is_rerun(self) -> None:
+        text = flowing(CLAUDE / "skills" / "factory-fix" / "SKILL.md")
+        self.assertIn("then comments `/factory retry`", text)
+        self.assertNotIn("takes the pull request over, or comments", text)
+        self.assertNotIn("answered with evidence", text)
+
+    def test_the_revise_skill_and_the_contract_take_every_line_below_the_command_as_the_instruction(self) -> None:
+        for path in (CLAUDE / "skills" / "factory-revise" / "SKILL.md", CONTRACT):
+            text = flowing(path)
+            for words in ("every line below", "`/factory revise` with no text", "`needs_input`"):
+                with self.subTest(path=path.name, words=words):
+                    self.assertIn(words, text)
+
+
+class ContractTests(unittest.TestCase):
+    def test_a_reply_needs_text_and_the_contract_does_not_describe_the_old_refusal(self) -> None:
+        text = flowing(CONTRACT)
+        self.assertIn("A reply needs text", text)
+        self.assertNotIn("white space", flowing(CLAUDE / "skills" / "factory-revise" / "SKILL.md"))
+
+    def test_the_contract_points_from_the_stage_table_to_the_stages_that_run_today(self) -> None:
+        self.assertIn("The stages that run today are listed under", flowing(CONTRACT))
+
+    def test_the_contract_names_each_section_of_a_fix_and_a_revise_runs_context(self) -> None:
+        text = flowing(CONTRACT)
+        for heading in (*fix_headings(), *revise_headings()):
+            with self.subTest(heading=heading):
+                self.assertIn(f"`## {heading}`", text)
+
+    def test_the_contract_names_the_lead_in_of_a_posted_thread_reply(self) -> None:
+        reply = compose.thread_reply("x", job_id="20260102T030405Z-revise-1-0123abcd", thread_id="T")
+        self.assertIn(f"`{reply.partition(chr(10))[0]}`", flowing(CONTRACT))
 
 
 class AgentTests(unittest.TestCase):

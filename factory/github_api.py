@@ -8,14 +8,19 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from collections.abc import Callable, Mapping
 
 API_ROOT = "https://api.github.com"
 TIMEOUT_SECONDS = 30
 MAX_BODY_BYTES = 10_000_000
 MAX_REMEMBERED = 500
+MAX_DOWNLOAD_BYTES = 200_000_000
+DOWNLOAD_CHUNK_BYTES = 65_536
+USER_AGENT = "factory-dispatcher"
 DEFAULT_RETRY_SECONDS = 60
 NEXT_LINK = re.compile(r'<([^>]*)>\s*;\s*rel="next"')
+ERROR_TYPE = re.compile(r"[A-Z][A-Z_]{0,39}")  # how GitHub names the type of a GraphQL error
 
 
 class GitHubError(Exception):
@@ -29,6 +34,28 @@ class GitHubError(Exception):
         super().__init__(f"GitHub {status}: {message}")
         self.status = status
         self.message = message
+
+
+class GraphQLRefused(GitHubError):
+    """GitHub took a GraphQL call and reported errors in its answer; a failed request raises plain GitHubError.
+
+    `types` holds the `type` of each error, such as `NOT_FOUND`, and "" for one without a plain type. Nothing else
+    of an error is kept: its message may quote the query. An error of the type `RATE_LIMITED` raises RateLimited.
+    """
+
+    def __init__(self, status: int, message: str, types: tuple[str, ...] = ()) -> None:
+        super().__init__(status, message)
+        self.types = types
+
+    @property
+    def not_found(self) -> bool:
+        """True when every error says its object does not exist, so asking again changes nothing."""
+        return bool(self.types) and all(kind == "NOT_FOUND" for kind in self.types)
+
+
+def _error_type(error: object) -> str:
+    kind = error.get("type") if isinstance(error, dict) else None
+    return kind if isinstance(kind, str) and ERROR_TYPE.fullmatch(kind) else ""
 
 
 class RateLimited(GitHubError):
@@ -67,6 +94,36 @@ def _check_path(path: str) -> None:
 def _label(method: str, url: str) -> str:
     """Name a request in an error without its query, which could carry search text."""
     return f"{method} {urllib.parse.urlsplit(url).path}"
+
+
+def _is_https_url(url: str) -> bool:
+    """Whether `url` is an ASCII https URL with a host, one urllib can send."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        return url.isascii() and parts.scheme == "https" and bool(parts.hostname)
+    except ValueError:
+        return False
+
+
+def _tail(response, limit: int, label: str) -> bytes:
+    """The last `limit` bytes of a body read in chunks.
+
+    While reading, about `limit` plus one chunk is held; the oldest chunk is trimmed to the limit before the final
+    join, so the chunks and the joined result together are at most about twice the limit.
+    """
+    chunks: deque[bytes] = deque()
+    kept = total = 0
+    while chunk := response.read(DOWNLOAD_CHUNK_BYTES):
+        total += len(chunk)
+        if total > MAX_DOWNLOAD_BYTES:
+            raise GitHubError(0, f"{label} answered more than {MAX_DOWNLOAD_BYTES} bytes")
+        chunks.append(chunk)
+        kept += len(chunk)
+        while len(chunks) > 1 and kept - len(chunks[0]) >= limit:
+            kept -= len(chunks.popleft())
+    if chunks and kept > limit:
+        chunks[0] = chunks[0][kept - limit:]
+    return b"".join(chunks)
 
 
 def _page_size(url: str) -> int | None:
@@ -131,6 +188,64 @@ class GitHub:
         _check_path(path)
         self._send("DELETE", API_ROOT + path, None, None)
 
+    def graphql(self, query: str, variables: Mapping[str, object]) -> dict:
+        """Run a GraphQL call and return its `data`; errors in a 200 answer raise GraphQLRefused,
+        or RateLimited when one of them is of the type RATE_LIMITED."""
+        answer = self._write("POST", "/graphql", {"query": query, "variables": dict(variables)})
+        errors = answer.get("errors") if isinstance(answer, dict) else None
+        data = answer.get("data") if isinstance(answer, dict) else None
+        if errors:
+            if isinstance(errors, list) and "RATE_LIMITED" in map(_error_type, errors):
+                # GitHub answers an exceeded GraphQL limit with a 200 and no headers, so the wait is a guess
+                raise RateLimited(200, "POST /graphql was rate limited", self._clock() + DEFAULT_RETRY_SECONDS)
+            count = len(errors) if isinstance(errors, list) else 1
+            types = tuple(map(_error_type, errors)) if isinstance(errors, list) else ()
+            raise GraphQLRefused(0, f"POST /graphql failed with {count} {'error' if count == 1 else 'errors'}", types)
+        if not isinstance(data, dict):
+            raise GitHubError(0, "POST /graphql answered no data")
+        return data
+
+    def download_text(self, path: str, limit: int) -> str:
+        """The last `limit` bytes of a download, decoded as UTF-8 with replacement.
+
+        GitHub answers a log request with a 302 to a signed URL on another host. That URL is fetched without the
+        token or any other header of this client but the user agent, and neither request follows a further redirect.
+        Errors name the API path only: the signed URL carries a credential in its query.
+        """
+        _check_path(path)
+        label = f"GET {path}"
+        first = self._open(self._api_request("GET", API_ROOT + path, None, None, self._token), label)
+        if first.status == 302:
+            location = first.headers.get("location") or ""
+            first.close()
+            if not _is_https_url(location):
+                raise GitHubError(0, f"{label} redirected somewhere other than an https URL")
+            request = urllib.request.Request(location, headers={"User-Agent": USER_AGENT}, method="GET")
+            response = self._open(request, label)
+        else:
+            self._raise_if_limited(first.status, first.headers, label)
+            response = first
+        return self._read_tail(response, limit, label).decode("utf-8", errors="replace")
+
+    def _read_tail(self, response, limit: int, label: str) -> bytes:
+        try:
+            if response.status != 200:
+                raise GitHubError(response.status, f"{label} failed")
+            return _tail(response, limit, label)
+        except (OSError, ValueError, http.client.HTTPException) as error:
+            raise GitHubError(0, f"{label} failed on the network ({type(error).__name__})") from None
+        finally:
+            response.close()
+
+    def _open(self, request: urllib.request.Request, label: str):
+        """Open a request; an HTTPError is returned as the response it also is."""
+        try:
+            return self._opener(request, timeout=TIMEOUT_SECONDS)
+        except urllib.error.HTTPError as error:
+            return error
+        except (OSError, ValueError, http.client.HTTPException) as error:  # ValueError: a URL urllib cannot use
+            raise GitHubError(0, f"{label} failed on the network ({type(error).__name__})") from None
+
     @staticmethod
     def _url(path: str, params: Mapping[str, str] | None) -> str:
         query = urllib.parse.urlencode(sorted((params or {}).items()))
@@ -183,12 +298,15 @@ class GitHub:
         if status == 401 and retry_on_401:
             status, headers, content = self._exchange(method, url, data, etag, self._refresh)
         label = _label(method, url)
-        limited = "retry-after" in headers or headers.get("x-ratelimit-remaining") == "0"
-        if status == 429 or (status == 403 and limited):  # a 429 says "too many requests" whatever its headers say
-            raise RateLimited(status, f"{label} was rate limited", self._retry_at(headers))
+        self._raise_if_limited(status, headers, label)
         if status != 304 and not 200 <= status < 300:
             raise GitHubError(status, f"{label} failed")
         return status, headers, content
+
+    def _raise_if_limited(self, status: int, headers, label: str) -> None:
+        limited = "retry-after" in headers or headers.get("x-ratelimit-remaining") == "0"
+        if status == 429 or (status == 403 and limited):  # a 429 says "too many requests" whatever its headers say
+            raise RateLimited(status, f"{label} was rate limited", self._retry_at(headers))
 
     def _retry_at(self, headers) -> float:
         now = self._clock()
@@ -198,20 +316,26 @@ class GitHub:
         reset = _number(headers.get("x-ratelimit-reset"))
         return max(reset, now) if reset is not None else now + DEFAULT_RETRY_SECONDS
 
-    def _exchange(
-        self, method: str, url: str, data: bytes | None, etag: str | None, token: Callable[[], str]
-    ) -> tuple[int, object, bytes]:
+    @staticmethod
+    def _api_request(
+        method: str, url: str, data: bytes | None, etag: str | None, token: Callable[[], str]
+    ) -> urllib.request.Request:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "factory-dispatcher",
+            "User-Agent": USER_AGENT,
             "Authorization": f"Bearer {token()}",
         }
         if etag:
             headers["If-None-Match"] = etag
         if data is not None:
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        return urllib.request.Request(url, data=data, headers=headers, method=method)
+
+    def _exchange(
+        self, method: str, url: str, data: bytes | None, etag: str | None, token: Callable[[], str]
+    ) -> tuple[int, object, bytes]:
+        request = self._api_request(method, url, data, etag, token)
         label = _label(method, url)
         try:
             try:

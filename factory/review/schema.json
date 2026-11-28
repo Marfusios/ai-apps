@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "findings"],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "A short summary of the change and the review, 1 to 2000 characters."
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 30,
+      "description": "The verified findings, most severe first; an empty list for a clean change.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "file", "line", "title", "detail"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["blocker", "major", "minor"]
+          },
+          "file": {
+            "type": "string",
+            "description": "The repository-relative path, at most 300 characters; empty when no file applies."
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000000,
+            "description": "The line in the changed file, or 0 when the finding concerns the whole file."
+          },
+          "title": {
+            "type": "string",
+            "description": "One line saying what is wrong, 1 to 200 characters."
+          },
+          "detail": {
+            "type": "string",
+            "description": "What is wrong and what would fix it, 1 to 2000 characters."
+          }
+        }
+      }
+    }
+  }
+}

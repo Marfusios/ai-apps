@@ -25,6 +25,14 @@ usage_limit_backoff_minutes = 30
 max_bundle_megabytes = 50
 max_file_megabytes = 5
 max_commits = 50
+required_checks = ["repository", "apps", "review"]
+checks_app = "github-actions"
+max_fix_rounds = 3
+"""
+REVIEW = """
+[review]
+bot_login = "github-actions[bot]"
+bot_user_id = 41898282
 """
 AGENT = """
 [agent]
@@ -41,8 +49,18 @@ STAGES = """
 model = "opus"
 timeout_minutes = 90
 max_turns = 300
+
+[stages.fix]
+model = "opus"
+timeout_minutes = 60
+max_turns = 200
+
+[stages.revise]
+model = "opus"
+timeout_minutes = 60
+max_turns = 200
 """
-VALID = TOP + DISPATCHER + AGENT + STAGES
+VALID = TOP + DISPATCHER + REVIEW + AGENT + STAGES
 
 # (name, text to replace, replacement, key the message must contain)
 INVALID_SETTINGS = [
@@ -59,6 +77,36 @@ INVALID_SETTINGS = [
     ("file high", "max_file_megabytes = 5", "max_file_megabytes = 101", "dispatcher.max_file_megabytes"),
     ("commits zero", "max_commits = 50", "max_commits = 0", "dispatcher.max_commits"),
     ("commits high", "max_commits = 50", "max_commits = 501", "dispatcher.max_commits"),
+    ("fix rounds zero", "max_fix_rounds = 3", "max_fix_rounds = 0", "dispatcher.max_fix_rounds"),
+    ("fix rounds high", "max_fix_rounds = 3", "max_fix_rounds = 11", "dispatcher.max_fix_rounds"),
+    ("fix rounds bool", "max_fix_rounds = 3", "max_fix_rounds = true", "dispatcher.max_fix_rounds"),
+    ("fix rounds string", "max_fix_rounds = 3", 'max_fix_rounds = "3"', "dispatcher.max_fix_rounds"),
+    ("fix rounds missing", "max_fix_rounds = 3\n", "", "dispatcher.max_fix_rounds"),
+    ("checks empty", 'required_checks = ["repository", "apps", "review"]', "required_checks = []",
+     "dispatcher.required_checks"),
+    ("checks not a list", 'required_checks = ["repository", "apps", "review"]', 'required_checks = "apps"',
+     "dispatcher.required_checks"),
+    ("check not a string", '"repository", "apps"', '1, "apps"', "dispatcher.required_checks"),
+    ("check empty name", '"repository", "apps"', '"", "apps"', "dispatcher.required_checks"),
+    ("check bad character", '"repository", "apps"', '"repo/sitory", "apps"', "dispatcher.required_checks"),
+    ("check too long", '"repository", "apps"', '"' + "a" * 101 + '", "apps"', "dispatcher.required_checks"),
+    ("check trailing newline", '"repository", "apps"', '"apps\\n", "apps"', "dispatcher.required_checks"),
+    ("checks missing", 'required_checks = ["repository", "apps", "review"]\n', "", "dispatcher.required_checks"),
+    ("checks app empty", 'checks_app = "github-actions"', 'checks_app = ""', "dispatcher.checks_app"),
+    ("checks app not a string", 'checks_app = "github-actions"', "checks_app = 3", "dispatcher.checks_app"),
+    ("checks app upper case", 'checks_app = "github-actions"', 'checks_app = "GitHub"', "dispatcher.checks_app"),
+    ("checks app trailing newline", 'checks_app = "github-actions"', 'checks_app = "actions\\n"',
+     "dispatcher.checks_app"),
+    ("checks app too long", 'checks_app = "github-actions"', 'checks_app = "' + "a" * 62 + '"', "dispatcher.checks_app"),
+    ("checks app missing", 'checks_app = "github-actions"\n', "", "dispatcher.checks_app"),
+    ("login empty", 'bot_login = "github-actions[bot]"', 'bot_login = ""', "review.bot_login"),
+    ("login not a string", 'bot_login = "github-actions[bot]"', "bot_login = 7", "review.bot_login"),
+    ("user id zero", "bot_user_id = 41898282", "bot_user_id = 0", "review.bot_user_id"),
+    ("user id negative", "bot_user_id = 41898282", "bot_user_id = -1", "review.bot_user_id"),
+    ("user id bool", "bot_user_id = 41898282", "bot_user_id = true", "review.bot_user_id"),
+    ("user id string", "bot_user_id = 41898282", 'bot_user_id = "41898282"', "review.bot_user_id"),
+    ("user id missing", "bot_user_id = 41898282\n", "", "review.bot_user_id"),
+    ("unknown review key", "bot_user_id = 41898282", "bot_user_id = 41898282\nextra = 1", "review"),
     ("unknown dispatcher key", "max_commits = 50", "max_commits = 50\nextra = 1", "dispatcher"),
     ("missing dispatcher key", "max_commits = 50\n", "", "dispatcher.max_commits"),
     ("permission mode", 'permission_mode = "auto"', 'permission_mode = "plan"', "agent.permission_mode"),
@@ -80,6 +128,8 @@ INVALID_SETTINGS = [
     ("no toolchains", '[agent.toolchains]\nnode = ["24"]\n', "", "agent.toolchains"),
     ("stage name", "[stages.fix_issue]", "[stages.bogus]", "stages.bogus"),
     ("no fix_issue stage", "[stages.fix_issue]", "[stages.plan]", "stages.fix_issue"),
+    ("no fix stage", "[stages.fix]", "[stages.plan]", "stages.fix is required"),
+    ("no revise stage", "[stages.revise]", "[stages.plan]", "stages.revise is required"),
     ("model uppercase", 'model = "opus"', 'model = "Opus"', "stages.fix_issue.model"),
     ("model empty", 'model = "opus"', 'model = ""', "stages.fix_issue.model"),
     ("timeout low", "timeout_minutes = 90", "timeout_minutes = 4", "stages.fix_issue.timeout_minutes"),
@@ -114,12 +164,18 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((dispatcher.poll_seconds, dispatcher.usage_limit_backoff_minutes,
                           dispatcher.max_bundle_megabytes, dispatcher.max_file_megabytes, dispatcher.max_commits),
                          (45, 30, 50, 5, 50))
+        self.assertEqual((dispatcher.required_checks, dispatcher.checks_app, dispatcher.max_fix_rounds),
+                         (("repository", "apps", "review"), "github-actions", 3))
+        self.assertEqual((config.review.bot_login, config.review.bot_user_id), ("github-actions[bot]", 41898282))
         agent = config.agent
         self.assertEqual((agent.permission_mode, agent.claude_code_version, agent.base_image, agent.cpus),
                          ("auto", "2.1.332", "docker.io/library/node:24-bookworm-slim", 4))
         self.assertEqual(dict(agent.toolchains), {"node": ("24",), "python": ("3.11",)})
         stage = config.stages["fix_issue"]
         self.assertEqual((stage.model, stage.timeout_minutes, stage.max_turns), ("opus", 90, 300))
+        for name in ("fix", "revise"):
+            stage = config.stages[name]
+            self.assertEqual((stage.model, stage.timeout_minutes, stage.max_turns), ("opus", 60, 200), name)
 
     def test_label_descriptions_fit_github_limit(self):
         for label in load().labels:
@@ -174,7 +230,7 @@ class ConfigTest(unittest.TestCase):
                 self.assertIn(key, str(caught.exception))
 
     def test_each_settings_table_is_required(self):
-        for table, text in (("dispatcher", DISPATCHER), ("agent", AGENT), ("stages", STAGES)):
+        for table, text in (("dispatcher", DISPATCHER), ("review", REVIEW), ("agent", AGENT), ("stages", STAGES)):
             with self.subTest(table), self.assertRaises(ConfigError) as caught:
                 self.load_text(VALID.replace(text, ""))
             self.assertIn(table, str(caught.exception))

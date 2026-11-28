@@ -15,7 +15,7 @@ ISSUE_COMMENTS = re.compile(r"/issues/[0-9]+/comments")
 FIRST_NUMBER = 1000  # the number FakeGitHub gives the first pull request or comment it creates
 
 
-def _message(headers: Mapping[str, str]) -> email.message.Message:
+def message(headers: Mapping[str, str]) -> email.message.Message:
     """Headers with the case-insensitive `get` that urllib's responses have."""
     message = email.message.Message()
     for name, value in headers.items():
@@ -34,7 +34,7 @@ class Recorded:
 class FakeResponse:
     def __init__(self, status: int, headers: Mapping[str, str], body: bytes) -> None:
         self.status = status
-        self.headers = _message(headers)
+        self.headers = message(headers)
         self._stream = io.BytesIO(body)
 
     def read(self, amount: int = -1) -> bytes:
@@ -72,7 +72,7 @@ class FakeOpener:
             raise status
         data = body if isinstance(body, bytes) else body.encode() if isinstance(body, str) else json.dumps(body).encode()
         if status == 304 or status >= 400:
-            raise urllib.error.HTTPError(recorded.url, status, "answer", _message(headers), io.BytesIO(data))
+            raise urllib.error.HTTPError(recorded.url, status, "answer", message(headers), io.BytesIO(data))
         return FakeResponse(status, headers, data)
 
 
@@ -88,6 +88,10 @@ class FakeGitHub:
     Like GitHub, it remembers what it creates. A pull request posted to `<repo>/pulls` or a comment posted to
     `<repo>/issues/<n>/comments`, unless `responses` scripts the answer, gets the next number from FIRST_NUMBER on and
     joins every later listing of that path, whatever its params. Both are written by `user`.
+
+    `graphql_answers` is consumed in order by `graphql`: a dict is returned, an exception is raised, and running out
+    fails the test; `graphql_calls` records each `(query, variables)`. `downloads` maps a path to the text
+    `download_text` returns the last `limit` characters of; a path not in it raises GitHubError(404).
     """
 
     def __init__(self, repository: str = "owner/name", user: Mapping[str, object] | None = None) -> None:
@@ -100,6 +104,9 @@ class FakeGitHub:
         self.fail: set[str | tuple[str, str]] = set()
         self.fail_once: set[str | tuple[str, str]] = set()
         self.missing: set[str | tuple[str, str]] = set()
+        self.graphql_answers: list[dict | Exception] = []
+        self.graphql_calls: list[tuple[str, Mapping[str, object]]] = []
+        self.downloads: dict[str, str] = {}
         self._created: dict[str, list[dict]] = {}
         self._numbers = itertools.count(FIRST_NUMBER)
 
@@ -133,6 +140,22 @@ class FakeGitHub:
     def delete(self, path: str) -> None:
         self._check("DELETE", path)
         self.calls.append(("DELETE", path, None))
+
+    def graphql(self, query: str, variables: Mapping[str, object]) -> dict:
+        self.graphql_calls.append((query, variables))
+        if not self.graphql_answers:
+            raise AssertionError("unexpected GraphQL call")
+        answer = self.graphql_answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def download_text(self, path: str, limit: int) -> str:
+        self._check("GET", path)
+        if path not in self.downloads:
+            raise GitHubError(404, f"GET {path} was not found")
+        text = self.downloads[path]
+        return text[max(0, len(text) - limit):]
 
     def posted(self, path: str) -> Mapping:
         """The body of the last post to `path`; fails the test when there was none."""

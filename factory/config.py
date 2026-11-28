@@ -12,7 +12,7 @@ from factory.result import STAGES
 DEFAULT_PATH = Path(__file__).with_name("config.toml")
 APPLIED_BY = ("person", "dispatcher")
 KEYS = {"schema", "trusted_logins", "writable_paths", "protected_branches", "image_registries", "labels",
-        "dispatcher", "agent", "stages"}
+        "dispatcher", "review", "agent", "stages"}
 LABEL_KEYS = {"name", "color", "description", "applied_by"}
 # key -> (lowest, highest) accepted value
 DISPATCHER_LIMITS = {
@@ -21,10 +21,16 @@ DISPATCHER_LIMITS = {
     "max_bundle_megabytes": (1, 500),
     "max_file_megabytes": (1, 100),
     "max_commits": (1, 500),
+    "max_fix_rounds": (1, 10),
 }
+DISPATCHER_KEYS = {*DISPATCHER_LIMITS, "required_checks", "checks_app"}
+REVIEW_KEYS = {"bot_login", "bot_user_id"}
+APP_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
+CHECK_NAME = re.compile(r"[A-Za-z0-9 ._()-]{1,100}")
 STAGE_LIMITS = {"timeout_minutes": (5, 360), "max_turns": (10, 1000)}
 STAGE_KEYS = {"model", *STAGE_LIMITS}
-REQUIRED_STAGE = "fix_issue"  # the stage the dispatcher starts runs in
+REQUIRED_STAGE = "fix_issue"  # the stage the dispatcher starts runs in for a new issue
+REQUIRED_STAGES = (REQUIRED_STAGE, "fix", "revise")  # the stages it must be able to start
 AGENT_LIMITS = {"cpus": (1, 256)}
 AGENT_KEYS = {"permission_mode", "claude_code_version", "base_image", "toolchains", *AGENT_LIMITS}
 PERMISSION_MODES = ("auto", "bypassPermissions")
@@ -51,6 +57,15 @@ class DispatcherSettings:
     max_bundle_megabytes: int
     max_file_megabytes: int
     max_commits: int
+    max_fix_rounds: int
+    required_checks: tuple[str, ...]  # the names of the checks that must pass before a person is asked to look
+    checks_app: str  # the slug of the GitHub App whose check runs count: the hosted workflows' own
+
+
+@dataclass(frozen=True)
+class ReviewSettings:
+    bot_login: str  # the account the review workflow's comments come from
+    bot_user_id: int  # its numeric id, which no one can take over by renaming
 
 
 @dataclass(frozen=True)
@@ -77,6 +92,7 @@ class Config:
     image_registries: tuple[str, ...]
     labels: tuple[Label, ...]
     dispatcher: DispatcherSettings
+    review: ReviewSettings
     agent: AgentSettings
     stages: Mapping[str, StageSettings]
 
@@ -120,9 +136,36 @@ def _integers(table: dict, where: str, limits: dict[str, tuple[int, int]]) -> di
     return {key: table[key] for key in limits}
 
 
+def _required_checks(value: object) -> tuple[str, ...]:
+    where = "dispatcher.required_checks"
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"{where} must be a non-empty list of check names")
+    if not all(isinstance(name, str) and CHECK_NAME.fullmatch(name) for name in value):
+        raise ConfigError(f"every entry of {where} must match {CHECK_NAME.pattern}")
+    return tuple(value)
+
+
+def _checks_app(value: object) -> str:
+    if not isinstance(value, str) or not APP_SLUG.fullmatch(value):
+        raise ConfigError(f"dispatcher.checks_app must match {APP_SLUG.pattern}")
+    return value
+
+
 def _dispatcher(raw: object) -> DispatcherSettings:
-    table = _table(raw, "dispatcher", set(DISPATCHER_LIMITS))
-    return DispatcherSettings(**_integers(table, "dispatcher", DISPATCHER_LIMITS))
+    table = _table(raw, "dispatcher", DISPATCHER_KEYS)
+    return DispatcherSettings(**_integers(table, "dispatcher", DISPATCHER_LIMITS),
+                              required_checks=_required_checks(table["required_checks"]),
+                              checks_app=_checks_app(table["checks_app"]))
+
+
+def _review(raw: object) -> ReviewSettings:
+    table = _table(raw, "review", REVIEW_KEYS)
+    login, user_id = table["bot_login"], table["bot_user_id"]
+    if not isinstance(login, str) or not login:
+        raise ConfigError("review.bot_login must be a non-empty string")
+    if not isinstance(user_id, int) or isinstance(user_id, bool) or user_id < 1:
+        raise ConfigError("review.bot_user_id must be a positive integer")
+    return ReviewSettings(login, user_id)
 
 
 def _toolchains(raw: object) -> dict[str, tuple[str, ...]]:
@@ -164,8 +207,9 @@ def _stages(raw: object) -> dict[str, StageSettings]:
     if not isinstance(raw, dict) or not raw:
         raise ConfigError("stages must be a table with at least one stage")
     stages = {name: _stage(name, table) for name, table in raw.items()}
-    if REQUIRED_STAGE not in stages:
-        raise ConfigError(f"stages.{REQUIRED_STAGE} is required")
+    for required in REQUIRED_STAGES:
+        if required not in stages:
+            raise ConfigError(f"stages.{required} is required")
     return stages
 
 
@@ -216,6 +260,7 @@ def load(path: Path | None = None) -> Config:
         image_registries=image_registries,
         labels=labels,
         dispatcher=_dispatcher(data.get("dispatcher")),
+        review=_review(data.get("review")),
         agent=_agent(data.get("agent"), image_registries),
         stages=_stages(data.get("stages")),
     )

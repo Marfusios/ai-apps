@@ -4,7 +4,10 @@ import json
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
+from factory.spool import THREAD_ID
+
 STAGES = ("design", "plan", "step", "fix", "revise", "fix_issue")
+PULL_REQUEST_STAGES = ("fix", "revise")  # the stages that work on a pull request that already exists
 OUTCOMES = ("done", "needs_input", "failed")
 MAX_RESULT_BYTES = 200_000
 KEYS = {"schema", "outcome", "summary", "questions", "failure_reason", "pull_request",
@@ -12,6 +15,7 @@ KEYS = {"schema", "outcome", "summary", "questions", "failure_reason", "pull_req
 MAX_FOLLOW_UPS = 10
 MAX_QUESTIONS = 20
 MAX_VERIFICATIONS = 30
+MAX_THREAD_REPLIES = 100  # the replies a result holds, and the publisher keeps: a run is not to answer without end
 
 
 class ResultError(ValueError):
@@ -93,16 +97,21 @@ def validate(data: object, stage: str) -> list[str]:
             _text(pull_request["body"], "pull_request.body", 1, 20000, problems, posted=True)
         else:
             problems.append("pull_request: must be an object with exactly the keys ['body', 'title']")
-    elif outcome == "done" and stage not in ("revise", "fix"):
+    elif outcome == "done" and stage not in PULL_REQUEST_STAGES:
         problems.append("pull_request: required when outcome is done")
 
     if "thread_replies" in data:
         if stage != "revise":
             problems.append("thread_replies: allowed only for the revise stage")
-        for index, reply in _objects(data["thread_replies"], "thread_replies", {"thread_id", "body", "resolved"}, problems):
+        replies = data["thread_replies"]
+        if isinstance(replies, list) and len(replies) > MAX_THREAD_REPLIES:
+            problems.append(f"thread_replies: at most {MAX_THREAD_REPLIES} entries")
+        for index, reply in _objects(replies, "thread_replies", {"thread_id", "body", "resolved"}, problems):
             path = f"thread_replies[{index}]"
-            _text(reply["thread_id"], f"{path}.thread_id", 1, 200, problems)
-            _text(reply["body"], f"{path}.body", 1, 4000, problems)
+            thread_id = reply["thread_id"]
+            if not isinstance(thread_id, str) or THREAD_ID.fullmatch(thread_id) is None:
+                problems.append(f"{path}.thread_id: must be 1 to 100 letters, digits, underscores, equal signs or hyphens")
+            _text(reply["body"], f"{path}.body", 1, 4000, problems, posted=True)
             if not isinstance(reply["resolved"], bool):
                 problems.append(f"{path}.resolved: must be true or false")
 
@@ -132,8 +141,8 @@ def validate(data: object, stage: str) -> list[str]:
 def posted_texts(data: Mapping) -> Iterator[tuple[str, str]]:
     """Each text of a valid result that the dispatcher posts, with its field's name as `validate` names it.
 
-    The verification is never posted, and neither are thread replies, which only the revise stage has and this
-    version does not run.
+    The verification is never posted. A reply to a review thread, which only the revise stage has, is posted once
+    its thread is known to the dispatcher; every one is listed, known or not.
     """
     yield "summary", data["summary"]
     for index, question in enumerate(data.get("questions") or ()):
@@ -147,6 +156,8 @@ def posted_texts(data: Mapping) -> Iterator[tuple[str, str]]:
     for index, follow_up in enumerate(data.get("follow_ups") or ()):
         yield f"follow_ups[{index}].title", follow_up["title"]
         yield f"follow_ups[{index}].reason", follow_up["reason"]
+    for index, reply in enumerate(data.get("thread_replies") or ()):
+        yield f"thread_replies[{index}].body", reply["body"]
 
 
 def load(path: Path, stage: str) -> dict:

@@ -20,23 +20,29 @@ try:
 except ImportError:  # not on Windows: there the lock is skipped
     fcntl = None
 
-from factory import compose, gitops, jobs, snapshot
-from factory.config import REQUIRED_STAGE, Config, ConfigError
+from factory import compose, gitops, jobs, snapshot, threads
+from factory.config import Config, ConfigError
 from factory.config import load as load_config
-from factory.decide import Action, CloseJob, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide
+from factory.decide import (
+    Action, CloseJob, HandOff, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide,
+    reviews_to_answer, revise_instruction,
+)
 from factory.github_api import GitHub, GitHubError, RateLimited, post_as_app
 from factory.github_auth import AuthError, InstallationToken
 from factory.gitops import GitError
 from factory.publish import Publisher
-from factory.snapshot import Bot, Issue, branch_for
-from factory.spool import JOB_ID, TIME_FORMAT, Spool, SpoolError, new_job_id
+from factory.result import PULL_REQUEST_STAGES
+from factory.snapshot import Bot, Check, Issue, PullRequest, branch_for
+from factory.spool import COMMIT_SHA, JOB_ID, TIME_FORMAT, Spool, SpoolError, new_job_id
 
 log = logging.getLogger("factory.dispatcher")
 
 REPOSITORY = re.compile(r"(?!\.+/)[A-Za-z0-9._-]+/(?!\.+$)[A-Za-z0-9._-]+")
 LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?")  # git and the request refuse a leading "-"
 DIGITS = re.compile(r"[0-9]+")  # explicit [0-9]: \d would accept other scripts' digits
-STAGE = REQUIRED_STAGE  # the one stage this version starts
+MAIN_BRANCH = "refs/heads/main"
+MAX_LOG_BYTES = 200_000  # the end of a check's log read for a fix run
+UNREADABLE_LOG = "the log could not be read"
 SETTLE_WINDOW = timedelta(minutes=10)  # how long a published job still holds its issue while GitHub's listing lags
 UNREADABLE_REQUEST = "unreadable request"
 FIRST_RETRY_SECONDS = 60
@@ -49,9 +55,14 @@ SLEEP_SLICE_SECONDS = 1.0
 PRUNE_EVERY = timedelta(hours=1)
 GC_EVERY = timedelta(days=1)
 STATE_DIRECTORY_MODE = 0o700
-# What can go wrong in one poll that the next poll may not meet again.
-RECOVERABLE = (GitHubError, GitError, SpoolError, AuthError, OSError)
 
+
+class NoPullRequest(Exception):
+    """A fix or revise run was decided for an issue that has no open pull request with a head commit to work on."""
+
+
+# What can go wrong in one poll that the next poll may not meet again.
+RECOVERABLE = (GitHubError, GitError, SpoolError, AuthError, NoPullRequest, OSError)
 
 class SettingsError(ValueError):
     """The environment lacks a setting or holds a malformed one; the message names variables, never their values."""
@@ -217,7 +228,7 @@ class Dispatcher:
     def tick(self, dry_run: bool = False) -> list[Action]:
         """Fetch, decide and apply; return the actions decided. With `dry_run` nothing is written anywhere."""
         now = self._clock()
-        current = snapshot.fetch(self._github)
+        current = snapshot.fetch(self._github, self._config)
         for issue in current.issues:
             if issue.unreadable:
                 log.warning("issue #%d could not be read in full this poll, so it is left as it is", issue.number)
@@ -354,7 +365,9 @@ class Dispatcher:
         if isinstance(action, SetStatus):
             self._publisher.set_status(action.issue, action.add, action.remove)
         elif isinstance(action, StartJob):
-            self._start_job(issues[action.issue], action.app, now)
+            self._start_job(issues[action.issue], action, now)
+        elif isinstance(action, HandOff):
+            self._hand_off(issues[action.issue], action)
         elif isinstance(action, PostNotice):
             self._publisher.post_notice(issues[action.issue], action.key)
         elif isinstance(action, CloseJob):
@@ -362,29 +375,112 @@ class Dispatcher:
         else:
             raise TypeError(f"unknown action {type(action).__name__}")
 
-    def _start_job(self, issue: Issue, app: str, now: datetime) -> None:
+    def _hand_off(self, issue: Issue, action: HandOff) -> None:
+        """Hand the pull request over; odd data the publisher refuses ends this action only, not the tick."""
+        try:
+            self._publisher.hand_off(issue)
+        except ValueError as error:  # its message may quote text from GitHub, so only the class is logged
+            log.error("%s failed: %s", action.describe(), type(error).__name__)
+
+    def _start_job(self, issue: Issue, action: StartJob, now: datetime) -> None:
+        pull = _pull_request_to_work_on(issue) if action.stage in PULL_REQUEST_STAGES else None  # before any fetch
         settings = self._settings
         self._git.ensure_mirror(settings.mirror, f"https://github.com/{settings.repository}.git", self._token())
         self._git.ensure_workrepo(settings.workrepo, settings.mirror)
         branch = branch_for(issue.number)
-        # A run that asked a question left checked commits on its branch; the next run goes on from them.
-        base_sha = self._git.resolve(settings.mirror, f"refs/heads/{branch}") or self._git.resolve(
-            settings.mirror, "refs/heads/main")
-        if base_sha is None:
-            raise GitError("resolve", "no commit to start from")
-        job_id = new_job_id(STAGE, issue.number, now)
+        base_sha = self._base_of(branch, pull)
+        if pull is None:
+            sections, files = [], {}
+        else:
+            sections, files = self._pull_request_context(issue, action.stage, pull)
+        job_id = new_job_id(action.stage, issue.number, now)
         bot = settings.bot
-        request = jobs.request_file(job_id=job_id, stage=STAGE, app=app, branch=branch, base_sha=base_sha,
-                                    repository=settings.repository, config=self._config, bot=bot)
+        request = jobs.request_file(job_id=job_id, stage=action.stage, app=action.app, branch=branch,
+                                    base_sha=base_sha, repository=settings.repository, config=self._config, bot=bot,
+                                    round=action.round, pull_request=pull.number if pull else 0)
         problems = jobs.validate_request(request)
         if problems:  # the runner and the publisher would refuse it, so the job would never end
             raise SpoolError(f"request.json would be refused: {'; '.join(problems)}")
-        job = jobs.job_file(stage=STAGE, app=app, issue=issue, branch=branch, base_sha=base_sha, config=self._config)
+        job = jobs.job_file(stage=action.stage, app=action.app, issue=issue, branch=branch, base_sha=base_sha,
+                            config=self._config, round=action.round)
+        context = jobs.context(issue, self._config, bot, sections=sections)
         self._spool.submit(job_id, {
             "request.json": _json(request),
             "job.json": _json(job),
-            "context.md": jobs.context(issue, self._config, bot).encode("utf-8"),
+            "context.md": context.encode("utf-8", errors="replace"),  # GitHub's JSON may hold a lone surrogate
+            **files,
         })
+
+    def _base_of(self, branch: str, pull: PullRequest | None) -> str:
+        """The commit a run starts from.
+
+        A run on a pull request starts from the work branch, which must still be the head the poll saw: a branch that
+        moved since, or a mirror that lags, fails this poll and the next one decides again. A first run goes on from
+        the checked commits a run that asked a question left on its branch, else from main.
+        """
+        mirror = self._settings.mirror
+        head = self._git.resolve(mirror, f"refs/heads/{branch}")
+        if pull is None:
+            head = head or self._git.resolve(mirror, MAIN_BRANCH)
+            if head is None:
+                raise GitError("resolve", "no commit to start from")
+        elif head != pull.head_sha:
+            raise GitError("resolve", "the work branch is not at the head of the pull request")
+        return head
+
+    def _pull_request_context(
+        self, issue: Issue, stage: str, pull: PullRequest
+    ) -> tuple[list[tuple[str, str]], dict[str, bytes]]:
+        """The sections a fix or revise run adds to `context.md`, and the files it adds to its job."""
+        builders = {"fix": lambda: self._fix_context(pull), "revise": lambda: self._revise_context(issue, pull)}
+        return builders[stage]()
+
+    def _fix_context(self, pull: PullRequest) -> tuple[list[tuple[str, str]], dict[str, bytes]]:
+        """The log tail of each failed check and, for a failing review, its text.
+
+        A check that is not a required name is a job whose log shows the failure, while a required name only sums
+        them up, so those come last. Only the logs the context will show are read; the others are named.
+        """
+        required = self._config.dispatcher.required_checks
+        failed = sorted((check for check in pull.checks if check.state == "failed"),
+                        key=lambda check: (check.name in required, check.name))
+        shown, left_out = failed[:jobs.MAX_FAILED_CHECKS], failed[jobs.MAX_FAILED_CHECKS:]
+        logs = [(check.name, self._log_of(check)) for check in shown] + [(check.name, "") for check in left_out]
+        return jobs.fix_sections(logs, pull.review_text if pull.verdict == "fail" else ""), {}
+
+    def _log_of(self, check: Check) -> str:
+        """The end of the check's log, or a line saying it could not be read (a rate limit is not that)."""
+        if check.job_id <= 0:
+            return UNREADABLE_LOG
+        try:
+            return self._github.download_text(f"{self._github.repo}/actions/jobs/{check.job_id}/logs", MAX_LOG_BYTES)
+        except RateLimited:
+            raise
+        except GitHubError:
+            return UNREADABLE_LOG
+
+    def _revise_context(self, issue: Issue, pull: PullRequest) -> tuple[list[tuple[str, str]], dict[str, bytes]]:
+        bot = self._settings.bot
+        reviews = reviews_to_answer(issue, self._config, bot)
+        found = []
+        if reviews:
+            owner, name = self._settings.repository.split("/")
+            read = threads.fetch(self._github, owner, name, pull.number, {review.id for review in reviews})
+            found = list(read.threads)
+            if read.more_threads:
+                log.warning("issue #%d: the pull request has more review threads than one page, so the run is "
+                            "given the first page only", issue.number)
+        sections = jobs.revise_sections([(review.submitted_at, review.body) for review in reviews], found,
+                                        revise_instruction(issue, self._config, bot), self._config)
+        return sections, {"threads.json": _json(jobs.thread_index(found, self._config))}
+
+
+def _pull_request_to_work_on(issue: Issue) -> PullRequest:
+    """The issue's open pull request, which a fix or revise run needs, with its head as a full commit id."""
+    pull = issue.pull_request
+    if pull is None or not pull.open or COMMIT_SHA.fullmatch(pull.head_sha) is None:
+        raise NoPullRequest("no open pull request with a head commit to work on")
+    return pull
 
 
 def _json(record: Mapping) -> bytes:

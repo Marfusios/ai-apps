@@ -12,7 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))  # first, so that an installed package named factory cannot shadow it
 
-from factory.config import AgentSettings, Config, DispatcherSettings, is_writable, load  # noqa: E402  the path must be set before this import
+from factory.config import (  # noqa: E402  the path must be set before this import
+    AgentSettings, Config, DispatcherSettings, ReviewSettings, is_writable, load)
 
 FALLBACK_WRITABLE = ("apps/", "packages/")
 WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -41,8 +42,8 @@ def fallback_config() -> Config:
     """A configuration with the default writable roots, for when config.toml cannot be read."""
     # the settings are placeholders: this hook reads only the writable paths
     return Config(trusted_logins=(), writable_paths=FALLBACK_WRITABLE, protected_branches=(), image_registries=(),
-                  labels=(), dispatcher=DispatcherSettings(15, 5, 1, 1, 1),
-                  agent=AgentSettings("auto", "0.0.0", "", {}, cpus=1), stages={})
+                  labels=(), dispatcher=DispatcherSettings(15, 5, 1, 1, 1, 1, ("x",), "x"),
+                  review=ReviewSettings("x", 1), agent=AgentSettings("auto", "0.0.0", "", {}, cpus=1), stages={})
 
 
 def is_credential(parts: list[str]) -> bool:
