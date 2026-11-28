@@ -1,11 +1,40 @@
+import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import { matchingDev } from '../../worker/importer/facts.js';
-import { ImportFailure } from '../../worker/importer/contracts.js';
 import { classify } from '../../worker/importer/failure.js';
 import { SpendRefusedError } from '../../worker/index/spend-gate.js';
 import type { ImporterConfig } from '../../worker/importer/config.js';
 import { applicationAvailable } from '../../worker/importer/application.js';
 import { AvallSource } from '../../worker/importer/source.js';
+
+type ContainerState = 'running' | 'missing' | 'stopped';
+/** What `docker inspect` answers for the dev container, as the real image inspection reads it. */
+const docker = vi.hoisted(() => ({
+  state: 'running' as ContainerState,
+  inspected: [] as string[][],
+}));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const original = promisify(actual.execFile);
+  async function run(file: string, args: string[], options: object) {
+    if (file !== 'docker' || args[0] !== 'inspect') return original(file, args, options);
+    docker.inspected.push(args);
+    if (docker.state === 'missing')
+      throw Object.assign(new Error('Command failed: docker inspect'), {
+        code: 1,
+        stdout: '',
+        stderr: `Error: No such container: ${args.at(-1)}\n`,
+      });
+    return { stdout: `sha256:${'a'.repeat(64)} ${docker.state === 'running'}\n`, stderr: '' };
+  }
+  const execFile = Object.assign(
+    () => {
+      throw new Error('this test fakes only the promisified execFile');
+    },
+    { [promisify.custom]: run },
+  );
+  return { ...actual, execFile };
+});
 
 const image = 'sha256:' + 'a'.repeat(64);
 const code = 'b'.repeat(40);
@@ -15,7 +44,7 @@ const publication = {
   passagesIndex: 'synthetic-passages',
   publishedAt: '2026-10-31T01:00:00.000001Z',
 };
-const config = { dev: { image }, live: { image }, code } as ImporterConfig;
+const config = { dev: { image, container: 'aircase-dev' }, live: { image }, code } as ImporterConfig;
 const candidate = { archive_sha256: 'c'.repeat(64), content_sha256: 'd'.repeat(64) };
 const canary = {
   publication,
@@ -38,21 +67,28 @@ describe('real cross-environment matching orchestration', () => {
     await expect(
       matchingDev(config, candidate, facts, async () => 'sha256:' + 'f'.repeat(64), now),
     ).rejects.toMatchObject({ reason: 'dev_failed', fix: false });
-    // oxlint-disable-next-line no-unused-vars -- the loop never passes the state to its stub, so both rounds test the same thing; a follow-up
-    for (const unavailable of ['missing', 'stopped']) {
-      await expect(
-        matchingDev(
-          config,
-          candidate,
-          facts,
-          async () => {
-            throw new ImportFailure('source_unavailable');
-          },
-          now,
-        ),
-      ).rejects.toMatchObject({ fix: false });
-    }
   });
+  it.each(['missing', 'stopped'] as const)(
+    'refuses a %s dev container as a temporary unavailability through the image inspection',
+    async (state) => {
+      const facts = {
+        canary: vi.fn(async () => ({ canary, current: publication, observedImage: image })),
+        retention: async () => [],
+      };
+      docker.inspected = [];
+      // A running container passes first, so the refusal below comes from the state alone.
+      docker.state = 'running';
+      expect(await matchingDev(config, candidate, facts, undefined, now)).toEqual(canary);
+      docker.state = state;
+      await expect(matchingDev(config, candidate, facts, undefined, now)).rejects.toMatchObject({
+        reason: 'source_unavailable',
+        fix: false,
+        result: 'deferred',
+      });
+      expect(docker.inspected).toHaveLength(2);
+      expect(docker.inspected[1]?.at(-1)).toBe('aircase-dev');
+    },
+  );
   it('refuses same-generation republication during the image inspection', async () => {
     let current = publication;
     const facts = {
