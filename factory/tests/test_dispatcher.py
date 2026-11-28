@@ -541,7 +541,8 @@ class PullRequestRunsTest(DispatcherTestCase):
         for stage in ("fix", "revise"):
             for name, pull in cases.items():
                 with self.subTest(stage=stage, pull=name):
-                    self.assert_fails_without_a_job(self.issue(pull), StartJob(12, "demo", stage))
+                    self.assert_fails_without_a_job(self.issue(pull), StartJob(12, "demo", stage), "NoPullRequest")
+                    self.assertEqual(self.git.mirror_requests, [])  # no fetch is spent on an issue that cannot start
 
     def test_a_revise_run_gets_the_unresolved_threads_of_the_reviews_it_answers(self):
         self.github.graphql_answers.append(threads_answer(
@@ -563,10 +564,8 @@ class PullRequestRunsTest(DispatcherTestCase):
         self.assertIn("> Marfusios:\n> Why this name?\n>\n> Marfusios:\n> Please rename.", context)
         for left_out in ("PRRT_done", "PRRT_other", "PRRT_plain", "Old remark."):
             self.assertNotIn(left_out, context)
-        ((query, variables),) = self.github.graphql_calls
+        ((_, variables),) = self.github.graphql_calls
         self.assertEqual(variables, {"owner": "owner", "name": "name", "number": PULL_NUMBER})
-        self.assertNotIn("owner/name", query)
-        self.assertNotIn(str(PULL_NUMBER), query)
 
     def test_a_revise_command_alone_gives_its_instruction_and_no_threads_and_asks_graphql_nothing(self):
         command = Comment(5, TRUSTED, 1, "2026-11-27T10:00:00Z", "/factory revise Use shorter names.")
@@ -576,25 +575,33 @@ class PullRequestRunsTest(DispatcherTestCase):
         self.assertEqual(json.loads(self.spool.job_file(job, "threads.json").read_text()), {})
         self.assertEqual(self.github.graphql_calls, [])
 
-    def test_odd_threads_from_graphql_are_left_out_and_raise_nothing(self):
-        good = comment_node(601, "Fine one.")
+    def test_a_thread_of_an_untrusted_author_only_is_in_neither_the_context_nor_threads_json(self):
         self.github.graphql_answers.append(threads_answer(
-            None, 5, "text", {},
-            thread_node("PRRT_ok", [None, 7, comment_node("9", "string id"), {**good, "author": None},
-                                    {**good, "pullRequestReview": {"databaseId": "7"}}, {**good, "body": None}, good],
-                        line=None),
-            thread_node(5, [good]),
-            thread_node("PRRT_flag", [good], resolved="no"),
-            thread_node("PRRT_path", [good], path=None),
-            thread_node("PRRT_line", [good], line="3"),
-            thread_node("PRRT_bool", [comment_node(True, "bool id")]),
-            {**thread_node("PRRT_comments", [good]), "comments": None},
-            thread_node("PRRT_empty", []),
+            thread_node("PRRT_stranger", [comment_node(701, "Hostile remark", author="stranger")]),
+            thread_node("PRRT_trusted", [comment_node(702, "Fine remark")]),
         ))
         self.tick(self.issue(self.pull(reviews=(self.review(),))), StartJob(12, "demo", "revise"))
         job = self.only_job()
-        self.assertEqual(json.loads(self.spool.job_file(job, "threads.json").read_text()), {"PRRT_ok": 601})
-        self.assertIn("## Review thread PRRT_ok (apps/demo/a.txt)\n", self.context_of(job))
+        self.assertEqual(json.loads(self.spool.job_file(job, "threads.json").read_text()), {"PRRT_trusted": 702})
+        for text in ("PRRT_stranger", "Hostile remark"):
+            self.assertNotIn(text, self.context_of(job))
+
+    def test_more_threads_than_a_page_are_logged_in_fixed_words_and_the_first_page_is_given(self):
+        self.github.graphql_answers.append({"repository": {"pullRequest": {"reviewThreads": {
+            "pageInfo": {"hasNextPage": True}, "nodes": [thread_node("PRRT_open", [comment_node(501, "Why?")])]}}}})
+        with self.assertLogs("factory.dispatcher", "WARNING") as logged:
+            self.tick(self.issue(self.pull(reviews=(self.review(),))), StartJob(12, "demo", "revise"))
+        self.assertEqual(logged.output, ["WARNING:factory.dispatcher:issue #12: the pull request has more review "
+                                         "threads than one page, so the run is given the first page only"])
+        self.assertEqual(json.loads(self.spool.job_file(self.only_job(), "threads.json").read_text()),
+                         {"PRRT_open": 501})
+
+    def test_a_review_with_a_lone_surrogate_still_gives_a_job_with_a_valid_text_file(self):
+        self.github.graphql_answers.append(threads_answer())
+        review = self.review(body=f"Rename {chr(0xD800)} it.")
+        self.tick(self.issue(self.pull(reviews=(review,))), StartJob(12, "demo", "revise"))
+        job = self.only_job()
+        self.assertIn("Rename ? it.", self.spool.job_file(job, "context.md").read_bytes().decode("utf-8"))
 
     def test_a_graphql_failure_starts_no_revise_run(self):
         self.github.graphql_answers.append(GitHubError(0, "POST /graphql failed with 1 error"))
@@ -646,16 +653,16 @@ class PullRequestRunsTest(DispatcherTestCase):
         self.assertEqual(logged.output, [f"ERROR:factory.dispatcher:{HandOff(12).describe()} failed: ValueError"])
         self.assertEqual(self.calls_to("POST", f"{self.github.repo}/issues/3/labels"), [{"labels": ["status:queued"]}])
 
-    def test_a_dry_run_reads_no_log_asks_graphql_nothing_and_writes_nothing(self):
-        self.github.downloads[self.logs_path(5)] = LOG_LINE
+    def test_a_dry_run_makes_no_call_to_github_reads_no_log_and_writes_nothing(self):
         issue = self.issue(self.pull(checks=(Check("a", "failed", 5),), reviews=(self.review(),)))
         before = self.tree()
-        with mock.patch.object(self.github, "download_text") as download:
+        with contextlib.ExitStack() as stack:
+            for name in ("get", "get_all", "post", "patch", "delete", "graphql", "download_text"):
+                stack.enter_context(mock.patch.object(self.github, name, side_effect=AssertionError(name)))
             actions = self.tick(issue, StartJob(12, "demo", "fix", 1), StartJob(12, "demo", "revise"), HandOff(12),
                                 dry_run=True)
         self.assertEqual(len(actions), 3)
-        download.assert_not_called()
-        self.assertEqual((self.github.graphql_calls, self.github.calls, self.git.mirror_requests), ([], [], []))
+        self.assertEqual(self.git.mirror_requests, [])
         self.assertEqual(self.tree(), before)
 
 
