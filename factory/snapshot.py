@@ -336,15 +336,19 @@ def _open_pull_details(
     github: GitHub, pull: PullRequest, config: Config
 ) -> tuple[PullRequest, tuple[Comment, ...]]:
     """The open pull request with its checks, review verdict and reviews, and its comments."""
-    comments = _sorted_comments(github.get_all(f"{github.repo}/issues/{pull.number}/comments", {"per_page": "100"}))
-    reviews = _reviews(github.get_all(f"{github.repo}/pulls/{pull.number}/reviews", {"per_page": "100"}))
+    # The check runs come first. The review check passes only after its comment is posted, so comments read after
+    # the checks hold the verdict of every review check seen as passed. Read the other way round, a review that
+    # finishes between the two reads shows as a passed check with no verdict, which hands the pull request over as
+    # if no second model had read the commit. Read in this order, that review shows as pending, with its verdict.
     checks: tuple[Check, ...] = ()
     complete = True
-    verdict = text = ""
-    if _SHA.fullmatch(pull.head_sha):  # the head goes into a request path, so only a full commit id may
+    has_head = _SHA.fullmatch(pull.head_sha)  # the head goes into a request path, so only a full commit id may
+    if has_head:
         answer = github.get(f"{github.repo}/commits/{pull.head_sha}/check-runs", {"per_page": "100"})
         checks, complete = _checks(answer, config.dispatcher.checks_app)
-        verdict, text = _verdict(comments, pull.head_sha, config)
+    comments = _sorted_comments(github.get_all(f"{github.repo}/issues/{pull.number}/comments", {"per_page": "100"}))
+    reviews = _reviews(github.get_all(f"{github.repo}/pulls/{pull.number}/reviews", {"per_page": "100"}))
+    verdict, text = _verdict(comments, pull.head_sha, config) if has_head else ("", "")
     pull = replace(pull, checks=checks, checks_complete=complete, verdict=verdict, review_text=text, reviews=reviews)
     return pull, comments
 

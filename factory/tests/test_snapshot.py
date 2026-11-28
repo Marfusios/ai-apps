@@ -375,6 +375,24 @@ class PullRequestDetailsTest(unittest.TestCase):
         pull = issue.pull_request
         self.assertEqual((pull.draft, pull.head_sha, pull.node_id), (True, HEAD, "PR_31"))
 
+    def test_the_check_runs_are_read_before_the_comments_that_carry_the_verdict(self) -> None:
+        reads: list[str] = []
+
+        class Recording(FakeGitHub):
+            def get(self, path, params=None):
+                reads.append(path)
+                return super().get(path, params)
+
+        github = Recording()
+        base = github_with([issue_json(12)])
+        github.answers.update(base.answers)
+        open_pull(github)
+
+        repo = github.repo
+        checks = reads.index(f"{repo}/commits/{HEAD}/check-runs")
+        self.assertLess(checks, reads.index(f"{repo}/issues/31/comments"))
+        self.assertLess(checks, reads.index(f"{repo}/pulls/31/reviews"))
+
     def test_check_runs_map_to_the_four_states(self) -> None:
         runs = [
             run_json(1, "ok", "completed", "success"), run_json(2, "bad", "completed", "failure"),
