@@ -4,6 +4,8 @@ import json
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
+from factory.spool import THREAD_ID
+
 STAGES = ("design", "plan", "step", "fix", "revise", "fix_issue")
 PULL_REQUEST_STAGES = ("fix", "revise")  # the stages that work on a pull request that already exists
 OUTCOMES = ("done", "needs_input", "failed")
@@ -13,6 +15,7 @@ KEYS = {"schema", "outcome", "summary", "questions", "failure_reason", "pull_req
 MAX_FOLLOW_UPS = 10
 MAX_QUESTIONS = 20
 MAX_VERIFICATIONS = 30
+MAX_THREAD_REPLIES = 100  # the replies a result holds, and the publisher keeps: a run is not to answer without end
 
 
 class ResultError(ValueError):
@@ -100,10 +103,15 @@ def validate(data: object, stage: str) -> list[str]:
     if "thread_replies" in data:
         if stage != "revise":
             problems.append("thread_replies: allowed only for the revise stage")
-        for index, reply in _objects(data["thread_replies"], "thread_replies", {"thread_id", "body", "resolved"}, problems):
+        replies = data["thread_replies"]
+        if isinstance(replies, list) and len(replies) > MAX_THREAD_REPLIES:
+            problems.append(f"thread_replies: at most {MAX_THREAD_REPLIES} entries")
+        for index, reply in _objects(replies, "thread_replies", {"thread_id", "body", "resolved"}, problems):
             path = f"thread_replies[{index}]"
-            _text(reply["thread_id"], f"{path}.thread_id", 1, 200, problems)
-            _text(reply["body"], f"{path}.body", 1, 4000, problems)
+            thread_id = reply["thread_id"]
+            if not isinstance(thread_id, str) or THREAD_ID.fullmatch(thread_id) is None:
+                problems.append(f"{path}.thread_id: must be 1 to 100 letters, digits, underscores, equal signs or hyphens")
+            _text(reply["body"], f"{path}.body", 1, 4000, problems, posted=True)
             if not isinstance(reply["resolved"], bool):
                 problems.append(f"{path}.resolved: must be true or false")
 

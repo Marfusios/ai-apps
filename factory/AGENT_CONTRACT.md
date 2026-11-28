@@ -110,7 +110,7 @@ it. A key that is not listed here makes the file invalid.
 | `questions` | List of at most 20 non-blank strings of 1 to 2,000 characters each. | Required and non-empty with `needs_input`; otherwise leave it out. |
 | `failure_reason` | Non-blank string of 1 to 4,000 characters. | Required with `failed`; otherwise leave it out. |
 | `pull_request` | Object with exactly `title` (1 to 120 characters) and `body` (1 to 20,000 characters), both non-blank. | Required with `done`, except in the `fix` and `revise` stages, where it may be left out. |
-| `thread_replies` | List of objects with exactly `thread_id` (1 to 200 characters), `body` (1 to 4,000 characters) and `resolved` (`true` or `false`). | Only in the `revise` stage, where it may be an empty list. Any other stage must leave the key out, even as an empty list. |
+| `thread_replies` | List of at most 100 objects with exactly `thread_id` (1 to 100 letters, digits, underscores, equal signs or hyphens), `body` (1 to 4,000 characters, non-blank) and `resolved` (`true` or `false`). | Only in the `revise` stage, where it may be an empty list. Any other stage must leave the key out, even as an empty list. |
 | `verification` | List of at most 30 objects with exactly `command` (1 to 500 characters), `exit_code` (integer) and `summary` (at most 2,000 characters). | Required and non-empty with `done`; optional otherwise. |
 | `follow_ups` | List of at most 10 objects with exactly `title` (1 to 120 characters) and `reason` (1 to 1,000 characters), both non-blank. | Optional. Leave the key out rather than setting it to `null`. |
 
@@ -139,9 +139,9 @@ What each field is for:
   It posts each one once in its thread, as a quote under the lead-in `The agent replies:`, then
   resolves the thread when `resolved` is `true`; a reply that GitHub refuses leaves its thread
   open. A reply to a thread that `context.md` does not name is ignored, and so is a second reply
-  to the same thread. A body of nothing but white space and control characters is not posted,
-  but its thread is still resolved when `resolved` is `true`, so never mark an empty reply
-  resolved.
+  to the same thread. The finish check refuses a reply whose body has no visible character, whose
+  `thread_id` has any other characters than those of the table, and a list of more than 100
+  replies, so you can still fix the result.
 - `verification`: one entry for each command you ran to check the final state, with the exit code
   you saw and a one-line result. List only commands you really ran.
 - `follow_ups`: problems you noticed and did not fix. The title names the problem; the reason says

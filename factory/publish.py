@@ -17,7 +17,7 @@ from factory.bundle_check import Verdict
 from factory.config import Config, is_trusted
 from factory.decide import BUILDING, NEEDS_HUMAN, QUEUED, STATUS_PREFIX
 from factory.github_api import GitHub, GitHubError, GraphQLRefused
-from factory.result import PULL_REQUEST_STAGES
+from factory.result import MAX_THREAD_REPLIES, PULL_REQUEST_STAGES
 from factory.snapshot import Bot, Issue, branch_for
 from factory.spool import Spool, SpoolError, SpoolMissing
 
@@ -26,14 +26,13 @@ BUNDLE_FILE = "commits.bundle"
 SETTLED_FILE = "settled.json"
 THREADS_FILE = "threads.json"
 MAX_THREADS_BYTES = 1_000_000
-MAX_REPLIES = 100  # the thread replies of one run that are kept: a run is not to answer without end
 # The bound rests on the per-field character limits of `factory.result.validate`: a summary of 4,000, twenty
 # questions of 2,000, a failure reason of 4,000, ten follow-ups of 120 and 1,000, a pull request title of 120 and
 # body of 20,000 characters, and the replies kept, each of 4,000. JSON may spend 12 bytes on one character (a
 # surrogate pair, escaped), and the record's keys, indentation and problems take far less than the 100,000 bytes
 # added for them and 400 more for each reply's keys.
-MAX_SETTLED_CHARACTERS = 4_000 + 20 * 2_000 + 4_000 + 10 * (120 + 1_000) + 120 + 20_000 + MAX_REPLIES * 4_000
-MAX_SETTLED_BYTES = 12 * MAX_SETTLED_CHARACTERS + 100_000 + MAX_REPLIES * 400
+MAX_SETTLED_CHARACTERS = 4_000 + 20 * 2_000 + 4_000 + 10 * (120 + 1_000) + 120 + 20_000 + MAX_THREAD_REPLIES * 4_000
+MAX_SETTLED_BYTES = 12 * MAX_SETTLED_CHARACTERS + 100_000 + MAX_THREAD_REPLIES * 400
 PULL_REQUEST_NOTICES = ("fix-rounds-exhausted",)  # the notices that go on the open pull request, not the issue
 BASE_BRANCH = "main"
 STAGE_LABEL = "stage:fix"
@@ -91,7 +90,7 @@ _RECORD_SHAPES: Mapping[str, Callable[[object], bool]] = {
     "failure_reason": lambda value: isinstance(value, str),
     "follow_ups": lambda value: isinstance(value, list) and all(_is_pair(item, ("title", "reason")) for item in value),
     "pull_request": lambda value: value is None or _is_pair(value, ("title", "body")),
-    "replies": lambda value: isinstance(value, list) and len(value) <= MAX_REPLIES and all(map(_is_reply, value)),
+    "replies": lambda value: isinstance(value, list) and len(value) <= MAX_THREAD_REPLIES and all(map(_is_reply, value)),
 }
 
 
@@ -427,7 +426,7 @@ class Publisher:
             if thread in known and thread not in chosen:
                 chosen[thread] = {"thread": thread, "comment_id": known[thread], "text": entry["body"],
                                   "resolved": entry["resolved"]}
-        return tuple(chosen.values())[:MAX_REPLIES]
+        return tuple(chosen.values())[:MAX_THREAD_REPLIES]
 
     def _threads(self, job_id: str) -> dict[str, int]:
         """`{thread id: first comment id}` from the file the dispatcher wrote, without any entry that is not one."""

@@ -387,5 +387,4 @@ Known limits, each a candidate for later work:
 - A hand-off that keeps failing, such as a mark-ready that GitHub refuses, is tried again on every
   poll, without a delay or a count. The log names it. A hand-off is also made while
   `factory:halt` or `factory:pause` holds, like a notice or a status label: those stop runs only.
-- A thread reply with nothing but white space, marked resolved, resolves its thread with no reply;
-  the agent contract warns against it.
+- The finish check validates thread replies (`factory/result.py`): a body with a visible character, a `thread_id` of the pattern the publisher uses (`spool.THREAD_ID`), and at most `result.MAX_THREAD_REPLIES` (100) replies, the same limit the publisher keeps.

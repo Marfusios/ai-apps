@@ -57,12 +57,14 @@ requests to answer.
 
 ## Reply to each thread
 
-`thread_replies` holds exactly one entry for each `## Review thread <id> (<path>:<line>)` section:
+`thread_replies` holds exactly one entry for each `## Review thread <id> (<path>:<line>)` section, and never more than 100:
 
-- `thread_id`: the `<id>` of its heading, copied exactly, character for character. A reply to an id
-  the context does not name is never posted.
+- `thread_id`: the `<id>` of its heading, copied exactly, character for character. It has 1 to 100
+  letters, digits, underscores, equal signs or hyphens, as in the heading. A reply to an id the
+  context does not name is never posted.
 - `body`: the reply, in plain sentences: what changed and where, or the reason you changed
-  nothing, or your question.
+  nothing, or your question. It holds a visible character: the finish check refuses a body of
+  white space.
 - `resolved`: `true` only when the change you committed settles the thread. Use `false` when you
   explain, disagree or ask, and when you changed only part of what it asks.
 

@@ -16,8 +16,8 @@ from factory import bundle_check, compose, gitops, jobs, markers
 from factory import config as factory_config
 from factory.github_api import GitHubError, GraphQLRefused
 from factory.gitops import GitError, PushRefused
-from factory.publish import MAX_REPLIES, MAX_SETTLED_BYTES, Publisher
-from factory.result import MAX_RESULT_BYTES
+from factory.publish import MAX_SETTLED_BYTES, Publisher
+from factory.result import MAX_RESULT_BYTES, MAX_THREAD_REPLIES
 from factory.snapshot import Bot, Comment, Issue, PullRequest
 from factory.spool import Spool, SpoolError, new_job_id
 from factory.tests.fakes import FIRST_NUMBER, FakeGitHub
@@ -1472,7 +1472,7 @@ class ReviseRunTest(PublishTestCase):
         self.assertEqual(self.resolved(), [])
 
     def test_known_threads_beyond_the_limit_are_cut_and_a_repeat_loads_the_stored_decision(self):
-        threads = {f"T{number}": 1000 + number for number in range(MAX_REPLIES + 1)}
+        threads = {f"T{number}": 1000 + number for number in range(MAX_THREAD_REPLIES + 1)}
         self.spool.write_job_json(self.job, "threads.json", threads)
         replies = [reply(thread, "Done.") for thread in threads]
         self.branch_on_github(self.base)
@@ -1480,12 +1480,12 @@ class ReviseRunTest(PublishTestCase):
         self.github.fail_once.add(("POST", self.pull_comments))
         with self.assertRaises(GitHubError):
             self.publish()
-        self.assertEqual(len(self.settled()["replies"]), MAX_REPLIES)
+        self.assertEqual(len(self.settled()["replies"]), MAX_THREAD_REPLIES)
         self.spool.job_file(self.job, "threads.json").write_text("{}")  # a repeat must not read the file again
         self.assertEqual(self.publish(), "done")
         posts = [call for call in self.github.calls if REPLY_PATH.fullmatch(call[1])]
-        self.assertEqual(len(posts), MAX_REPLIES)
-        self.assertEqual(len({call[1] for call in posts}), MAX_REPLIES)
+        self.assertEqual(len(posts), MAX_THREAD_REPLIES)
+        self.assertEqual(len({call[1] for call in posts}), MAX_THREAD_REPLIES)
 
     def test_entries_of_the_thread_list_that_are_not_a_thread_and_a_comment_are_dropped(self):
         self.spool.write_job_json(self.job, "threads.json", {
