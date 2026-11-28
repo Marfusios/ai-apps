@@ -405,6 +405,26 @@ class GraphQLTest(unittest.TestCase):
             github.graphql("q", {})
         self.assertEqual(caught.exception.retry_at, NOW + 9)
 
+    def test_a_graphql_rate_limit_in_a_200_answer_is_raised_as_rate_limited_a_minute_ahead(self):
+        for errors in ([{"type": "RATE_LIMITED", "message": "secret-text"}],
+                       [{"type": "NOT_FOUND"}, {"type": "RATE_LIMITED", "message": "secret-text"}]):
+            with self.subTest(errors=len(errors)):
+                github, _ = client([("POST", "/graphql", 200, {}, {"errors": errors})])
+                with self.assertRaises(RateLimited) as caught:
+                    github.graphql("query-" + "q" * 8, {"name": "var-" + "v" * 8})
+                self.assertEqual(caught.exception.retry_at, NOW + 60)
+                for text in (str(caught.exception), caught.exception.message):
+                    for leaked in ("query-", "var-", "secret-text"):
+                        self.assertNotIn(leaked, text)
+
+    def test_a_graphql_refusal_of_another_type_is_still_a_refusal(self):
+        for kind in ("NOT_FOUND", "FORBIDDEN", "rate_limited", "NOT_RATE_LIMITED"):
+            with self.subTest(kind=kind):
+                github, _ = client([("POST", "/graphql", 200, {}, {"errors": [{"type": kind}]})])
+                with self.assertRaises(GraphQLRefused) as refused:
+                    github.graphql("q", {})
+                self.assertNotIsInstance(refused.exception, RateLimited)
+
     def test_errors_and_a_missing_or_wrong_data_raise_without_query_variables_or_error_text(self):
         for answer in (
             {"data": {"a": 1}, "errors": [{"message": "secret-text"}, {"message": "more"}]},
@@ -444,11 +464,11 @@ class GraphQLTest(unittest.TestCase):
 
     def test_a_refusal_names_the_type_of_each_error_and_nothing_else_from_it(self):
         errors = [{"type": "NOT_FOUND", "message": "secret-text"}, {"type": "not a type"}, {"type": 7}, "odd",
-                  {"type": "RATE_LIMITED"}]
+                  {"type": "FORBIDDEN"}]
         github, _ = client([("POST", "/graphql", 200, {}, {"errors": errors})])
         with self.assertRaises(GraphQLRefused) as refused:
             github.graphql("q", {})
-        self.assertEqual(refused.exception.types, ("NOT_FOUND", "", "", "", "RATE_LIMITED"))
+        self.assertEqual(refused.exception.types, ("NOT_FOUND", "", "", "", "FORBIDDEN"))
         self.assertNotIn("secret-text", str(refused.exception))
         github, _ = client([("POST", "/graphql", 200, {}, {"errors": "odd"})])
         with self.assertRaises(GraphQLRefused) as odd:

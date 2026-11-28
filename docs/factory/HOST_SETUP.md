@@ -672,7 +672,8 @@ issue shows `status:queued`, and no run starts anywhere until then. Then the iss
 by itself, in its turn. A second limit in a row edits that comment instead of adding another.
 
 When GitHub's own rate limit runs out, the dispatcher logs it and waits until the limit resets: at
-least a minute, at most an hour.
+least a minute, at most an hour. A GraphQL call that GitHub refuses for its rate limit, which GitHub
+answers with a normal reply and no reset time, counts the same way and waits a minute.
 
 ### When nothing seems to happen
 

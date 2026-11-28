@@ -39,7 +39,7 @@ class GitHubError(Exception):
 class GraphQLRefused(GitHubError):
     """GitHub took a GraphQL call and reported errors in its answer; a failed request raises plain GitHubError.
 
-    `types` holds the `type` of each error, such as `NOT_FOUND` or `RATE_LIMITED`, and "" for one without a plain
+    `types` holds the `type` of each error, such as `NOT_FOUND` (an error of the type `RATE_LIMITED` raises RateLimited), and "" for one without a plain
     type. Nothing else of an error is kept: its message may quote the query.
     """
 
@@ -189,11 +189,15 @@ class GitHub:
         self._send("DELETE", API_ROOT + path, None, None)
 
     def graphql(self, query: str, variables: Mapping[str, object]) -> dict:
-        """Run a GraphQL call and return its `data`; errors in a 200 answer raise GraphQLRefused."""
+        """Run a GraphQL call and return its `data`; errors in a 200 answer raise GraphQLRefused,
+        or RateLimited when one of them is of the type RATE_LIMITED."""
         answer = self._write("POST", "/graphql", {"query": query, "variables": dict(variables)})
         errors = answer.get("errors") if isinstance(answer, dict) else None
         data = answer.get("data") if isinstance(answer, dict) else None
         if errors:
+            if isinstance(errors, list) and "RATE_LIMITED" in map(_error_type, errors):
+                # GitHub answers an exceeded GraphQL limit with a 200 and no headers, so the wait is a guess
+                raise RateLimited(200, "POST /graphql was rate limited", self._clock() + DEFAULT_RETRY_SECONDS)
             count = len(errors) if isinstance(errors, list) else 1
             types = tuple(map(_error_type, errors)) if isinstance(errors, list) else ()
             raise GraphQLRefused(0, f"POST /graphql failed with {count} {'error' if count == 1 else 'errors'}", types)
