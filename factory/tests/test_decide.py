@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 
 from factory import config as factory_config
-from factory import markers
+from factory import compose, markers
 from factory.decide import (
     CloseJob, HandOff, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide, reviews_to_answer,
     revise_instruction,
@@ -19,15 +19,49 @@ FUTURE = "2026-01-01T13:00:00Z"
 PAST = "2026-01-01T11:00:00Z"
 BUILDING, QUEUED, NEEDS_HUMAN, DONE = "status:building", "status:queued", "status:needs-human", "status:done"
 CLOSE_REASON = "the issue is closed or no longer labelled"
+HEAD = "0123456789abcdef0123456789abcdef01234567"
+JOB_AT = "20260101T000000Z"  # the creation time a job id carries
+JOB1 = f"{JOB_AT}-fix_issue-12-0a1b2c3d"
+JOB0 = f"{JOB_AT}-fix_issue-12-0a1b2c3e"
 
 
 def comment(id: int, body: str = "hello", author: str = "Marfusios") -> Comment:
     return Comment(id, author, 1, "2026-01-01T10:00:00Z", body)
 
 
-def marker_comment(id: int, outcome: str, **data) -> Comment:
-    body = "Something happened.\n\n" + markers.encode({"outcome": outcome, **data})
+def bot_comment(id: int, body: str) -> Comment:
     return Comment(id, BOT.login, BOT.user_id, "2026-01-01T10:00:00Z", body)
+
+
+def marker_comment(
+    id: int, outcome: str, *, stage: str = "fix_issue", round: int = 0, job_at: str = JOB_AT, job_id: str | None = None,
+    retry_at: str = "",
+) -> Comment:
+    """A run's comment exactly as the factory writes it (`compose.run_comment`), so `decide` reads a real marker."""
+    body = compose.run_comment(
+        job_id=job_id or f"{job_at}-{stage}-12-{id:08x}", stage=stage, outcome=outcome, duration_seconds=60,
+        model="opus", retry_at=retry_at, round=round,
+    )
+    return bot_comment(id, body)
+
+
+def odd_marker_comment(id: int, data: dict) -> Comment:
+    """A comment of the bot with a marker the factory does not write: whatever `data` says, nothing added."""
+    return bot_comment(id, "Something happened.\n\n" + markers.encode(data))
+
+
+def odd_run_comment(id: int, outcome: object, **odd) -> Comment:
+    """A run marker as the factory writes it, except for the fields given in `odd`, which may hold any value."""
+    return odd_marker_comment(id, {"kind": "run", "job": f"{JOB_AT}-fix_issue-12-0a1b2c3d", "stage": "fix_issue",
+                                   "outcome": outcome, **odd})
+
+
+def notice_comment(id: int, key: str) -> Comment:
+    return bot_comment(id, compose.notice(key))
+
+
+def handoff_comment(id: int, head: str = HEAD) -> Comment:
+    return bot_comment(id, compose.handoff_comment(head, "pass"))
 
 
 def issue(
@@ -137,7 +171,7 @@ class JobTest(unittest.TestCase):
 class SettlingTest(unittest.TestCase):
     """A job the dispatcher closed after publishing it, while GitHub's comment list may still lag."""
 
-    CLOSED = JobView("j1", 12, "closed")
+    CLOSED = JobView(JOB1, 12, "closed")
 
     def test_a_closed_job_whose_marker_is_not_visible_yet_means_no_actions(self):
         lagging = issue(12, comments=(marker_comment(3, "needs_input"), comment(4)))
@@ -145,18 +179,18 @@ class SettlingTest(unittest.TestCase):
 
     def test_once_its_marker_is_visible_the_table_applies_again(self):
         seen = issue(
-            12, comments=(marker_comment(3, "needs_input"), comment(4), marker_comment(5, "needs_input", job="j1"))
+            12, comments=(marker_comment(3, "needs_input"), comment(4), marker_comment(5, "needs_input", job_id=JOB1))
         )
         self.assertEqual(run(seen, jobs=[self.CLOSED]), HUMAN_12)
 
     def test_a_marker_of_another_job_does_not_end_the_settling(self):
-        other = issue(12, comments=(marker_comment(3, "needs_input", job="j0"), comment(4)))
+        other = issue(12, comments=(marker_comment(3, "needs_input", job_id=JOB0), comment(4)))
         self.assertEqual(run(other, jobs=[self.CLOSED]), [])
 
     def test_a_marker_whose_job_is_not_a_string_counts_as_no_job_and_raises_nothing(self):
         for job in (["j1"], {"a": 1}, 5, None):
             with self.subTest(job=job):
-                history = issue(12, comments=(marker_comment(3, "needs_input", job=job),))
+                history = issue(12, comments=(odd_run_comment(3, "needs_input", job=job),))
                 self.assertEqual(run(history), HUMAN_12)
                 self.assertEqual(run(history, jobs=[self.CLOSED]), [])
 
@@ -168,7 +202,7 @@ class SettlingTest(unittest.TestCase):
         self.assertEqual(run(lagging, issue(13), jobs=[self.CLOSED]), [SetStatus(13, QUEUED, ())])
 
     def test_once_its_marker_is_visible_a_closed_job_blocks_nothing(self):
-        seen = issue(12, comments=(marker_comment(3, "usage_limit", job="j1", retry_at=PAST),))
+        seen = issue(12, comments=(marker_comment(3, "usage_limit", job_id=JOB1, retry_at=PAST),))
         self.assertEqual(run(seen, issue(13), jobs=[self.CLOSED]),
                          [SetStatus(12, BUILDING, ()), StartJob(12, "demo"), SetStatus(13, QUEUED, ())])
 
@@ -226,7 +260,8 @@ class MarkerRowsTest(unittest.TestCase):
     def test_an_unreadable_retry_time_counts_as_past(self):
         for retry_at in ("tomorrow", "2026-01-01 13:00:00", "2026-01-01T13:00:00+00:00", 5, None):
             with self.subTest(retry_at=retry_at):
-                self.assertEqual(run(with_marker(12, "usage_limit", retry_at=retry_at)), STARTS_12)
+                odd = issue(12, comments=(odd_run_comment(3, "usage_limit", retry_at=retry_at),))
+                self.assertEqual(run(odd), STARTS_12)
         self.assertEqual(run(with_marker(12, "usage_limit")), STARTS_12)
 
     def test_a_usage_limit_of_an_untrusted_issue_blocks_nothing(self):
@@ -258,16 +293,15 @@ class MarkerRowsTest(unittest.TestCase):
         self.assertEqual(run(with_marker(12, "done")), [])
 
     def test_an_unknown_outcome_does_nothing(self):
-        self.assertEqual(run(with_marker(12, "mystery")), [])
-        self.assertEqual(run(with_marker(12, "published")), [])
-        bare = Comment(3, BOT.login, BOT.user_id, "2026-01-01T10:00:00Z", markers.encode({"job": "x"}))
-        self.assertEqual(run(issue(12, comments=(bare,))), [])
-        self.assertEqual(run(with_marker(12, ["failed"])), [])
+        for outcome in ("mystery", "published", ["failed"]):
+            with self.subTest(outcome=outcome):
+                self.assertEqual(run(issue(12, comments=(odd_run_comment(3, outcome),))), [])
+        self.assertEqual(run(issue(12, comments=(odd_marker_comment(3, {"job": "x"}),))), [])
 
     def test_a_marker_in_a_strangers_comment_changes_nothing(self):
-        faked = Comment(3, "stranger", 9, "2026-01-01T10:00:00Z", markers.encode({"outcome": "failed"}))
+        faked = dataclasses.replace(marker_comment(3, "failed"), author="stranger", author_id=9)
         self.assertEqual(run(issue(12, comments=(faked,))), STARTS_12)
-        lookalike = Comment(3, BOT.login, 1, "2026-01-01T10:00:00Z", markers.encode({"outcome": "failed"}))
+        lookalike = dataclasses.replace(marker_comment(3, "failed"), author_id=1)
         self.assertEqual(run(issue(12, comments=(lookalike,))), STARTS_12)
 
     def test_only_the_last_marker_counts(self):
@@ -374,13 +408,10 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(run(crowded), [SetStatus(12, BUILDING, (QUEUED, DONE)), StartJob(12, "demo")])
 
 
-HEAD = "0123456789abcdef0123456789abcdef01234567"
 AFTER = "2026-01-01T10:30:00Z"  # later than the comments of these tests, which carry 10:00:00
 BEFORE = "2026-01-01T09:00:00Z"
 EARLY_JOB = "20260101T093000Z"  # the creation times a job id carries
 LATE_JOB = "20260101T103000Z"
-HANDOFF = {"kind": "handoff", "head": HEAD}
-EXHAUSTED = {"kind": "notice", "key": "fix-rounds-exhausted", "outcome": "failed"}
 
 
 def checks_pull(state: str, *, draft: bool = False, reviews: tuple[Review, ...] = ()) -> PullRequest:
@@ -394,19 +425,9 @@ def review(state: str, *, author: str = "Marfusios", at: str = AFTER, id: int = 
     return Review(id, author, state, at, "Please change this.")
 
 
-def stage_comment(id: int, stage: str, outcome: str = "done", *, round: object = None, job_at: str | None = None,
-                  **data) -> Comment:
-    """A run's marker; `job_at` gives it a job id created at that time (`YYYYMMDDTHHMMSSZ`)."""
-    if round is not None:
-        data["round"] = round
-    if job_at is not None:
-        data["job"] = f"{job_at}-{stage}-12-0a1b2c3d"
-    return marker_comment(id, outcome, stage=stage, **data)
-
-
-def kind_comment(id: int, data: dict) -> Comment:
-    body = "Something happened.\n\n" + markers.encode(data)
-    return Comment(id, BOT.login, BOT.user_id, "2026-01-01T10:00:00Z", body)
+def stage_comment(id: int, stage: str, outcome: str = "done", **options) -> Comment:
+    """A run of `stage` as the factory writes its comment; `round`, `job_at` and `retry_at` as `marker_comment`."""
+    return marker_comment(id, outcome, stage=stage, **options)
 
 
 def in_flight(pr: PullRequest, *comments: Comment) -> Issue:
@@ -435,20 +456,21 @@ class FixRowsTest(unittest.TestCase):
         self.assertEqual(actions, [PostNotice(12, "fix-rounds-exhausted"), SetStatus(12, NEEDS_HUMAN, ())])
 
     def test_a_fix_run_without_a_usable_round_fails_closed_to_the_notice(self):
-        for odd in (None, True, 0, -1, 1001, "2", 2.0, [2]):
+        exhausted = [PostNotice(12, "fix-rounds-exhausted"), SetStatus(12, NEEDS_HUMAN, ())]
+        self.assertEqual(run(in_flight(checks_pull("failed"), stage_comment(3, "fix"))), exhausted)  # no round written
+        for odd in (True, 0, -1, 1001, "2", 2.0, [2]):
             with self.subTest(round=odd):
-                marker = stage_comment(3, "fix", **({} if odd is None else {"round": odd}))
-                actions = run(in_flight(checks_pull("failed"), marker))
-                self.assertEqual(actions, [PostNotice(12, "fix-rounds-exhausted"), SetStatus(12, NEEDS_HUMAN, ())])
+                marker = odd_run_comment(3, "done", stage="fix", round=odd)
+                self.assertEqual(run(in_flight(checks_pull("failed"), marker)), exhausted)
 
     def test_once_the_notice_is_in_the_stream_nothing_more_happens(self):
-        history = (stage_comment(3, "fix", round=3), kind_comment(4, EXHAUSTED))
+        history = (stage_comment(3, "fix", round=3), notice_comment(4, "fix-rounds-exhausted"))
         self.assertEqual(run(in_flight(checks_pull("failed"), *history)), HUMAN_12)
         waiting = issue(12, labels=("factory:fix", NEEDS_HUMAN), comments=history, pull=checks_pull("failed"))
         self.assertEqual(run(waiting), [])
 
     def test_a_retry_after_the_notice_starts_fix_at_round_one(self):
-        history = (stage_comment(3, "fix", round=3), kind_comment(4, EXHAUSTED), comment(5, "/factory retry"))
+        history = (stage_comment(3, "fix", round=3), notice_comment(4, "fix-rounds-exhausted"), comment(5, "/factory retry"))
         self.assertEqual(run(in_flight(checks_pull("failed"), *history)), start("fix", 1))
 
     def test_a_retry_after_three_failed_fix_runs_starts_round_one_and_the_next_round_is_two(self):
@@ -470,7 +492,7 @@ class FixRowsTest(unittest.TestCase):
     def test_a_usage_limit_resumes_fix_with_its_own_round(self):
         resumed = stage_comment(3, "fix", "usage_limit", round=2, retry_at=PAST)
         self.assertEqual(run(in_flight(checks_pull("failed"), resumed)), start("fix", 2))
-        unnumbered = stage_comment(3, "fix", "usage_limit", retry_at=PAST)
+        unnumbered = stage_comment(3, "fix", "usage_limit", retry_at=PAST)  # no round written
         self.assertEqual(run(in_flight(checks_pull("failed"), unnumbered)), start("fix", 3))
 
     def test_pending_checks_do_nothing(self):
@@ -505,43 +527,42 @@ class AfterTheHandOffTest(unittest.TestCase):
 
     def test_a_trusted_review_starts_revise(self):
         pr = checks_pull("passed", reviews=(review("changes_requested"),))
-        self.assertEqual(run(in_flight(pr, kind_comment(3, HANDOFF))), start("revise"))
+        self.assertEqual(run(in_flight(pr, handoff_comment(3))), start("revise"))
 
     def test_the_revise_command_starts_revise(self):
         pr = checks_pull("passed")
-        self.assertEqual(run(in_flight(pr, kind_comment(3, HANDOFF), comment(4, "/factory revise rename it"))),
+        self.assertEqual(run(in_flight(pr, handoff_comment(3), comment(4, "/factory revise rename it"))),
                          start("revise"))
 
     def test_failing_checks_start_nothing(self):
-        self.assertEqual(run(in_flight(checks_pull("failed"), kind_comment(3, HANDOFF))), [])
+        self.assertEqual(run(building_issue(checks_pull("failed"), handoff_comment(3))), [])
 
     def test_passing_checks_on_a_draft_again_hand_over_nothing(self):
-        self.assertEqual(run(in_flight(checks_pull("passed", draft=True), kind_comment(3, HANDOFF))), [])
+        self.assertEqual(run(building_issue(checks_pull("passed", draft=True), handoff_comment(3))), [])
 
     def test_a_marker_of_a_kind_the_code_does_not_know_is_read_like_the_hand_off(self):
         pr = checks_pull("failed", reviews=(review("commented"),))
-        self.assertEqual(run(in_flight(pr, kind_comment(3, {"kind": "future"}))), start("revise"))
-        self.assertEqual(run(in_flight(checks_pull("failed"), kind_comment(3, {"kind": "future"}))), [])
+        future = odd_marker_comment(3, {"kind": "future"})
+        self.assertEqual(run(in_flight(pr, future)), start("revise"))
+        self.assertEqual(run(in_flight(checks_pull("failed"), future)), [])
 
 
 class NeedsAppTest(unittest.TestCase):
     """A start held back for the app is decided again with its own stage once the app is named."""
-
-    NEEDS_APP = {"kind": "notice", "key": "needs-app", "outcome": "needs_input"}
 
     def test_a_fix_that_cannot_choose_an_app_asks_once_and_then_starts_as_a_fix(self):
         failed = checks_pull("failed")
         done = stage_comment(3, "fix", round=1)
         asked = run(in_flight(failed, done), apps=("alpha", "beta"))
         self.assertEqual(asked, [PostNotice(12, "needs-app"), SetStatus(12, NEEDS_HUMAN, ())])
-        notice = kind_comment(4, self.NEEDS_APP)
+        notice = notice_comment(4, "needs-app")
         waiting = run(in_flight(failed, done, notice), apps=("alpha", "beta"))
         self.assertEqual(waiting, HUMAN_12)
         answered = in_flight(failed, done, notice, comment(5, "app: demo"))
         self.assertEqual(run(answered, apps=("alpha", "demo")), start("fix", 2))
 
     def test_a_notice_with_no_run_before_it_keeps_todays_rows(self):
-        notice = kind_comment(3, self.NEEDS_APP)
+        notice = notice_comment(3, "needs-app")
         self.assertEqual(run(in_flight(checks_pull("failed"), notice, comment(4, "app: demo"))), STARTS_12)
 
 
@@ -585,7 +606,8 @@ class ReviseRowsTest(unittest.TestCase):
         pr = checks_pull("pending", reviews=(review("changes_requested", at=BEFORE),))
         for job in ("nonsense", 5, None, ["x"], "20261301T093000Z-revise-12-0a1b2c3d", "20260101T093000Z-revise-12"):
             with self.subTest(job=job):
-                self.assertEqual(run(in_flight(pr, stage_comment(3, "revise", job=job))), start("revise"))
+                marker = odd_run_comment(3, "done", stage="revise", job=job)
+                self.assertEqual(run(in_flight(pr, marker)), start("revise"))
 
     def test_an_older_revise_job_is_ignored_for_a_newer_one(self):
         pr = checks_pull("pending", reviews=(review("changes_requested", at="2026-01-01T10:00:00Z"),))
@@ -769,6 +791,70 @@ class AnswersTest(unittest.TestCase):
         self.assertEqual(self.instruction(comment(2, "/factory revise old"), stage_comment(3, "revise", job_at=LATE_JOB)), "")
         failed = stage_comment(3, "revise", "failed", job_at=LATE_JOB)
         self.assertEqual(self.instruction(comment(2, "/factory revise old"), failed), "old")
+
+
+class MarkerShapeTest(unittest.TestCase):
+    """A run marker is the one with `"kind": "run"`; any other shape is an unknown kind."""
+
+    def test_the_same_stream_reads_differently_without_the_kind(self):
+        failed = checks_pull("failed")
+        real = stage_comment(3, "fix", round=1)
+        kindless = odd_marker_comment(3, {"job": f"{JOB_AT}-fix-12-0a1b2c3d", "stage": "fix", "outcome": "done", "round": 1})
+        self.assertEqual(run(building_issue(failed, real)), [StartJob(12, "demo", "fix", 2)])
+        self.assertEqual(run(building_issue(failed, kindless)), [])
+
+    def test_a_kindless_marker_is_not_a_failed_run_that_waits_for_a_retry(self):
+        kindless = odd_marker_comment(3, {"stage": "fix", "outcome": "failed", "round": 1})
+        retried = in_flight(checks_pull("failed"), kindless, comment(4, "/factory retry"))
+        self.assertEqual(run(retried), STARTS_12)  # today's row for a failure, not the table's `fix` restart
+
+    def test_a_failed_fix_issue_run_keeps_todays_rows_with_an_open_pull_request(self):
+        self.assertEqual(run(in_flight(checks_pull("failed"), marker_comment(3, "failed"))), HUMAN_12)
+
+
+class OrderOfTheRowsTest(unittest.TestCase):
+    def test_the_answer_to_a_question_wins_over_a_review(self):
+        pr = checks_pull("failed", reviews=(review("changes_requested"),))
+        asked = stage_comment(3, "fix", "needs_input", round=2)
+        self.assertEqual(run(in_flight(pr, asked, comment(4, "go on"))), start("fix", 1))
+
+    def test_a_retry_and_a_new_review_start_one_revise(self):
+        pr = checks_pull("failed", reviews=(review("changes_requested"),))
+        failed = stage_comment(3, "revise", "failed", job_at=EARLY_JOB)
+        self.assertEqual(run(in_flight(pr, failed, comment(4, "/factory retry"))), start("revise"))
+        self.assertEqual(run(in_flight(pr, failed)), start("revise"))
+
+    def test_a_notice_of_another_kind_keeps_todays_rows_even_with_a_review(self):
+        pr = checks_pull("failed", reviews=(review("changes_requested"),))
+        self.assertEqual(run(in_flight(pr, notice_comment(3, "pr-closed"))), HUMAN_12)
+        self.assertEqual(run(in_flight(pr, notice_comment(3, "untrusted-author"))), HUMAN_12)
+
+
+class NeedsAppBehindTwoNoticesTest(unittest.TestCase):
+    def test_an_invalid_app_asks_again_and_a_valid_one_is_found_behind_both_notices(self):
+        apps = ("alpha", "beta")
+        failed = checks_pull("failed")
+        done = stage_comment(3, "fix", round=1)
+        first, wrong = notice_comment(4, "needs-app"), comment(5, "app: gamma")
+        second = notice_comment(6, "needs-app")
+        self.assertEqual(run(in_flight(failed, done, first, wrong), apps=apps),
+                         [PostNotice(12, "needs-app"), SetStatus(12, NEEDS_HUMAN, ())])
+        self.assertEqual(run(in_flight(failed, done, first, wrong, second), apps=apps), HUMAN_12)
+        right = comment(7, "app: beta")
+        self.assertEqual(run(in_flight(failed, done, first, wrong, second, right), apps=apps),
+                         [SetStatus(12, BUILDING, ()), StartJob(12, "beta", "fix", 2)])
+
+
+class ClosedAfterTheHandOffTest(unittest.TestCase):
+    def test_a_pull_request_closed_after_the_hand_off_gets_the_notice_once(self):
+        closed = dataclasses.replace(checks_pull("passed"), open=False)
+        self.assertEqual(run(in_flight(closed, handoff_comment(3))),
+                         [PostNotice(12, "pr-closed"), SetStatus(12, NEEDS_HUMAN, ())])
+        after = in_flight(closed, handoff_comment(3), notice_comment(4, "pr-closed"))
+        self.assertEqual(run(after), HUMAN_12)
+
+    def test_with_the_pull_request_open_the_status_is_building(self):
+        self.assertEqual(run(in_flight(checks_pull("passed"), handoff_comment(3))), [SetStatus(12, BUILDING, ())])
 
 
 class PullRequestDescribeTest(unittest.TestCase):

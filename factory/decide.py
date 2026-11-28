@@ -281,8 +281,8 @@ def _stage(marker: Marker) -> str | None:
 
 
 def _is_run_marker(marker: Marker) -> bool:
-    """A run's marker; the factory's notices and its hand-off carry a `kind`."""
-    return "kind" not in marker.data
+    """A run's marker, which the factory writes with `"kind": "run"`; no kind, or one not known here, is not a run."""
+    return marker.data.get("kind") == "run"
 
 
 def _is_notice(marker: Marker, key: str) -> bool:
@@ -320,9 +320,7 @@ def _table_applies(marker: Marker) -> bool:
     """
     if _is_run_marker(marker):
         return marker.outcome == "done" or _stage(marker) in PULL_REQUEST_STAGES
-    return not _is_notice(marker, NEEDS_APP_NOTICE) and (
-        marker.data.get("kind") != "notice" or _is_notice(marker, EXHAUSTED_NOTICE)
-    )
+    return marker.data.get("kind") != "notice" or _is_notice(marker, EXHAUSTED_NOTICE)
 
 
 def _revise_jobs(issue: Issue, bot: Bot) -> list[tuple[str, datetime]]:
@@ -388,7 +386,11 @@ def revise_instruction(issue: Issue, config: Config, bot: Bot) -> str:
 
 
 def _fix_round(marker: Marker, config: Config) -> int:
-    """The round a fix run's marker carries; a missing or odd one counts as the last, so no run follows it."""
+    """The round a fix run's marker carries; a missing or odd one counts as the last round.
+
+    After a finished run that leaves no further fix run, only the notice; a run resumed after a usage limit
+    repeats this round, which for such a marker is the last one.
+    """
     value = marker.data.get("round")
     if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_FIX_ROUND:
         return value
@@ -482,7 +484,7 @@ ASKED_ROWS: tuple[PullRequestRow, ...] = (
     _resume_after_a_usage_limit, _waiting_for_a_person,
 )
 # The rows about the checks apply only when the marker is a run that ended `done`: after any other marker (a question,
-# a failure, the hand-off) no automatic run starts.
+# a failure, the hand-off) the checks start no run and hand nothing over.
 CHECK_ROWS: tuple[PullRequestRow, ...] = (_fix_failed_checks, _give_up_on_failed_checks, _hand_off)
 
 
@@ -521,7 +523,7 @@ def _after_marker_rows(
         return _failure_rows(issue, trusted_after)
     if outcome == "usage_limit":
         return _usage_limit_rows(issue, marker, now)
-    if outcome == "done":
+    if outcome == "done" or marker.data.get("kind") == "handoff":  # the hand-off follows its pull request like a run
         return _done_rows(issue)
     return []  # anything else: an unknown outcome
 
