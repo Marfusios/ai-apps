@@ -95,7 +95,7 @@ jobs:
       # One environment variable cannot hold much more than this, so a larger answer is passed on as none.
       - name: Pass on the answer when it is small enough
         id: answer
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           FALLBACK: ${{ steps.fallback.outputs.final-message }}
           FIRST: ${{ steps.first.outputs.final-message }}
@@ -115,7 +115,7 @@ jobs:
 
   review:
     needs: codex
-    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -146,7 +146,20 @@ jobs:
           printf '%s' "$ANSWER" > "$RUNNER_TEMP/answer.json"
           status=0
           python -m factory.review.report --answer-file "$RUNNER_TEMP/answer.json" --head "$HEAD_SHA" --model "$MODEL" --out "$RUNNER_TEMP/comment.md" || status=$?
+          # A comment that cannot be posted is a warning: the check's status comes only from the verdict.
           if [ -s "$RUNNER_TEMP/comment.md" ]; then
-            gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md"
+            posted=false
+            for attempt in 1 2 3; do
+              if gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md"; then
+                posted=true
+                break
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep 5
+              fi
+            done
+            if [ "$posted" != true ]; then
+              echo "::warning::The review comment could not be posted after three tries."
+            fi
           fi
           exit "$status"

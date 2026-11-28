@@ -119,7 +119,8 @@ class AppChecksWorkflowTests(unittest.TestCase):
 
     def test_the_apps_job_is_the_single_gate(self) -> None:
         block = jobs(self.text)["apps"]
-        self.assertIn("if: always()", block)
+        self.assertIn("if: ${{ !cancelled() }}", block)  # a superseded run is not reported as a failure
+        self.assertNotIn("always()", block)
         self.assertRegex(block, r"needs:\s*\[plan, app\]")
 
 
@@ -178,7 +179,15 @@ class ReviewWorkflowTests(unittest.TestCase):
     def test_the_review_job_is_the_check_other_programs_wait_for(self) -> None:
         block = self.jobs["review"]
         self.assertRegex(block, r"(?m)^    needs: codex$")
-        self.assertRegex(block, r"(?m)^    if: always\(\) && ")
+        # `!cancelled()` and not `always()`: a run that a newer push superseded must not post "could not run" for
+        # the old head. The expression is wrapped, since a plain value cannot start with `!` in YAML.
+        self.assertRegex(block, r"(?m)^    if: \$\{\{ !cancelled\(\) && ")
+        self.assertNotIn("always()", block)
+
+    def test_the_answer_step_runs_unless_the_run_was_cancelled(self) -> None:
+        step = steps(self.jobs["codex"])["answer"]
+        self.assertRegex(step, r"(?m)^        if: \$\{\{ !cancelled\(\) \}\}$")
+        self.assertNotIn("always()", step)
 
     def test_the_codex_checkout_is_the_merge_ref_without_credentials(self) -> None:
         checkout = steps(self.jobs["codex"])["uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"]
@@ -258,10 +267,23 @@ class ReviewWorkflowTests(unittest.TestCase):
                       "--head \"$HEAD_SHA\" --model \"$MODEL\" --out \"$RUNNER_TEMP/comment.md\"", script)
         self.assertIn("|| status=$?", script)
         self.assertIn('if [ -s "$RUNNER_TEMP/comment.md" ]; then', script)
-        self.assertIn('gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md"', script)
         self.assertLess(script.index("gh api"), script.index('exit "$status"'))
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.jobs["review"])
         self.assertIn("ANSWER: ${{ needs.codex.outputs.answer }}", self.jobs["review"])
+
+    def test_a_comment_that_cannot_be_posted_is_a_warning_and_never_the_check(self) -> None:
+        script = run_blocks(steps(self.jobs["review"])["Report the verdict as a comment"])[0]
+        self.assertIn("for attempt in 1 2 3; do", script)
+        self.assertIn('if gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md"; then',
+                      script)
+        self.assertIn("sleep 5", script)
+        warning = re.search(r'echo "::warning::[^"$`]+"', script)
+        self.assertIsNotNone(warning, "the failed post is reported by a fixed warning line")
+        self.assertLess(script.index("gh api"), script.index("::warning::"))
+        self.assertLess(script.index("::warning::"), script.index('exit "$status"'))
+        # the status of the post is never the job's: only the verdict's status leaves the script
+        self.assertEqual(re.findall(r"exit \S+", script), ["exit 0", 'exit "$status"'])
+        self.assertNotIn("status=$?", script.split("for attempt")[1])
 
     def test_no_script_expands_an_expression(self) -> None:
         for script in run_blocks(self.text):

@@ -104,7 +104,7 @@ More rulings made during the build:
 | --- | --- |
 | `plan` | checkout with `fetch-depth: 0` and `persist-credentials: false`; Python 3.11; `python scripts/ci_apps.py matrix --base ${{ github.event.pull_request.base.sha }} --head ${{ github.event.pull_request.head.sha }}` (or `--all` on dispatch); output `matrix` |
 | `app` | `needs: plan`, skipped when the matrix is empty; `strategy.matrix.include` from it, `fail-fast: false`, name `app (${{ matrix.app }})`, `timeout-minutes: 30`; checkout; `actions/setup-node` when `matrix.node` is set; `actions/setup-python` when `matrix.python` is set (always 3.11 for the script); `python scripts/ci_apps.py run <app> setup`, then `… check` |
-| `apps` | `needs: [plan, app]`, `if: always()`; fails unless `plan` succeeded and `app` succeeded or was skipped. This is the one name the dispatcher waits for |
+| `apps` | `needs: [plan, app]`, `if: ${{ !cancelled() }}` (a run that a newer push superseded is not reported); fails unless `plan` succeeded and `app` succeeded or was skipped. This is the one name the dispatcher waits for |
 
 Every value from the event reaches a `run:` step through `env:`, never by `${{ }}` inside the script text.
 
@@ -142,7 +142,7 @@ Append to `factory/config.toml`: under `[dispatcher]` `required_checks = ["repos
 | Job | Condition, permissions | Does |
 | --- | --- | --- |
 | `codex` | only when the head repository is this repository; `contents: read` | checkout of `refs/pull/<n>/merge` (`persist-credentials: false`), fetch of the base and head refs; a step that writes the prompt file OUTSIDE the checkout from the BASE commit's `factory/review/code.md` or `document.md` (`git show <base sha>:<path>`; `document.md` when the pull request carries the label `stage:design` or `stage:plan`), followed by the base and head commits and the pull request's number; the schema taken from the base commit the same way; `openai/codex-action` with `permission-profile: ":read-only"`, `prompt-file`, `output-schema-file`, `model: ${{ vars.FACTORY_REVIEW_MODEL }}`, `allow-bot-users: mk-factory`, `continue-on-error: true`; a second identical step with `vars.FACTORY_REVIEW_FALLBACK_MODEL`, run only when the first failed and that variable is set; outputs `answer` and `model` |
-| `review` | `needs: codex`, `if: always()` and the same repository condition; `pull-requests: write` | checkout of the BASE commit only (`persist-credentials: false`); Python 3.11; `python -m factory.review.report` with the answer from an environment variable written to a file; post the body as a new comment with `gh api` and `GH_TOKEN: ${{ github.token }}`; exit with the report's status |
+| `review` | `needs: codex`, `if: ${{ !cancelled() && <the same repository condition> }}` (a superseded run posts no "could not run" comment for the old head); `pull-requests: write` | checkout of the BASE commit only (`persist-credentials: false`); Python 3.11; `python -m factory.review.report` with the answer from an environment variable written to a file; post the body as a new comment with `gh api` and `GH_TOKEN: ${{ github.token }}`, up to three tries a few seconds apart, and a `::warning::` line when all fail (the post never decides the check); exit with the report's status |
 
 The pull request's title and body are not put into the prompt (they are agent text; the reviewer reads the diff). No step of `review` uses anything from the pull request's tree.
 
