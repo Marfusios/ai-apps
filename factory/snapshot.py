@@ -15,7 +15,7 @@ CLOSED_ISSUES_SEEN = 30
 REVIEW_TEXT_LIMIT = 20_000
 VERDICTS = frozenset({"pass", "fail", "unavailable"})
 _SHA = re.compile(r"[0-9a-f]{40}")
-_FAILED_CONCLUSIONS = frozenset({"failure", "timed_out", "action_required"})
+_FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})  # action_required waits for a person: no agent can fix it
 
 
 @dataclass(frozen=True)

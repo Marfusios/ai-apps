@@ -24,13 +24,14 @@ from factory import compose, gitops, jobs, snapshot, threads
 from factory.config import Config, ConfigError
 from factory.config import load as load_config
 from factory.decide import (
-    PULL_REQUEST_STAGES, Action, CloseJob, HandOff, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide,
+    Action, CloseJob, HandOff, JobView, PostNotice, PublishRun, SetStatus, StartJob, decide,
     reviews_to_answer, revise_instruction,
 )
 from factory.github_api import GitHub, GitHubError, RateLimited, post_as_app
 from factory.github_auth import AuthError, InstallationToken
 from factory.gitops import GitError
 from factory.publish import Publisher
+from factory.result import PULL_REQUEST_STAGES
 from factory.snapshot import Bot, Check, Issue, PullRequest, branch_for
 from factory.spool import COMMIT_SHA, JOB_ID, TIME_FORMAT, Spool, SpoolError, new_job_id
 

@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 
 from factory.config import Config, is_trusted
 from factory.jobs import choose_app, is_retry, is_revise
-from factory.spool import JOB_ID
+from factory.result import PULL_REQUEST_STAGES
+from factory.spool import JOB_ID, MAX_ROUND
 from factory.snapshot import Bot, Comment, Issue, Marker, PullRequest, Review, Snapshot, checks_state
 
 STATUS_PREFIX = "status:"
@@ -18,10 +19,8 @@ DONE = "status:done"
 PAUSE_LABEL = "factory:pause"
 CLOSE_REASON = "the issue is closed or no longer labelled"
 RETRYABLE = ("failed", "timeout", "crashed", "refused", "rejected")
-PULL_REQUEST_STAGES = ("fix", "revise")  # the stages that work on an existing pull request
 EXHAUSTED_NOTICE = "fix-rounds-exhausted"
 NEEDS_APP_NOTICE = "needs-app"
-MAX_FIX_ROUND = 1_000
 JOB_TIME_CHARS = 16  # a job id starts with its creation time, YYYYMMDDTHHMMSSZ
 JOB_TIMESTAMP = re.compile(r"[0-9]{8}T[0-9]{6}Z")
 REVIEW_STATES_THAT_ASK = ("changes_requested", "commented")
@@ -392,7 +391,7 @@ def _fix_round(marker: Marker, config: Config) -> int:
     repeats this round, which for such a marker is the last one.
     """
     value = marker.data.get("round")
-    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_FIX_ROUND:
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_ROUND:
         return value
     return config.dispatcher.max_fix_rounds
 

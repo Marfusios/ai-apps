@@ -587,8 +587,9 @@ on the pull request's head, the `required_checks` in `factory/config.toml`:
 | `review` | Review | The second-model review found no blocker and no major finding, or could not run. It posts a comment with what it found, or that it could not run. |
 
 Only check runs that GitHub Actions created count. The checks have failed when one of the three
-ended as failed, timed out or action required. They are pending while one of them is missing,
-queued, running, cancelled or skipped, and have passed when all three succeeded.
+ended as failed or timed out. They are pending while one of them is missing, queued, running,
+cancelled, skipped or waiting for a person's approval (a run that needs approval is nothing an
+agent can fix), and have passed when all three succeeded.
 
 - **Failed.** A fix run starts on the pull request's branch. Its context holds the end of each
   failed job's log and, when the review failed, the review's findings. Its comment's first line

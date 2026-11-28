@@ -17,6 +17,7 @@ from factory.bundle_check import Verdict
 from factory.config import Config, is_trusted
 from factory.decide import BUILDING, NEEDS_HUMAN, QUEUED, STATUS_PREFIX
 from factory.github_api import GitHub, GitHubError, GraphQLRefused
+from factory.result import PULL_REQUEST_STAGES
 from factory.snapshot import Bot, Issue, branch_for
 from factory.spool import Spool, SpoolError, SpoolMissing
 
@@ -34,7 +35,6 @@ MAX_REPLIES = 100  # the thread replies of one run that are kept: a run is not t
 MAX_SETTLED_CHARACTERS = 4_000 + 20 * 2_000 + 4_000 + 10 * (120 + 1_000) + 120 + 20_000 + MAX_REPLIES * 4_000
 MAX_SETTLED_BYTES = 12 * MAX_SETTLED_CHARACTERS + 100_000 + MAX_REPLIES * 400
 PULL_REQUEST_NOTICES = ("fix-rounds-exhausted",)  # the notices that go on the open pull request, not the issue
-PULL_REQUEST_STAGES = ("fix", "revise")  # the stages that work on a pull request that already exists
 BASE_BRANCH = "main"
 STAGE_LABEL = "stage:fix"
 NOT_FOUND = 404

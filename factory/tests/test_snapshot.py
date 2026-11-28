@@ -406,10 +406,17 @@ class PullRequestDetailsTest(unittest.TestCase):
 
         self.assertEqual(
             {check.name: check.state for check in pull.checks},
-            {"ok": "passed", "bad": "failed", "slow": "failed", "manual": "failed", "cancelled": "other",
+            {"ok": "passed", "bad": "failed", "slow": "failed", "manual": "other", "cancelled": "other",
              "skipped": "other", "neutral": "other", "queued": "pending", "running": "pending", "odd": "other"},
         )
         self.assertEqual({check.name: check.job_id for check in pull.checks}["bad"], 2)
+
+    def test_a_check_waiting_for_a_persons_approval_leaves_the_head_pending(self) -> None:
+        runs = [run_json(1, "apps", "completed", "action_required")]
+
+        pull = open_pull(github_with([issue_json(12)]), checks=runs).pull_request
+
+        self.assertEqual(snapshot.checks_state(pull, ["apps"]), "pending")
 
     def test_of_two_runs_with_one_name_the_highest_id_counts(self) -> None:
         runs = [run_json(9, "check", "completed", "success"), run_json(4, "check", "completed", "failure")]
