@@ -264,6 +264,24 @@ class FixSectionsTest(unittest.TestCase):
         ((_, text),) = jobs.fix_sections([("lint", log)], "")
         self.assertEqual(log[-jobs.MAX_LOG_CHARS:], text)
 
+    def test_a_log_loses_the_runners_time_stamps_colours_and_control_characters(self):
+        """A hosted log starts every line with a time and colours its text: neither helps the agent, and a NUL makes
+        tools read the whole context as binary."""
+        escape, nul, bell = chr(27), chr(0), chr(7)
+        log = (f"2026-01-02T03:04:05.1234567Z {escape}[31mFAIL{escape}[0m tests/a.test.ts\n"
+               f"2026-01-02T03:04:06.0000001Z   expected 1{nul} to be 2{bell}\r\n"
+               "no stamp here 2026-01-02T03:04:07.0000001Z stays\n"
+               f"\tindented{escape}[1;32m ok{escape}[K")
+        ((_, text),) = jobs.fix_sections([("lint", log)], "")
+        self.assertEqual("FAIL tests/a.test.ts\n  expected 1 to be 2\n"
+                         "no stamp here 2026-01-02T03:04:07.0000001Z stays\n\tindented ok", text)
+
+    def test_the_cut_counts_the_cleaned_log(self):
+        line = "2026-01-02T03:04:05.1234567Z " + "x" * 71 + "\n"  # 72 characters once the time is gone
+        ((_, text),) = jobs.fix_sections([("lint", line * 1_000)], "")
+        self.assertEqual(jobs.MAX_LOG_CHARS, len(text))
+        self.assertNotIn("2026", text)
+
     def test_a_sixth_failed_check_is_left_out_with_a_line_saying_so(self):
         logs = [(f"check {i}", f"log {i}") for i in range(8)]
         sections = jobs.fix_sections(logs, "")

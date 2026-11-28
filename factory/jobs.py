@@ -23,6 +23,11 @@ SECTION_FLOOR = 1_000
 CUT_LINE = "(truncated)"
 MAX_PULL_REQUEST = 2**53  # the largest integer every JSON reader keeps exact
 THREAD_ID = re.compile(r"[A-Za-z0-9_=-]{1,100}")
+# What a hosted check's log carries that tells an agent nothing: the time before each line, colour and cursor
+# sequences, and control characters (a NUL among them makes tools read the whole context as a binary file).
+_LOG_TIME = re.compile(r"(?m)^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+Z ")
+_LOG_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_LOG_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 WITHHELD_TITLE = "(title withheld)"
 WITHHELD_BODY = "The issue was opened by someone outside the trusted list, so its text is not included."
 APP_LINE = re.compile(r"(?i:app):\s*([a-z0-9][a-z0-9-]*)\s*")
@@ -252,14 +257,21 @@ def _failed_check_name(name: str) -> str:
     return _one_line(name, MAX_NAME_CHARS) or "(unnamed)"
 
 
+def _plain_log(log: str) -> str:
+    """The log as plain lines, so that the characters kept from its end are the failure and not its decoration."""
+    lines = _LOG_ESCAPE.sub("", log).replace("\r\n", "\n").replace("\r", "\n")
+    return _LOG_CONTROL.sub("", _LOG_TIME.sub("", lines))
+
+
 def fix_sections(logs: Sequence[tuple[str, str]], review_text: str) -> list[tuple[str, str]]:
     """The sections of a `fix` run's context: the end of each failed check's log, then the automated review.
 
-    At most `MAX_FAILED_CHECKS` checks are shown; a last section says how many were left out and by name.
+    A log loses its line times, colour sequences and control characters before it is cut. At most
+    `MAX_FAILED_CHECKS` checks are shown; a last section says how many were left out and by name.
     """
     sections = []
     for name, log in logs[:MAX_FAILED_CHECKS]:
-        tail = log[-MAX_LOG_CHARS:]
+        tail = _plain_log(log)[-MAX_LOG_CHARS:]
         sections.append((f"Failed check: {_failed_check_name(name)}", tail if tail.strip() else "(the log is empty)"))
     left_out = logs[MAX_FAILED_CHECKS:]
     if left_out:
