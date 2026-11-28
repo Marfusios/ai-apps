@@ -65,14 +65,20 @@ def is_retry(comment: Comment) -> bool:
 
 
 def is_revise(comment: Comment) -> str | None:
-    """The instruction after `/factory revise` on the first non-blank line, "" when none, None for any other line."""
-    for line in comment.body.splitlines():
+    """The instruction of a comment whose first non-blank line starts with `/factory revise`, None for any other.
+
+    The instruction is everything after the command: the rest of that line and the lines below it, "" when none.
+    """
+    lines = comment.body.splitlines()
+    for index, line in enumerate(lines):
         text = line.strip()
         if text:
             if not text.lower().startswith(REVISE_COMMAND):
                 return None
             rest = text[len(REVISE_COMMAND):]
-            return rest.strip() if not rest or rest[0].isspace() else None
+            if rest and not rest[0].isspace():
+                return None
+            return "\n".join([rest.strip(), *lines[index + 1:]]).strip()
     return None
 
 

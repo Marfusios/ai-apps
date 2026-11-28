@@ -427,9 +427,15 @@ class IsRetryTest(unittest.TestCase):
 
     def test_is_revise_returns_the_instruction_after_the_command(self):
         self.assertEqual(jobs.is_revise(comment("/factory revise tidy the names")), "tidy the names")
-        self.assertEqual(jobs.is_revise(comment("\n  /Factory REVISE   rename it  \nmore")), "rename it")
+        self.assertEqual(jobs.is_revise(comment("\n  /Factory REVISE   rename it  \nmore")), "rename it\nmore")
         self.assertEqual(jobs.is_revise(comment("/factory revise")), "")
         self.assertEqual(jobs.is_revise(comment("/factory revise\tnow")), "now")
+
+    def test_the_instruction_is_the_whole_rest_of_the_comment(self):
+        """A person writes the command, then says what they want over as many lines as it takes."""
+        body = "/factory revise\n\nRename the helper.\n  Keep the tests.\n\n"
+        self.assertEqual(jobs.is_revise(comment(body)), "Rename the helper.\n  Keep the tests.")
+        self.assertEqual(jobs.is_revise(comment("/factory revise \n \n")), "")
 
     def test_is_revise_is_none_when_the_first_line_is_not_that_command(self):
         for body in ("", "hello\n/factory revise", "please /factory revise", "/factory revised", "/factory retry",
