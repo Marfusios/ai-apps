@@ -35,6 +35,11 @@ class GitHubError(Exception):
         self.message = message
 
 
+class GraphQLRefused(GitHubError):
+    """GitHub took a GraphQL call and reported errors in its answer: the request arrived, and asking again changes
+    nothing. A caller that can do without the result may skip it; a failed request raises plain GitHubError."""
+
+
 class RateLimited(GitHubError):
     """GitHub asked for a pause; `retry_at` is the epoch second after which to try again."""
 
@@ -166,13 +171,13 @@ class GitHub:
         self._send("DELETE", API_ROOT + path, None, None)
 
     def graphql(self, query: str, variables: Mapping[str, object]) -> dict:
-        """Run a GraphQL call and return its `data`; GitHub reports failures in `errors` with a 200."""
+        """Run a GraphQL call and return its `data`; errors in a 200 answer raise GraphQLRefused."""
         answer = self._write("POST", "/graphql", {"query": query, "variables": dict(variables)})
         errors = answer.get("errors") if isinstance(answer, dict) else None
         data = answer.get("data") if isinstance(answer, dict) else None
         if errors:
             count = len(errors) if isinstance(errors, list) else 1
-            raise GitHubError(0, f"POST /graphql failed with {count} {'error' if count == 1 else 'errors'}")
+            raise GraphQLRefused(0, f"POST /graphql failed with {count} {'error' if count == 1 else 'errors'}")
         if not isinstance(data, dict):
             raise GitHubError(0, "POST /graphql answered no data")
         return data

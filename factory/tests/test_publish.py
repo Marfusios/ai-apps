@@ -14,7 +14,7 @@ from unittest import mock
 
 from factory import bundle_check, compose, gitops, jobs, markers
 from factory import config as factory_config
-from factory.github_api import GitHubError
+from factory.github_api import GitHubError, GraphQLRefused
 from factory.gitops import GitError, PushRefused
 from factory.publish import MAX_REPLIES, MAX_SETTLED_BYTES, Publisher
 from factory.result import MAX_RESULT_BYTES
@@ -1457,10 +1457,11 @@ class ReviseRunTest(PublishTestCase):
         self.assertEqual(self.spool.state(self.job), "finished")
 
     def test_a_resolution_github_refuses_in_its_answer_is_skipped_but_a_failed_request_is_not(self):
-        self.github.graphql_answers.insert(0, GitHubError(0, "POST /graphql failed with 1 error"))
+        self.github.graphql_answers.insert(0, GraphQLRefused(0, "refused"))
         self.assertEqual(self.run_with([reply("T1", "First.", True), reply("T2", "Second.", True)]), "done")
         self.assertEqual(self.resolved(), ["T1", "T2"])
         for error in (GitHubError(502, "POST /graphql failed"),
+                      GitHubError(0, "POST /graphql failed with 1 error"),  # the wording alone decides nothing
                       GitHubError(0, "POST /graphql failed on the network (OSError)")):
             with self.subTest(error=error.message):
                 self.build()

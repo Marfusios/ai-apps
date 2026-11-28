@@ -16,7 +16,7 @@ from factory import bundle_check, compose, gitops, hygiene, jobs, result, snapsh
 from factory.bundle_check import Verdict
 from factory.config import Config, is_trusted
 from factory.decide import BUILDING, NEEDS_HUMAN, QUEUED, STATUS_PREFIX
-from factory.github_api import GitHub, GitHubError
+from factory.github_api import GitHub, GitHubError, GraphQLRefused
 from factory.snapshot import Bot, Issue, branch_for
 from factory.spool import Spool, SpoolError, SpoolMissing
 
@@ -49,7 +49,6 @@ STATUS_AFTER = {"done": BUILDING, "usage_limit": QUEUED}  # every other outcome 
 # reply whose comment or thread is gone: neither stops the publish.
 REVIEW_REQUEST_REFUSED = (422,)
 REPLY_REFUSED = (NOT_FOUND, 422)
-GRAPHQL_REFUSED = "POST /graphql failed with "  # how GitHub.graphql words an error in the body of a 200 answer
 READY_FOR_REVIEW = ("mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) "
                     "{ clientMutationId } }")
 RESOLVE_THREAD = "mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { clientMutationId } }"
@@ -668,15 +667,14 @@ class Publisher:
                 raise
 
     def _resolve(self, thread: object) -> None:
-        """Resolve a thread; an error GitHub reports in its answer (the thread is gone, say) is skipped.
+        """Resolve a thread; when GitHub refuses in its answer (the thread is gone, say) it is skipped.
 
-        A request that failed is not that: its status is not 0, and a network failure has another wording.
+        A request that failed is not that: it raises, and the publish is tried again.
         """
         try:
             self.github.graphql(RESOLVE_THREAD, {"id": thread})
-        except GitHubError as error:
-            if error.status != 0 or not error.message.startswith(GRAPHQL_REFUSED):
-                raise
+        except GraphQLRefused:
+            pass
 
     @staticmethod
     def _reply_body(job_id: str, reply: Mapping[str, object]) -> str | None:

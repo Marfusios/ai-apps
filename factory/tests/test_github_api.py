@@ -15,6 +15,7 @@ from factory.github_api import (
     MAX_REMEMBERED,
     GitHub,
     GitHubError,
+    GraphQLRefused,
     NoRedirect,
     RateLimited,
     post_as_app,
@@ -433,6 +434,18 @@ class GraphQLTest(unittest.TestCase):
             github.graphql("q", {})
         self.assertIn("1 error", one.exception.message)
         self.assertNotIn("1 errors", one.exception.message)
+
+    def test_errors_in_the_answer_have_their_own_type_and_a_failed_request_does_not(self):
+        github, _ = client([("POST", "/graphql", 200, {}, {"errors": [{}]})])
+        with self.assertRaises(GraphQLRefused) as refused:
+            github.graphql("q", {})
+        self.assertEqual(refused.exception.status, 0)
+        for status, answer in ((502, {}), (200, {"data": None}), (200, [])):
+            with self.subTest(status=status, answer=answer):
+                github, _ = client([("POST", "/graphql", status, {}, answer)])
+                with self.assertRaises(GitHubError) as failed:
+                    github.graphql("q", {})
+                self.assertNotIsInstance(failed.exception, GraphQLRefused)
 
 
 SIGNED = "https://logs.example/signed?sig=" + "k" * 12
