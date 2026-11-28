@@ -510,8 +510,20 @@ class HandOffTest(unittest.TestCase):
         self.assertEqual(run(building_issue(draft, marker_comment(3, "done"))), [HandOff(12)])
         self.assertEqual(run(building_issue(draft, stage_comment(3, "revise"))), [HandOff(12)])
 
-    def test_passed_checks_on_a_ready_pull_request_do_nothing(self):
-        self.assertEqual(run(building_issue(checks_pull("passed"), stage_comment(3, "fix", round=1))), [])
+    def test_passed_checks_after_a_run_on_a_ready_pull_request_hand_over_again(self):
+        """After a revise round on a pull request a person already has, the person is asked to look again."""
+        ready = checks_pull("passed")
+        self.assertEqual(run(building_issue(ready, stage_comment(3, "revise"))), [HandOff(12)])
+        self.assertEqual(run(building_issue(ready, stage_comment(3, "fix", round=1))), [HandOff(12)])
+
+    def test_passed_checks_with_a_failing_verdict_hand_nothing_over(self):
+        """The review check decides, so this pair is a contradiction: wait instead of handing over a failed review."""
+        contradictory = dataclasses.replace(checks_pull("passed", draft=True), verdict="fail")
+        self.assertEqual(run(building_issue(contradictory, marker_comment(3, "done"))), [])
+        for verdict in ("pass", "unavailable", ""):
+            with self.subTest(verdict=verdict):
+                fine = dataclasses.replace(checks_pull("passed", draft=True), verdict=verdict)
+                self.assertEqual(run(building_issue(fine, marker_comment(3, "done"))), [HandOff(12)])
 
     def test_a_job_in_flight_holds_the_hand_off_back(self):
         draft = in_flight(checks_pull("passed", draft=True), marker_comment(3, "done"))

@@ -473,7 +473,10 @@ def _give_up_on_failed_checks(situation: _Situation) -> list[Action] | None:
 
 
 def _hand_off(situation: _Situation) -> list[Action] | None:
-    if _checks(situation) == "passed" and situation.pull.draft:
+    """A finished run whose head passes its checks is handed over, draft or not: after a revise round the person is
+    asked to look again. The hand-off's own marker ends it, so an interrupted hand-off is done again and a finished
+    one is not. A failing verdict beside passing checks is a contradiction, and waits."""
+    if _checks(situation) == "passed" and situation.pull.verdict != "fail":
         return [HandOff(situation.issue.number)]
     return None
 
