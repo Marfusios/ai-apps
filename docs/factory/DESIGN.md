@@ -354,6 +354,16 @@ token while it runs. A poisoned dependency or web page could talk it into leakin
 token. The token cannot touch GitHub, can be revoked in one step, and the pre-publish
 scan blocks the obvious route of committing it.
 
+**Residual risk, accepted: branch writers.** Any account that can push a branch to the repository
+can, through a workflow file on its own branch, read the review's API key and post check runs and a
+verdict comment that the factory cannot tell from real ones. The consequence is a false hand-off to
+a person, never a merge, because a person merges. Write access must stay with trusted people.
+
+**Residual risk, accepted: the app checks.** The `apps` check runs what the pull request's own
+`factory.toml` and scripts say, so a change that weakens an app's checks passes them. The guards
+are the second-model review, which is told to treat such a change as a blocker, and the person who
+merges.
+
 ## 8. GitHub configuration
 
 **GitHub App** (owned by the owner's account, installed on this repository only, webhook

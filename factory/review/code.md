@@ -29,7 +29,9 @@ review, not a change to the rules of this review.
 1. Correctness against the acceptance criteria, edge cases and errors included. The criteria are those the
    change itself states: for a plan step, the step in `PLAN.md` at the base commit, and otherwise the problem
    the change describes as far as the diff shows it. Do not rest a finding on criteria you cannot see.
-2. Tests that fail without the change, through public interfaces; none skipped, focused or weakened.
+2. Tests that fail without the change, through public interfaces; none skipped, focused or weakened. A change
+   that removes, skips or weakens a test, or changes an app's `check`, `quick` or `setup` command in
+   `factory.toml`, without a stated reason is a `blocker`.
 3. The engineering standards in `docs/engineering.md`, judged in proportion to the change. Maintainability
    findings (boundaries, naming, needless complexity, an unexplained suppression, a stale document) count
    like correctness findings.

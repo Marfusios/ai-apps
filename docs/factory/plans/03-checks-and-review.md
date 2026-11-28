@@ -70,7 +70,7 @@ The table applies to an open pull request with no job, unless the marker is a `f
 
 After the hand-off marker only the two rows of a person's ask start anything: a person has the pull request then, so a failing check starts no automatic run. A revise run that ends `done` is a finished run again, so its head is fixed when its checks fail and handed over when they pass: the person is asked to look again after every round that moved the head. When no row of the table applies, the rows of an issue without a pull request follow, read against the same marker.
 
-A person's asks are measured against the newest revise job, not against the last marker, because a review written while a run is in flight is older than that run's marker and would be lost. A job's creation time is the time in its id, which its run marker carries. A review or a command counts when it is strictly later, to the second, than the job of the newest `revise` run marker, or when there is no revise run yet. `decide.reviews_to_answer` and `decide.revise_instruction` give the dispatcher what a revise run must answer: everything since the newest revise job that ended `done`, so a retried run gets what its failed predecessor was given. The host's clock must agree with GitHub's to within the time between a review and the next poll; a larger difference costs one extra revise run, never a loop.
+A person's asks are measured against the newest revise job, not against the last marker, because a review written while a run is in flight is older than that run's marker and would be lost. A job's creation time is the time in its id, which its run marker carries. A review or a command counts when it is strictly later, to the second, than the job of the newest `revise` run marker, or when there is no revise run yet. `decide.reviews_to_answer` and `decide.revise_instruction` give the dispatcher what a revise run must answer: everything since the newest revise job that ended `done`, so a retried run gets what its failed predecessor was given. The host's clock must be kept synchronised with network time. A host clock that runs behind GitHub's makes the review that started a revise run count again until a later job's time passes the review's time. A host clock that runs ahead can make a review written just after a revise run starts go unanswered. GitHub refuses the App's token when the clocks differ by more than a few minutes, which bounds both.
 
 Fix rounds are read from the marker, not counted. A person's restart is round 1, which is how a person's `/factory retry` starts the count again. A `fix` marker without a valid round counts as `max_fix_rounds`, so the factory stops instead of looping.
 
@@ -380,10 +380,7 @@ Known limits, each a candidate for later work:
 - More than 100 review threads on a pull request, or more than 50 comments in one thread, are not
   all read; the dispatcher logs the first case. With more than about 140 sections, the last
   sections of a context are left out with a count.
-- The host's clock must agree with GitHub's. A host clock behind GitHub's costs one extra revise
-  run, as the rulings say. A host clock ahead of it by more than the seconds between a poll's
-  clock reading and its read of the reviews can miss a review written in that span, because the
-  job is stamped with the earlier reading.
+- The host's clock must be kept synchronised with network time. A host clock that runs behind GitHub's makes the review that started a revise run count again until a later job's time passes the review's time. A host clock that runs ahead can make a review written just after a revise run starts go unanswered. GitHub refuses the App's token when the clocks differ by more than a few minutes, which bounds both.
 - A hand-off that keeps failing, such as a mark-ready that GitHub refuses, is tried again on every
   poll, without a delay or a count. The log names it. A hand-off is also made while
   `factory:halt` or `factory:pause` holds, like a notice or a status label: those stop runs only.

@@ -564,10 +564,7 @@ stream, so a reply or a command works on either.
 
 A review or a `/factory revise` written while a run is going on is answered by the next revise run.
 The factory tells what is still to answer by comparing each review's time on GitHub with the time
-the newest revise job was created, by the host's clock, so keep that clock synchronised with
-network time. A host clock behind GitHub's can start one revise run too many. A host clock ahead of
-GitHub's by more than a few seconds can miss a review written in that span after a revise run
-started.
+the newest revise job was created, by the host's clock. The host's clock must be kept synchronised with network time. A host clock that runs behind GitHub's makes the review that started a revise run count again until a later job's time passes the review's time. A host clock that runs ahead can make a review written just after a revise run starts go unanswered. GitHub refuses the App's token when the clocks differ by more than a few minutes, which bounds both.
 
 The factory posts a notice on the issue and waits in four cases. When it cannot tell the app, it
 asks for an `app:` line. When the issue's author is outside the trusted list, the agent is never

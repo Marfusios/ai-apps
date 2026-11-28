@@ -336,6 +336,11 @@ class FilesTests(unittest.TestCase):
                 self.assertIn("report it as a `blocker`", text)
                 self.assertIn("reviewed as ordinary changes", text)
 
+    def test_the_code_prompt_makes_a_weakened_test_or_check_command_a_blocker(self) -> None:
+        text = " ".join((REVIEW_DIR / "code.md").read_text(encoding="utf-8").split())
+        self.assertIn("A change that removes, skips or weakens a test, or changes an app's `check`, `quick` or `setup` "
+                      "command in `factory.toml`, without a stated reason is a `blocker`.", text)
+
     def test_the_schema_bounds_the_line_number(self) -> None:
         line = self.schema()["properties"]["findings"]["items"]["properties"]["line"]
         self.assertEqual((line["minimum"], line["maximum"]), (0, 10_000_000))
