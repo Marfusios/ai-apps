@@ -315,8 +315,8 @@ def _table_marker(issue: Issue, newest: Marker, config: Config, bot: Bot) -> Mar
 def _table_applies(marker: Marker) -> bool:
     """False for what today's rows keep: a run of another stage that did not finish, and any notice but the exhausted one.
 
-    The hand-off marker and a marker of a kind this code does not know are read by the table: a person has the
-    pull request then, and only a person's asks start a run.
+    The hand-off marker and a marker of a kind this code does not know are read by the table, where only a person's
+    asks apply to them. When no row of the table applies, today's rows follow, by the marker's outcome.
     """
     if _is_run_marker(marker):
         return marker.outcome == "done" or _stage(marker) in PULL_REQUEST_STAGES
@@ -472,11 +472,21 @@ def _give_up_on_failed_checks(situation: _Situation) -> list[Action] | None:
     return None
 
 
+def _handed_over(situation: _Situation) -> bool:
+    """True when the stream holds the hand-off of this very head: the publisher writes that marker last."""
+    head = situation.pull.head_sha
+    markers = situation.issue.markers(situation.bot)
+    return any(marker.data.get("kind") == "handoff" and marker.data.get("head") == head for marker in markers)
+
+
 def _hand_off(situation: _Situation) -> list[Action] | None:
-    """A finished run whose head passes its checks is handed over, draft or not: after a revise round the person is
-    asked to look again. The hand-off's own marker ends it, so an interrupted hand-off is done again and a finished
-    one is not. A failing verdict beside passing checks is a contradiction, and waits."""
-    if _checks(situation) == "passed" and situation.pull.verdict != "fail":
+    """A finished run whose head passes its checks is handed over once, draft or not.
+
+    After a revise round the person is asked to look again, and a hand-off interrupted before its comment is done
+    again. A run that ended without moving a head already handed over changes nothing for the person. A failing
+    verdict beside passing checks is a contradiction, and waits.
+    """
+    if _checks(situation) == "passed" and situation.pull.verdict != "fail" and not _handed_over(situation):
         return [HandOff(situation.issue.number)]
     return None
 
@@ -491,19 +501,11 @@ ASKED_ROWS: tuple[PullRequestRow, ...] = (
 CHECK_ROWS: tuple[PullRequestRow, ...] = (_fix_failed_checks, _give_up_on_failed_checks, _hand_off)
 
 
-def _pull_request_rows(
-    issue: Issue, newest: Marker, now: datetime, config: Config, bot: Bot
-) -> list[Action] | _Start | None:
-    """The first row of the table that applies to the issue's open pull request, or None when none does."""
-    pull = issue.pull_request
-    if pull is None or not pull.open:
-        return None
-    marker = _table_marker(issue, newest, config, bot)
-    if marker is None or isinstance(marker, list):
-        return marker
+def _table_rows(situation: _Situation) -> list[Action] | _Start | None:
+    """The first row of the table that applies, or None when none does or the table does not read this marker."""
+    marker = situation.marker
     if not _table_applies(marker):
         return None
-    situation = _Situation(issue, pull, marker, now, config, bot)
     finished_run = _is_run_marker(marker) and marker.outcome == "done"
     for row in (*ASKED_ROWS, *(CHECK_ROWS if finished_run else ())):
         found = row(situation)
@@ -513,11 +515,25 @@ def _pull_request_rows(
 
 
 def _after_marker_rows(
+    issue: Issue, newest: Marker, now: datetime, config: Config, bot: Bot
+) -> list[Action] | _Start | None:
+    """An open pull request is read by its table first, then by today's rows, both against the same marker."""
+    pull = issue.pull_request
+    if pull is None or not pull.open:
+        return _todays_rows(issue, newest, now, config, bot)
+    marker = _table_marker(issue, newest, config, bot)
+    if isinstance(marker, list):  # a `needs-app` notice nobody has answered yet
+        return marker
+    if marker is None:  # nothing but `needs-app` notices: the first run is still to start
+        return _todays_rows(issue, newest, now, config, bot)
+    found = _table_rows(_Situation(issue, pull, marker, now, config, bot))
+    return found if found is not None else _todays_rows(issue, marker, now, config, bot)
+
+
+def _todays_rows(
     issue: Issue, marker: Marker, now: datetime, config: Config, bot: Bot
 ) -> list[Action] | _Start | None:
-    from_pull_request = _pull_request_rows(issue, marker, now, config, bot)
-    if from_pull_request is not None:
-        return from_pull_request
+    """The rows of an issue by its marker's outcome, as before a pull request had a life of its own."""
     trusted_after = _trusted_comments_after(issue, marker, config, bot)
     outcome = marker.outcome
     if outcome == "needs_input":

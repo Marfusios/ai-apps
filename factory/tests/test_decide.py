@@ -857,6 +857,45 @@ class NeedsAppBehindTwoNoticesTest(unittest.TestCase):
                          [SetStatus(12, BUILDING, ()), StartJob(12, "beta", "fix", 2)])
 
 
+class NeedsAppThenNothingToDoTest(unittest.TestCase):
+    """The marker behind a `needs-app` notice decides even when the table then has nothing to do."""
+
+    def test_a_reply_after_the_checks_went_pending_starts_nothing(self):
+        apps = ("alpha", "beta")
+        done, notice, reply = stage_comment(3, "fix", round=1), notice_comment(4, "needs-app"), comment(5, "app: beta")
+        waiting = issue(12, labels=("factory:fix", NEEDS_HUMAN), comments=(done, notice, reply),
+                        pull=checks_pull("pending"))
+        self.assertEqual(run(waiting, apps=apps), [SetStatus(12, BUILDING, (NEEDS_HUMAN,))])
+
+    def test_a_reply_beside_a_failing_verdict_starts_nothing(self):
+        contradictory = dataclasses.replace(checks_pull("passed"), verdict="fail")
+        done, notice, reply = marker_comment(3, "done"), notice_comment(4, "needs-app"), comment(5, "app: beta")
+        self.assertEqual(run(building_issue(contradictory, done, notice, reply), apps=("alpha", "beta")), [])
+
+    def test_with_nothing_but_the_notice_a_reply_starts_the_first_run(self):
+        only = in_flight(checks_pull("pending"), notice_comment(4, "needs-app"), comment(5, "app: beta"))
+        self.assertEqual(run(only, apps=("alpha", "beta")), [SetStatus(12, BUILDING, ()), StartJob(12, "beta")])
+
+
+class HandedOverHeadTest(unittest.TestCase):
+    """A head is handed over once: a run that ends without moving it changes nothing for the person."""
+
+    def test_a_run_that_did_not_move_a_handed_over_head_hands_nothing_over(self):
+        replied_only = building_issue(checks_pull("passed"), marker_comment(3, "done"), handoff_comment(4),
+                                      stage_comment(5, "revise", job_at=LATE_JOB))
+        self.assertEqual(run(replied_only), [])
+
+    def test_a_run_that_moved_the_head_is_handed_over_again(self):
+        older = "f" * 40
+        moved = building_issue(checks_pull("passed"), marker_comment(3, "done"), handoff_comment(4, older),
+                               stage_comment(5, "revise", job_at=LATE_JOB))
+        self.assertEqual(run(moved), [HandOff(12)])
+
+    def test_a_hand_off_marker_from_someone_else_does_not_count(self):
+        forged = Comment(4, "stranger", 7, "2026-01-01T10:00:00Z", compose.handoff_comment(HEAD, "pass"))
+        self.assertEqual(run(building_issue(checks_pull("passed"), marker_comment(3, "done"), forged)), [HandOff(12)])
+
+
 class ClosedAfterTheHandOffTest(unittest.TestCase):
     def test_a_pull_request_closed_after_the_hand_off_gets_the_notice_once(self):
         closed = dataclasses.replace(checks_pull("passed"), open=False)
