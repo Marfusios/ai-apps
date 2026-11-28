@@ -211,8 +211,37 @@ class SkillTests(unittest.TestCase):
             with self.subTest(words=words):
                 self.assertIn(words, text)
 
+    def test_the_fix_skill_and_the_contract_tell_the_three_cases_of_a_fix_run_with_no_commit(self) -> None:
+        for path in (CLAUDE / "skills" / "factory-fix" / "SKILL.md", CONTRACT):
+            text = flowing(path)
+            for words in ("no failed check and no review finding", "`done` with no commit", "return `failed`",
+                          "`failure_reason`"):
+                with self.subTest(path=path.name, words=words):
+                    self.assertIn(words, text)
+
+    def test_the_fix_skill_says_a_failed_run_waits_for_a_retry_after_the_check_is_rerun(self) -> None:
+        text = flowing(CLAUDE / "skills" / "factory-fix" / "SKILL.md")
+        self.assertIn("then comments `/factory retry`", text)
+        self.assertNotIn("takes the pull request over, or comments", text)
+        self.assertNotIn("answered with evidence", text)
+
+    def test_the_revise_skill_and_the_contract_take_every_line_below_the_command_as_the_instruction(self) -> None:
+        for path in (CLAUDE / "skills" / "factory-revise" / "SKILL.md", CONTRACT):
+            text = flowing(path)
+            for words in ("every line below", "`/factory revise` with no text", "`needs_input`"):
+                with self.subTest(path=path.name, words=words):
+                    self.assertIn(words, text)
+
 
 class ContractTests(unittest.TestCase):
+    def test_a_reply_needs_text_and_the_contract_does_not_describe_the_old_refusal(self) -> None:
+        text = flowing(CONTRACT)
+        self.assertIn("A reply needs text", text)
+        self.assertNotIn("white space", flowing(CLAUDE / "skills" / "factory-revise" / "SKILL.md"))
+
+    def test_the_contract_points_from_the_stage_table_to_the_stages_that_run_today(self) -> None:
+        self.assertIn("The stages that run today are listed under", flowing(CONTRACT))
+
     def test_the_contract_names_each_section_of_a_fix_and_a_revise_runs_context(self) -> None:
         text = flowing(CONTRACT)
         for heading in (*fix_headings(), *revise_headings()):

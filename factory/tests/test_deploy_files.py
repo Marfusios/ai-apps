@@ -235,6 +235,16 @@ class HostGuideTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn(flowing(text), flowing(self.operating()))
 
+    def test_the_operating_section_has_a_part_on_taking_a_pull_request_over(self):
+        part = flowing(self.operating().partition("### Taking a pull request over\n")[2].partition("\n### ")[0])
+        self.assertTrue(part)
+        self.assert_says(part, "`factory:pause`", "`factory:halt`", "hand-off", "`factory:fix`",
+                         "`fix-rounds-exhausted`", f"`{jobs.RETRY_COMMAND}`")
+
+    def test_the_guide_calls_a_cause_that_goes_away_a_temporary_fault(self):
+        self.assert_says(self.text, "temporary fault", "every line below the command")
+        self.assertNotIn("passing fault", self.text)
+
     def test_section_5_names_the_secret_and_the_variables_the_review_reads(self):
         secrets, variables = review_settings("secrets"), review_settings("vars")
         self.assertTrue(secrets and variables)
@@ -256,6 +266,10 @@ class DesignTests(unittest.TestCase):
             with self.subTest(words=words):
                 self.assertIn(words, checks)
 
+    def test_a_check_run_that_waits_for_approval_is_neither_failed_nor_passed(self):
+        checks = flowing(self.text.partition("**What the dispatcher reads.**")[2].partition("\n\n## ")[0])
+        self.assertIn("waiting for a person's approval", checks)
+
     def test_the_resource_cap_names_the_disk(self):
         (line,) = [line for line in self.text.splitlines() if "resource cap" in line]
         self.assertIn("disk", line)
@@ -272,7 +286,7 @@ class DesignTests(unittest.TestCase):
 
     def test_the_automated_review_names_the_variables_it_reads_and_the_checks_the_factory_waits_for(self):
         review = flowing(self.text.partition("\n## 11. ")[2].partition("\n## ")[0])
-        for words in (*(f"`{name}`" for name in review_settings("vars")),
+        for words in (*(f"`{name}`" for name in (*review_settings("secrets"), *review_settings("vars"))),
                       *(f"`{name}`" for name in CONFIG.dispatcher.required_checks)):
             with self.subTest(words=words):
                 self.assertIn(words, review)

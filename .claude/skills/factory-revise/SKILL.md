@@ -15,10 +15,15 @@ revise runs are not counted, since a person asks for each one.
 `$FACTORY_JOB_DIR/context.md` holds the issue, the comments of the issue and the pull request, and
 after them these sections, each under a heading the dispatcher writes:
 
-- `## Instruction`: what the person asked for with `/factory revise`, when they did;
+- `## Instruction`: what the person asked for with `/factory revise`, when they did. It is the
+  whole rest of the comment: the rest of the command's line and every line below it;
 - `## Review (<time>)`: the text of each review not answered yet, oldest first;
 - `## Review thread <id> (<path>:<line>)`: each unresolved thread of those reviews, with the
   comments of trusted people in it. `<id>` is GitHub's id of the thread.
+
+A bare `/factory revise` with no text, when no review waits for an answer, gives the run none of
+these three sections. Then nothing says what should change: return `needs_input` and ask what
+should change.
 
 When `FACTORY_RUN` is not set, a person started this skill. Ask them which pull request, issue and
 app they mean. In place of `context.md`, read the review with `gh pr view <number> --comments` and
@@ -63,8 +68,7 @@ requests to answer.
   letters, digits, underscores, equal signs or hyphens, as in the heading. A reply to an id the
   context does not name is never posted.
 - `body`: the reply, in plain sentences: what changed and where, or the reason you changed
-  nothing, or your question. It holds a visible character: the finish check refuses a body of
-  white space.
+  nothing, or your question. A reply needs text, 1 to 4,000 characters.
 - `resolved`: `true` only when the change you committed settles the thread. Use `false` when you
   explain, disagree or ask, and when you changed only part of what it asks.
 
@@ -96,6 +100,7 @@ to ask in. Return `needs_input` with `questions`, and a summary of what is finis
 
 - an instruction or a review's text that came without a thread contradicts the merged design or
   `PLAN.md` on `main`, so there is no thread to ask in;
+- the context has no instruction, no review and no thread, as after a bare `/factory revise`;
 - a requested change needs a change outside `apps/` and `packages/`, a new credential or a
   provider account;
 - a hook refuses something a requested change seems to need.

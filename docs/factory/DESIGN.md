@@ -216,7 +216,7 @@ too vague, or in need of a decision, it returns questions instead and the issue 
 | Signal from a trusted person | Effect |
 | --- | --- |
 | A submitted review that requests changes or leaves comments | One revise run covering every review not answered yet. |
-| `/factory revise <instruction>` as the first line of a pull request comment | One revise run with that instruction. |
+| `/factory revise <instruction>` as the first line of a pull request comment | One revise run. The instruction is the rest of that line and every line below it. |
 | `/factory retry` | Rerun the last failed stage; a fix run starts again at round 1. |
 | A reply after a run's questions | The run resumes with the answer. |
 | Approve and merge | The next stage starts. |
@@ -624,7 +624,8 @@ branch of this repository is opened, reopened or gets a new head, drafts include
 Marking a pull request ready starts no second review, since that head has its review
 already. The workflow has two jobs that share nothing but the answer:
 
-- The first holds the provider's API key and may only read. It checks out the merged
+- The first holds the provider's API key, the repository secret `OPENAI_API_KEY`, and may only
+  read. It checks out the merged
   result of the pull request without credentials and runs the action with a read-only
   permission profile, a review prompt and a required answer schema. The prompt and the
   schema come from the pull request's base commit, never from its head, so a pull request
@@ -653,7 +654,8 @@ pull request's head count, since any app can create a check run with any name. T
 head's checks have failed when one of the three names failed or timed out; they are
 pending while one is missing or not finished, or GitHub lists more check runs than one
 page holds; they have passed when all three passed. A cancelled or skipped run of a
-required name is neither, so such a head waits. The verdict and the findings come from
+required name, and a run waiting for a person's approval, is neither failed nor passed,
+so such a head waits: no agent can approve a run. The verdict and the findings come from
 the newest review comment about that head by the account the workflow comments as.
 Because a failing verdict also fails `review`, a fix run gets the findings beside the
 logs.

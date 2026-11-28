@@ -559,7 +559,7 @@ stream, so a reply or a command works on either.
 | A comment after a question, or after a notice that asks for something | The next run starts, with the comment in its context, from the commits the last run left on the work branch. After a question from a fix or revise run, that stage starts again, a fix run at round 1. |
 | `/factory retry` as the first line of a comment | After a run that **failed**, **timed out**, **ended without a result**, was **not started** or had its **work not published**, after the notice that the fix rounds are used up, or after the pull request was closed without merging: the run starts again from the work branch. After a fix or revise run, that stage starts again, a fix run at round 1. |
 | A review of the pull request that requests changes or leaves comments | One revise run answers every such review that no revise run has answered yet, with one reply in each of their unresolved threads. A single comment on the diff counts, since GitHub records it as a review that comments. An approval starts nothing. |
-| `/factory revise <instruction>` as the first line of a comment | One revise run, with the rest of that line as its instruction. The whole comment is in the run's context. It needs an open pull request. |
+| `/factory revise <instruction>` as the first line of a comment | One revise run. The instruction is the rest of that line and every line below the command, so you may write it on the lines below. The whole comment is in the run's context. It needs an open pull request. A command with no text and no review to answer makes the agent ask what should change. |
 | A line `app: <name>` in a comment | The run works on the app in `apps/<name>`. The last such line counts, and a name that is no app gets the notice that asks for one. Without such a line, the App field of the issue form counts when the issue's author is trusted, and then the only app, when there is one. |
 
 A review or a `/factory revise` written while a run is going on is answered by the next revise run.
@@ -597,10 +597,7 @@ agent can fix), and have passed when all three succeeded.
 
   > The automated fix runs did not make the checks pass, and the limit of fix rounds in a row is reached. Comment `/factory retry` to start again, or a person takes over the pull request.
 
-  Read the run comments and the failed checks' logs. When a passing fault, such as a network
-  failure on the hosted runner, is the cause, rerun the failed jobs on GitHub first. Then either
-  comment `/factory retry`, which starts a fix run at round 1, or take the pull request over: a
-  review or `/factory revise` starts a revise run, and a fix you push yourself starts nothing.
+  What a person does after this notice is in "Taking a pull request over", below.
 - **Pending.** Nothing happens until they finish. A check that never finishes, such as one whose
   workflow run was cancelled, holds the pull request until a person reruns it on GitHub.
 - **Passed.** The factory hands the pull request over. It marks the pull request ready for review
@@ -619,6 +616,27 @@ a push of their own, starts no fix run. A review or `/factory revise` starts a r
 run that ends **done** is followed like any finished run: fix runs when its checks fail, and a new
 hand-off, with a new comment and review request, when they pass. A revise run that committed
 nothing leaves the head as it was, and the same head is not handed over twice.
+
+### Taking a pull request over
+
+- **Pause and halt.** `factory:pause` and `factory:halt` hold back new runs only. The hand-off, the
+  notices and the status labels go on: a pull request whose checks pass is handed over while its
+  issue is paused or the factory is halted.
+- **A commit you push.** Before the hand-off, a commit you push to the work branch is treated like
+  any head. When its checks fail, a fix run starts on top of it, counted with the fix rounds
+  before it. After the hand-off, failing checks start nothing, and only a review or
+  `/factory revise` starts a run.
+- **Stopping the factory for good.** To stop the factory acting on an issue and its pull request
+  altogether, remove the `factory:fix` label from the issue. The factory then starts nothing,
+  hands nothing over and posts nothing for it, drops a run that has not started, and does not
+  publish a run that ends afterwards. The issue keeps its status label: remove it by hand.
+- **After the fix-rounds-exhausted notice.** The factory posts the notice (`fix-rounds-exhausted`,
+  quoted above) on the pull request and sets `status:needs-human` on the issue. Nothing starts by
+  itself. Read the run comments and the failed checks' logs. When a temporary fault, such as a
+  network failure on the hosted runner, is the cause, rerun the failed jobs on GitHub first. Then
+  either comment `/factory retry`, which starts a fix run at round 1, or take the pull request
+  over: a review or `/factory revise` starts a revise run, and a fix you push yourself starts
+  nothing.
 
 ### Run comments
 
@@ -658,7 +676,7 @@ run ended because ...".
 | `request` | not started | the request for the agent could not be built | The job's `request.json` is missing or not what the runner expects, which happens when the two programs run different versions. Restart both from the same checkout (section 8), then retry. |
 | `clone` | ended without a result | the repository could not be prepared for the agent | The runner could not clone the mirror or check out the work branch in time. Check that the runner can read `/srv/factory/mirror` (section 2) and that its work directory has disk space, then retry. |
 | `max_turns` | ended without a result | the run used all its turns | The agent used the stage's `max_turns`. For a `fix_issue` run the issue is probably more than one small change: split it, or make it an epic, or retry. For a fix or revise run, read the transcript (below), then retry or take the pull request over. |
-| `agent_error` | ended without a result | the agent stopped with an error | The agent ended without a valid result file. Read the transcript (below); a retry often succeeds after a passing error of the service. |
+| `agent_error` | ended without a result | the agent stopped with an error | The agent ended without a valid result file. Read the transcript (below); a retry often succeeds after a temporary error of the service. |
 | `internal` | ended without a result | the factory hit an internal error | The runner failed in an unexpected way, Podman could not start the container, the runner was stopped during the run (a restart or an update ends a run this way), the dispatcher could not read the run's record, or publishing the run failed eight times. Read both logs, then retry. |
 
 ### The usage limit

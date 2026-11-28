@@ -69,14 +69,25 @@ Some failures no commit in `apps/` or `packages/` can fix: the hosted runner, th
 package registry broke; a test fails now and then without any change, and passes when you run it
 again (a flaky test); or the failing part lies outside the writable paths, such as the factory's
 own tests in the `repository` check. Do not change code to hide such a failure. If the flaky test
-is in the app and you can find its cause, fix that cause with a test that shows it. Otherwise
-return `failed` and name it: the check, the line of its log that shows the cause, what you ran
-and what you saw.
+is in the app and you can find its cause, fix that cause with a test that shows it.
 
-`done` without a commit leaves the head as it was, so nothing runs again on GitHub and the factory
-starts the next round on the same failure. When every item is either not the code's or a finding
-you verified as wrong, and no commit is left to make, return `failed` with that evidence instead:
-a person then reruns the check, takes the pull request over, or comments `/factory retry`.
+`done` without a commit leaves the head as it was, so nothing runs again on GitHub. What you
+return depends on what is left to do:
+
+- A failed check or a review finding that code you may change causes: fix it, commit, and return
+  `done`.
+- A failure that code you may change does not cause, or findings you verified to be wrong, with
+  nothing to commit: return `failed`. Name in `failure_reason` the check, the line of its log that
+  shows the cause, what you ran and what you saw. A `done` here would leave the head unchanged and
+  only start the next round on the same failure.
+- Nothing is failing: `context.md` lists no failed check and no review finding, or the checks pass
+  when you run them and nothing in the context points at a defect. A person may have rerun a flaky
+  check and commented `/factory retry`, or the run may resume after a question or the usage
+  limit. Return `done` with no commit, and say in the summary that every check passes and what you
+  ran to see it.
+
+After a `failed` run, a person reruns the check if it was a temporary fault, then comments
+`/factory retry`. A review or `/factory revise` also starts a run, and a rerun alone starts none.
 
 ## Verify and write the result
 
@@ -86,9 +97,11 @@ a person then reruns the check, takes the pull request over, or comments `/facto
 2. Run `python3 scripts/check_repo.py`; it must pass.
 3. Write the result file at `$FACTORY_RESULT_PATH` as "What you return" in
    `factory/AGENT_CONTRACT.md` describes. Return `done` when every check you can run passes and
-   every finding is fixed or answered with evidence. This stage fills the fields below and leaves
-   out `thread_replies`, which belongs to the revise stage:
-   - `summary`: item by item, what you fixed and why each other item does not apply;
+   every finding that holds is fixed, or when nothing is failing; return `failed` as the section
+   above says when a failure or a finding leaves nothing to commit. This stage fills the fields
+   below and leaves out `thread_replies`, which belongs to the revise stage:
+   - `summary`: item by item, what you fixed and why each other item does not apply, with the
+     evidence for each;
    - `verification`: the verifier's commands with their exit codes and summaries, then
      `python3 scripts/check_repo.py`;
    - `pull_request` only to replace the title and body, when your fixes make them wrong;
@@ -106,4 +119,5 @@ Return `needs_input` with `questions`, and a summary of what is finished, when:
 - a hook refuses something a fix seems to need.
 
 Return `failed` with a `failure_reason` when the toolchain, the network or a service is broken, or
-when the failure is not the code's (above). Quote the command and its output.
+when the failure is not the code's or the findings are wrong and nothing is left to commit (above).
+Quote the command and its output.

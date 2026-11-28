@@ -99,7 +99,7 @@ counts only when a trusted person applied it, meaning a GitHub login listed in
 | The agent produces | One pull request with the change, its tests and the checks it ran, or questions | A design, then a plan, then one pull request per plan step |
 | Pull requests | One | One for the design, one for the plan, one per step |
 | A person | Applies the label, answers questions, reviews and merges | Applies the label, then reviews and merges the design, the plan and each step |
-| Stage skills | `factory-fix-issue` | `factory-design`, `factory-plan`, `factory-implement` |
+| Stage skills | `factory-fix-issue` makes the change; `factory-fix` fixes failed checks and review findings on its pull request; `factory-revise` answers a person's review | `factory-design`, `factory-plan`, `factory-implement` |
 | Status | Built and running | Designed, not built yet |
 
 ### Small change (`factory:fix`): built
